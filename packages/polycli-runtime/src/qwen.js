@@ -127,7 +127,13 @@ function parseAssistantContent(blocks) {
 }
 
 export function extractQwenText(event) {
-  if (!event || event.type !== "assistant" || !Array.isArray(event.message?.content)) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+  if (isSuccessfulQwenResultEvent(event) && typeof event.result === "string") {
+    return event.result;
+  }
+  if (event.type !== "assistant" || !Array.isArray(event.message?.content)) {
     return "";
   }
 
@@ -135,6 +141,28 @@ export function extractQwenText(event) {
     .filter((block) => block?.type === "text" && typeof block.text === "string")
     .map((block) => block.text)
     .join("");
+}
+
+function isSuccessfulQwenResultEvent(event) {
+  if (!event || event.type !== "result" || event.is_error === true) {
+    return false;
+  }
+  if (event.subtype == null) {
+    return true;
+  }
+  return event.subtype === "success";
+}
+
+function extractQwenResultError(event) {
+  if (!event || event.type !== "result") {
+    return null;
+  }
+  if (event.is_error !== true && event.subtype !== "error") {
+    return null;
+  }
+  return typeof event.result === "string" && event.result.trim()
+    ? event.result
+    : null;
 }
 
 export function parseQwenStreamText(text) {
@@ -176,6 +204,9 @@ export function parseQwenStreamText(text) {
   }
 
   out.response = out.assistantTexts.join("");
+  if (!out.response.trim() && isSuccessfulQwenResultEvent(out.resultEvent) && typeof out.resultEvent?.result === "string") {
+    out.response = out.resultEvent.result;
+  }
   return out;
 }
 
@@ -248,14 +279,15 @@ export function runQwenPrompt({
   }
 
   const parsed = parseQwenStreamText(result.stdout);
+  const resultEventError = extractQwenResultError(parsed.resultEvent);
   return {
-    ok: result.status === 0 && Boolean(parsed.response.trim()),
+    ok: result.status === 0 && !resultEventError && Boolean(parsed.response.trim()),
     status: result.status,
     stderr: result.stderr,
     ...parsed,
-    error: result.status === 0 && parsed.response.trim()
+    error: result.status === 0 && !resultEventError && parsed.response.trim()
       ? null
-      : result.stderr.trim() || parsed.response || `qwen exited with code ${result.status}`,
+      : result.stderr.trim() || resultEventError || parsed.response || `qwen exited with code ${result.status}`,
   };
 }
 
@@ -309,11 +341,15 @@ export function runQwenPromptStreaming({
     },
   }).then((result) => {
     const parsed = parseQwenStreamText(result.stdout);
+    const hasVisibleText = Boolean(parsed.response.trim());
+    const resultEventError = extractQwenResultError(parsed.resultEvent);
     return {
       ...result,
       ...parsed,
-      ok: result.ok && Boolean(parsed.response.trim()),
-      error: result.ok && parsed.response.trim() ? null : result.error,
+      ok: result.ok && !resultEventError && hasVisibleText,
+      error: result.ok && !resultEventError
+        ? (hasVisibleText ? null : (resultEventError || "qwen produced no visible text"))
+        : (resultEventError || result.error),
     };
   });
 }

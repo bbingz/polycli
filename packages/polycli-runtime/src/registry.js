@@ -124,6 +124,16 @@ function trackQwenToolTiming(event, timestamp, state) {
   }
 }
 
+function shouldCountEventTextForTiming(provider, event, firstTextAt) {
+  if (provider !== "qwen") {
+    return true;
+  }
+  if (event?.type !== "result") {
+    return true;
+  }
+  return firstTextAt == null;
+}
+
 export function getProviderRuntime(providerId) {
   const runtime = RUNTIMES[providerId];
   if (!runtime) {
@@ -175,7 +185,7 @@ export async function runProviderPromptStreaming({
     onEvent(event) {
       const now = Date.now();
       const eventText = extractProviderEventText(provider, event);
-      if ((timingSupport.ttft || timingSupport.tail) && eventText.trim()) {
+      if ((timingSupport.ttft || timingSupport.tail) && eventText.trim() && shouldCountEventTextForTiming(provider, event, firstTextAt)) {
         if (firstTextAt == null) {
           firstTextAt = now;
         }

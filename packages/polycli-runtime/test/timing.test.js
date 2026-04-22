@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { validateTimingRecord } from "@bbingz/polycli-timing";
 
-import { buildPromptTimingRecord } from "../src/timing.js";
+import { buildPromptTimingRecord, extractProviderEventText } from "../src/timing.js";
 
 test("buildPromptTimingRecord emits a valid request-scoped record for one-shot runs", () => {
   const record = buildPromptTimingRecord({
@@ -73,4 +73,22 @@ test("buildPromptTimingRecord keeps supported-but-missing metrics separate from 
   assert.equal(record.metrics.tool.status, "missing");
   assert.equal(record.metrics.tail.status, "missing");
   assert.equal(record.metrics.retry.status, "unsupported");
+});
+
+test("extractProviderEventText handles qwen result-only and kimi string content events", () => {
+  assert.equal(
+    extractProviderEventText("qwen", { type: "result", result: "No issues found." }),
+    "No issues found."
+  );
+  assert.equal(
+    extractProviderEventText("kimi", { role: "assistant", content: "final review body" }),
+    "final review body"
+  );
+});
+
+test("extractProviderEventText ignores qwen error result events", () => {
+  assert.equal(
+    extractProviderEventText("qwen", { type: "result", subtype: "error", is_error: true, result: "permission denied" }),
+    ""
+  );
 });

@@ -117,7 +117,9 @@ function summarizeEventText(provider, event) {
   }
 
   if (provider === "kimi") {
-    if (event.role !== "assistant" || !Array.isArray(event.content)) return "";
+    if (event.role !== "assistant") return "";
+    if (typeof event.content === "string") return event.content;
+    if (!Array.isArray(event.content)) return "";
     return event.content
       .filter((block) => block?.type === "text" && typeof block.text === "string")
       .map((block) => block.text)
@@ -125,6 +127,9 @@ function summarizeEventText(provider, event) {
   }
 
   if (provider === "qwen") {
+    if (event.type === "result" && event.is_error !== true && event.subtype !== "error" && typeof event.result === "string") {
+      return event.result;
+    }
     if (event.type !== "assistant" || !Array.isArray(event.message?.content)) return "";
     return event.message.content
       .filter((block) => block?.type === "text" && typeof block.text === "string")
@@ -149,7 +154,17 @@ function appendPreview(logFile, provider, event) {
     .filter(Boolean)
     .slice(0, 10);
   if (lines.length === 0) return;
-  fs.appendFileSync(logFile, `${lines.join("\n")}\n`, "utf8");
+  const block = lines.join("\n");
+  try {
+    const existingLines = fs.readFileSync(logFile, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (existingLines.slice(-lines.length).join("\n") === block) {
+      return;
+    }
+  } catch {}
+  fs.appendFileSync(logFile, `${block}\n`, "utf8");
 }
 
 function buildExecutionEnvelope(execution, result) {
@@ -174,6 +189,7 @@ async function runForegroundExecution(execution, asJson) {
     kind: execution.kind,
     measurementScope: execution.measurementScope || "request",
     meta: execution.meta || null,
+    ...(execution.runtimeOptions || {}),
     onEvent() {},
   });
   if (result.timing) {
@@ -487,6 +503,14 @@ function buildReviewExecution(rawArgs, { adversarial }) {
         adversarial,
       },
       measurementScope: "request",
+      runtimeOptions: provider === "kimi"
+        ? { extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] }
+        : provider === "qwen"
+          ? {
+            maxSteps: 1,
+            appendSystem: "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.",
+          }
+          : {},
     },
   };
 }
@@ -705,6 +729,7 @@ async function runJobWorker(rawArgs) {
       kind: execution.kind,
       measurementScope: execution.measurementScope || "job",
       meta: execution.meta || null,
+      ...(execution.runtimeOptions || {}),
       onEvent(event) {
         appendPreview(current.logFile, execution.provider, event);
       },

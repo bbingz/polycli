@@ -48,7 +48,13 @@ function parseKimiEventLine(line) {
 }
 
 export function extractKimiText(event) {
-  if (!event || event.role !== "assistant" || !Array.isArray(event.content)) {
+  if (!event || event.role !== "assistant") {
+    return "";
+  }
+  if (typeof event.content === "string") {
+    return event.content;
+  }
+  if (!Array.isArray(event.content)) {
     return "";
   }
 
@@ -181,12 +187,15 @@ export function runKimiPromptStreaming({
   }).then((result) => {
     const parsed = parseKimiStreamText(result.stdout);
     const session = resolveSessionId({ stderr: result.stderr, priority: ["stderr"] });
+    const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
       ...parsed,
       sessionId: session.sessionId,
-      ok: result.ok && Boolean(parsed.response.trim()),
-      error: result.ok && parsed.response.trim() ? null : result.error,
+      ok: result.ok && hasVisibleText,
+      error: result.ok
+        ? (hasVisibleText ? null : "kimi produced no visible text")
+        : result.error,
     };
   });
 }

@@ -26,4 +26,7 @@ test("buildReviewPrompt includes adversarial and truncation guidance", () => {
   assert.match(prompt, /Extra focus from user: auth/);
   assert.match(prompt, /Diff truncated to 100 bytes/);
   assert.match(prompt, /diff --git a\/a b\/a/);
+  assert.match(prompt, /must contain a visible final answer/i);
+  assert.match(prompt, /No issues found\./);
+  assert.match(prompt, /Do not run tools, commands, or tests/i);
 });

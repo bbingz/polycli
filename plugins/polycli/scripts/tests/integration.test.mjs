@@ -15,6 +15,7 @@ function createFakeQwenBin() {
   fs.writeFileSync(
     bin,
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const args = process.argv.slice(2);
 if (args.includes("--version")) {
@@ -25,6 +26,9 @@ if (args[0] === "auth" && args[1] === "status") {
   process.stdout.write("authenticated\\n");
   process.exit(0);
 }
+if (process.env.QWEN_ARGV_LOG) {
+  fs.writeFileSync(process.env.QWEN_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
+}
 const prompt = args.at(-1) || "";
 const delayMatch = prompt.match(/__delay=(\\d+)/);
 const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : 0;
@@ -34,7 +38,7 @@ const toolDelayMatch = prompt.match(/__toolDelay=(\\d+)/);
 const toolDelay = toolDelayMatch ? Number.parseInt(toolDelayMatch[1], 10) : 0;
 const useTool = prompt.includes("__tool=1");
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
-const reply = replyMatch ? replyMatch[1] : prompt;
+const reply = process.env.QWEN_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
 (async () => {
   process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "11111111-1111-1111-1111-111111111111", model: "qwen-test" }) + "\\n");
   if (delay > 0) await sleep(delay);
@@ -43,7 +47,9 @@ const reply = replyMatch ? replyMatch[1] : prompt;
     if (toolDelay > 0) await sleep(toolDelay);
     process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_result", tool_use_id: "tool-1", content: "ok", is_error: false }] } }) + "\\n");
   }
-  process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: reply }] } }) + "\\n");
+  if (process.env.QWEN_RESULT_ONLY !== "1") {
+    process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: reply }] } }) + "\\n");
+  }
   if (tailDelay > 0) await sleep(tailDelay);
   process.stdout.write(JSON.stringify({ type: "result", result: reply, is_error: false, permission_denials: [] }) + "\\n");
 })();
@@ -112,11 +118,15 @@ function createFakeKimiBin() {
   fs.writeFileSync(
     bin,
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const args = process.argv.slice(2);
 if (args.includes("-V")) {
   process.stdout.write("kimi 0.0.0-test\\n");
   process.exit(0);
+}
+if (process.env.KIMI_ARGV_LOG) {
+  fs.writeFileSync(process.env.KIMI_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
 }
 const promptIndex = args.indexOf("-p");
 const prompt = promptIndex >= 0 ? (args[promptIndex + 1] || "") : "ping";
@@ -125,11 +135,15 @@ const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : 0;
 const tailDelayMatch = prompt.match(/__tail=(\\d+)/);
 const tailDelay = tailDelayMatch ? Number.parseInt(tailDelayMatch[1], 10) : 0;
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
-const reply = replyMatch ? replyMatch[1] : prompt;
+const reply = process.env.KIMI_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
 (async () => {
   process.stderr.write("To resume: kimi -r 33333333-3333-4333-8333-333333333333\\n");
   if (delay > 0) await sleep(delay);
-  process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "text", text: reply }] }) + "\\n");
+  if (process.env.KIMI_CONTENT_MODE === "string") {
+    process.stdout.write(JSON.stringify({ role: "assistant", content: reply }) + "\\n");
+  } else {
+    process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "text", text: reply }] }) + "\\n");
+  }
   if (tailDelay > 0) await sleep(tailDelay);
 })();
 `,
@@ -340,6 +354,192 @@ test("integration: setup and ask succeed for kimi via bundled companion", async 
   }
 });
 
+test("integration: review constrains kimi to one non-thinking turn", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "kimi-argv.jsonl");
+  const fake = createFakeKimiBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      KIMI_CLI_BIN: fake.bin,
+      KIMI_ARGV_LOG: argLog,
+      KIMI_FIXED_REPLY: "REVIEW_OK",
+    });
+    const review = await runCompanion(
+      ["review", "--provider", "kimi", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(review.code, 0, review.stderr);
+    const payload = JSON.parse(review.stdout);
+    assert.equal(payload.response, "REVIEW_OK");
+
+    const logged = JSON.parse(fs.readFileSync(argLog, "utf8").trim());
+    assert.match(logged.argv.join(" "), /--no-thinking/);
+    assert.match(logged.argv.join(" "), /--max-steps-per-turn 1/);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: review --background preserves kimi runtime options and stored response", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "kimi-background-argv.jsonl");
+  const fake = createFakeKimiBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      KIMI_CLI_BIN: fake.bin,
+      KIMI_ARGV_LOG: argLog,
+      KIMI_FIXED_REPLY: "BACKGROUND_KIMI_OK",
+    });
+    const start = await runCompanion(
+      ["review", "--provider", "kimi", "--background", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(start.code, 0, start.stderr);
+    const started = JSON.parse(start.stdout);
+    assert.equal(started.ok, true);
+
+    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: process.cwd(), env });
+    assert.equal(finalStatus.job.status, "completed");
+
+    const stored = await runCompanion(["result", "--json", started.job.jobId], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(stored.code, 0, stored.stderr);
+    const payload = JSON.parse(stored.stdout);
+    assert.equal(payload.result.response, "BACKGROUND_KIMI_OK");
+
+    const logged = JSON.parse(fs.readFileSync(argLog, "utf8").trim());
+    assert.match(logged.argv.join(" "), /--no-thinking/);
+    assert.match(logged.argv.join(" "), /--max-steps-per-turn 1/);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: review --background preserves qwen runtime options and stored response", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "qwen-background-argv.jsonl");
+  const fake = createFakeQwenBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+      QWEN_ARGV_LOG: argLog,
+      QWEN_FIXED_REPLY: "BACKGROUND_QWEN_OK",
+    });
+    const start = await runCompanion(
+      ["review", "--provider", "qwen", "--background", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(start.code, 0, start.stderr);
+    const started = JSON.parse(start.stdout);
+    assert.equal(started.ok, true);
+
+    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: process.cwd(), env });
+    assert.equal(finalStatus.job.status, "completed");
+
+    const stored = await runCompanion(["result", "--json", started.job.jobId], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(stored.code, 0, stored.stderr);
+    const payload = JSON.parse(stored.stdout);
+    assert.equal(payload.result.response, "BACKGROUND_QWEN_OK");
+
+    const logged = JSON.parse(fs.readFileSync(argLog, "utf8").trim());
+    const argv = logged.argv.join(" ");
+    assert.match(argv, /--max-session-turns 1/);
+    assert.match(argv, /--append-system-prompt/);
+
+    const logText = fs.readFileSync(started.job.logFile, "utf8");
+    const occurrences = (logText.match(/BACKGROUND_QWEN_OK/g) || []).length;
+    assert.equal(occurrences, 1);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: qwen result-only review still records timing text and preview", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeQwenBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+      QWEN_FIXED_REPLY: "RESULT_ONLY_QWEN_OK",
+      QWEN_RESULT_ONLY: "1",
+    });
+    const start = await runCompanion(
+      ["review", "--provider", "qwen", "--background", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(start.code, 0, start.stderr);
+    const started = JSON.parse(start.stdout);
+
+    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: process.cwd(), env });
+    assert.equal(finalStatus.job.status, "completed");
+
+    const stored = await runCompanion(["result", "--json", started.job.jobId], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(stored.code, 0, stored.stderr);
+    const payload = JSON.parse(stored.stdout);
+    assert.equal(payload.result.response, "RESULT_ONLY_QWEN_OK");
+    assert.equal(payload.result.timing.metrics.ttft.status, "measured");
+    assert.equal(payload.result.timing.metrics.gen.status, "measured");
+    assert.equal(payload.result.timing.metrics.tail.status, "measured");
+
+    const logText = fs.readFileSync(started.job.logFile, "utf8");
+    assert.match(logText, /RESULT_ONLY_QWEN_OK/);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: kimi string-content review still records preview text", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeKimiBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      KIMI_CLI_BIN: fake.bin,
+      KIMI_FIXED_REPLY: "STRING_KIMI_OK",
+      KIMI_CONTENT_MODE: "string",
+    });
+    const start = await runCompanion(
+      ["review", "--provider", "kimi", "--background", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(start.code, 0, start.stderr);
+    const started = JSON.parse(start.stdout);
+
+    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: process.cwd(), env });
+    assert.equal(finalStatus.job.status, "completed");
+
+    const stored = await runCompanion(["result", "--json", started.job.jobId], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(stored.code, 0, stored.stderr);
+    const payload = JSON.parse(stored.stdout);
+    assert.equal(payload.result.response, "STRING_KIMI_OK");
+
+    const logText = fs.readFileSync(started.job.logFile, "utf8");
+    assert.match(logText, /STRING_KIMI_OK/);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
 test("integration: setup and ask succeed for minimax via bundled companion", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   const fake = createFakeMiniMaxFixture();
@@ -380,6 +580,7 @@ test("integration: qwen foreground ask records session, tool, and tail timing", 
     assert.equal(askPayload.timing.metrics.gen.status, "measured");
     assert.equal(askPayload.timing.metrics.tool.status, "measured");
     assert.equal(askPayload.timing.metrics.tail.status, "measured");
+    assert.equal(askPayload.timing.metrics.tail.ms >= 20, true);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });

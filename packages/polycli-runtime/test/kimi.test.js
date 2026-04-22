@@ -46,6 +46,13 @@ test("parseKimiStreamText keeps assistant text and tool events separate", () => 
   assert.equal(extractKimiText({ role: "assistant", content: [{ type: "text", text: "ok" }] }), "ok");
 });
 
+test("extractKimiText supports string assistant content", () => {
+  assert.equal(
+    extractKimiText({ role: "assistant", content: "final review body" }),
+    "final review body"
+  );
+});
+
 test("runKimiPromptStreaming returns a structured failure on spawn error", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -67,4 +74,27 @@ test("runKimiPromptStreaming returns a structured failure on spawn error", async
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+});
+
+test("runKimiPromptStreaming returns an explicit error when no visible assistant text is emitted", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runKimiPromptStreaming({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stderr.emit("data", "To resume: kimi -r 123\n");
+        child.stdout.emit("data", '{"role":"assistant","content":[{"type":"think","text":"hidden"}]}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "kimi produced no visible text");
 });

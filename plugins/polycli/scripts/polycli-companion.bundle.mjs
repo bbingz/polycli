@@ -652,7 +652,13 @@ function parseKimiEventLine(line) {
   }
 }
 function extractKimiText(event) {
-  if (!event || event.role !== "assistant" || !Array.isArray(event.content)) {
+  if (!event || event.role !== "assistant") {
+    return "";
+  }
+  if (typeof event.content === "string") {
+    return event.content;
+  }
+  if (!Array.isArray(event.content)) {
     return "";
   }
   return event.content.filter((block) => block && block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
@@ -771,12 +777,13 @@ function runKimiPromptStreaming({
   }).then((result) => {
     const parsed = parseKimiStreamText(result.stdout);
     const session = resolveSessionId({ stderr: result.stderr, priority: ["stderr"] });
+    const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
       ...parsed,
       sessionId: session.sessionId,
-      ok: result.ok && Boolean(parsed.response.trim()),
-      error: result.ok && parsed.response.trim() ? null : result.error
+      ok: result.ok && hasVisibleText,
+      error: result.ok ? hasVisibleText ? null : "kimi produced no visible text" : result.error
     };
   });
 }
@@ -910,10 +917,34 @@ function parseAssistantContent(blocks) {
   return out;
 }
 function extractQwenText(event) {
-  if (!event || event.type !== "assistant" || !Array.isArray(event.message?.content)) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+  if (isSuccessfulQwenResultEvent(event) && typeof event.result === "string") {
+    return event.result;
+  }
+  if (event.type !== "assistant" || !Array.isArray(event.message?.content)) {
     return "";
   }
   return event.message.content.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+}
+function isSuccessfulQwenResultEvent(event) {
+  if (!event || event.type !== "result" || event.is_error === true) {
+    return false;
+  }
+  if (event.subtype == null) {
+    return true;
+  }
+  return event.subtype === "success";
+}
+function extractQwenResultError(event) {
+  if (!event || event.type !== "result") {
+    return null;
+  }
+  if (event.is_error !== true && event.subtype !== "error") {
+    return null;
+  }
+  return typeof event.result === "string" && event.result.trim() ? event.result : null;
 }
 function parseQwenStreamText(text) {
   const out = {
@@ -951,6 +982,9 @@ function parseQwenStreamText(text) {
     }
   }
   out.response = out.assistantTexts.join("");
+  if (!out.response.trim() && isSuccessfulQwenResultEvent(out.resultEvent) && typeof out.resultEvent?.result === "string") {
+    out.response = out.resultEvent.result;
+  }
   return out;
 }
 function getQwenAvailability(cwd) {
@@ -1014,12 +1048,13 @@ function runQwenPrompt({
     return { ok: false, error: result.error.message };
   }
   const parsed = parseQwenStreamText(result.stdout);
+  const resultEventError = extractQwenResultError(parsed.resultEvent);
   return {
-    ok: result.status === 0 && Boolean(parsed.response.trim()),
+    ok: result.status === 0 && !resultEventError && Boolean(parsed.response.trim()),
     status: result.status,
     stderr: result.stderr,
     ...parsed,
-    error: result.status === 0 && parsed.response.trim() ? null : result.stderr.trim() || parsed.response || `qwen exited with code ${result.status}`
+    error: result.status === 0 && !resultEventError && parsed.response.trim() ? null : result.stderr.trim() || resultEventError || parsed.response || `qwen exited with code ${result.status}`
   };
 }
 function runQwenPromptStreaming({
@@ -1073,11 +1108,13 @@ function runQwenPromptStreaming({
     }
   }).then((result) => {
     const parsed = parseQwenStreamText(result.stdout);
+    const hasVisibleText = Boolean(parsed.response.trim());
+    const resultEventError = extractQwenResultError(parsed.resultEvent);
     return {
       ...result,
       ...parsed,
-      ok: result.ok && Boolean(parsed.response.trim()),
-      error: result.ok && parsed.response.trim() ? null : result.error
+      ok: result.ok && !resultEventError && hasVisibleText,
+      error: result.ok && !resultEventError ? hasVisibleText ? null : resultEventError || "qwen produced no visible text" : resultEventError || result.error
     };
   });
 }
@@ -1708,6 +1745,15 @@ function trackQwenToolTiming(event, timestamp, state) {
     state.toolMs = (state.toolMs ?? 0) + Math.max(timestamp - startedAt, 0);
   }
 }
+function shouldCountEventTextForTiming(provider, event, firstTextAt) {
+  if (provider !== "qwen") {
+    return true;
+  }
+  if (event?.type !== "result") {
+    return true;
+  }
+  return firstTextAt == null;
+}
 function getProviderRuntime(providerId) {
   const runtime = RUNTIMES[providerId];
   if (!runtime) {
@@ -1736,7 +1782,7 @@ async function runProviderPromptStreaming({
     onEvent(event) {
       const now = Date.now();
       const eventText = extractProviderEventText(provider, event);
-      if ((timingSupport.ttft || timingSupport.tail) && eventText.trim()) {
+      if ((timingSupport.ttft || timingSupport.tail) && eventText.trim() && shouldCountEventTextForTiming(provider, event, firstTextAt)) {
         if (firstTextAt == null) {
           firstTextAt = now;
         }
@@ -2251,8 +2297,13 @@ function buildReviewPrompt({
     `You are acting as ${provider} inside polycli.`,
     modeText,
     "Return markdown only.",
+    "Review only the provided git diff and context in this prompt.",
+    "Do not run tools, commands, or tests.",
+    "Do not inspect the repository beyond the provided diff.",
+    "Your output must contain a visible final answer in assistant text, not only reasoning blocks.",
     "Start with a short verdict line.",
     "Then list findings ordered by severity, with file/line references when possible.",
+    "If you find no actionable issues, say exactly: No issues found.",
     "Do not suggest that you are about to apply fixes.",
     focusText,
     truncationText,
@@ -2430,10 +2481,15 @@ function summarizeEventText(provider, event) {
     return "";
   }
   if (provider === "kimi") {
-    if (event.role !== "assistant" || !Array.isArray(event.content)) return "";
+    if (event.role !== "assistant") return "";
+    if (typeof event.content === "string") return event.content;
+    if (!Array.isArray(event.content)) return "";
     return event.content.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
   }
   if (provider === "qwen") {
+    if (event.type === "result" && event.is_error !== true && event.subtype !== "error" && typeof event.result === "string") {
+      return event.result;
+    }
     if (event.type !== "assistant" || !Array.isArray(event.message?.content)) return "";
     return event.message.content.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
   }
@@ -2448,7 +2504,15 @@ function appendPreview(logFile, provider, event) {
   if (!text) return;
   const lines = String(text).split(/\r?\n/).map((line) => collapseWhitespace(line)).filter(Boolean).slice(0, 10);
   if (lines.length === 0) return;
-  fs6.appendFileSync(logFile, `${lines.join("\n")}
+  const block = lines.join("\n");
+  try {
+    const existingLines = fs6.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (existingLines.slice(-lines.length).join("\n") === block) {
+      return;
+    }
+  } catch {
+  }
+  fs6.appendFileSync(logFile, `${block}
 `, "utf8");
 }
 function buildExecutionEnvelope(execution, result) {
@@ -2472,6 +2536,7 @@ async function runForegroundExecution(execution, asJson) {
     kind: execution.kind,
     measurementScope: execution.measurementScope || "request",
     meta: execution.meta || null,
+    ...execution.runtimeOptions || {},
     onEvent() {
     }
   });
@@ -2761,7 +2826,11 @@ function buildReviewExecution(rawArgs, { adversarial }) {
         baseRef: reviewContext.baseRef || null,
         adversarial
       },
-      measurementScope: "request"
+      measurementScope: "request",
+      runtimeOptions: provider === "kimi" ? { extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] } : provider === "qwen" ? {
+        maxSteps: 1,
+        appendSystem: "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found."
+      } : {}
     }
   };
 }
@@ -2950,6 +3019,7 @@ async function runJobWorker(rawArgs) {
       kind: execution.kind,
       measurementScope: execution.measurementScope || "job",
       meta: execution.meta || null,
+      ...execution.runtimeOptions || {},
       onEvent(event) {
         appendPreview(current.logFile, execution.provider, event);
       }
