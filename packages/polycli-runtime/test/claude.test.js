@@ -170,6 +170,44 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "error", is_error
   );
 });
 
+test("runClaudePrompt falls back to stderr session ids when stdout has none", () => {
+  withFakeClaudeBin(
+    `#!/usr/bin/env node
+process.stderr.write("resume 123e4567-e89b-42d3-a456-426614174000\\n");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "pong" }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runClaudePrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
+    }
+  );
+});
+
+test("runClaudePrompt does not leak stdout on non-zero exit", () => {
+  withFakeClaudeBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "secret token" }) + "\\n");
+process.exit(2);
+`,
+    ({ root, bin }) => {
+      const result = runClaudePrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "claude exited with code 2");
+    }
+  );
+});
+
 test("runClaudePromptStreaming returns a structured failure on spawn error", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();

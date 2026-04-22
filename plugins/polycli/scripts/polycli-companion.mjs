@@ -30,6 +30,7 @@ import {
   resolveJobFile,
   resolveJobLogFile,
   resolveWorkspaceRoot,
+  updateJobAtomically,
   upsertJob,
   writeJobConfigFile,
   writeJobFile,
@@ -790,50 +791,60 @@ async function runJobWorker(rawArgs) {
       },
     });
 
-    const latest = getJob(workspaceRoot, jobId);
-    if (latest?.status === "cancelled") {
+    const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {
+      if (!latest || latest.status === "cancelled") {
+        return null;
+      }
+      const finishedJob = {
+        ...latest,
+        ...execution.jobMeta,
+        status: result.ok ? "completed" : "failed",
+        pid: null,
+        finishedAt: new Date().toISOString(),
+        sessionId: result.sessionId ?? null,
+        error: result.error ?? null,
+      };
+      return {
+        job: finishedJob,
+        envelope: {
+          job: finishedJob,
+          result,
+        },
+      };
+    });
+    if (!write.written) {
       removeJobConfigFile(workspaceRoot, jobId);
       return;
     }
-
-    const finishedJob = {
-      ...current,
-      ...execution.jobMeta,
-      status: result.ok ? "completed" : "failed",
-      pid: null,
-      finishedAt: new Date().toISOString(),
-      sessionId: result.sessionId ?? null,
-      error: result.error ?? null,
-    };
-    const envelope = {
-      job: finishedJob,
-      result,
-    };
-    writeJobFile(workspaceRoot, jobId, envelope);
-    upsertJob(workspaceRoot, finishedJob);
     if (result.timing) {
       appendTimingRecord(workspaceRoot, result.timing);
     }
     removeJobConfigFile(workspaceRoot, jobId);
   } catch (error) {
-    const latest = getJob(workspaceRoot, jobId);
-    if (latest?.status === "cancelled") {
+    const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {
+      if (!latest || latest.status === "cancelled") {
+        return null;
+      }
+      const failedJob = {
+        ...latest,
+        ...execution.jobMeta,
+        status: "failed",
+        pid: null,
+        finishedAt: new Date().toISOString(),
+        error: error.message,
+      };
+      return {
+        job: failedJob,
+        envelope: {
+          job: failedJob,
+          result: { ok: false, error: error.message },
+        },
+      };
+    });
+    if (!write.written) {
       removeJobConfigFile(workspaceRoot, jobId);
       return;
     }
-    const failedJob = {
-      ...current,
-      ...execution.jobMeta,
-      status: "failed",
-      pid: null,
-      finishedAt: new Date().toISOString(),
-      error: error.message,
-    };
-    writeJobFile(workspaceRoot, jobId, {
-      job: failedJob,
-      result: { ok: false, error: error.message },
-    });
-    upsertJob(workspaceRoot, failedJob);
     removeJobConfigFile(workspaceRoot, jobId);
     throw error;
   }

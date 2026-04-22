@@ -9,6 +9,7 @@ import {
   buildQwenEnv,
   buildQwenInvocation,
   extractQwenText,
+  getQwenAuthStatus,
   parseQwenStreamText,
   runQwenPrompt,
   runQwenPromptStreaming,
@@ -224,6 +225,59 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "error", result: 
       assert.equal(result.error, "permission denied");
     }
   );
+});
+
+test("runQwenPrompt falls back to stderr session ids when stdout has none", () => {
+  withFakeQwenBin(
+    `#!/usr/bin/env node
+process.stderr.write("resume 123e4567-e89b-42d3-a456-426614174000\\n");
+process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "hello world" }] } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result: "hello world", is_error: false }) + "\\n");
+`,
+    ({ root, env }) => {
+      const result = runQwenPrompt({
+        prompt: "ping",
+        cwd: root,
+        env,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
+    }
+  );
+});
+
+test("runQwenPrompt does not leak stdout on non-zero exit", () => {
+  withFakeQwenBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result: "secret token", is_error: false }) + "\\n");
+process.exit(2);
+`,
+    ({ root, env }) => {
+      const result = runQwenPrompt({
+        prompt: "ping",
+        cwd: root,
+        env,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "qwen exited with code 2");
+    }
+  );
+});
+
+test("getQwenAuthStatus keeps loggedIn=true for transient probe failures", () => {
+  const auth = getQwenAuthStatus(process.cwd(), {
+    envBuilder() {
+      return {};
+    },
+    promptRunner() {
+      return { ok: false, error: "qwen timed out after 30s", model: null };
+    },
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /timed out after 30s/i);
 });
 
 test("runQwenPromptStreaming returns a structured failure on spawn error", async () => {

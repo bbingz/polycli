@@ -115,6 +115,45 @@ process.stdout.write(JSON.stringify({ type: "result", sessionId: "cop-sync-1", e
   );
 });
 
+test("runCopilotPrompt falls back to stderr session ids when stdout has none", () => {
+  withFakeCopilotBin(
+    `#!/usr/bin/env node
+process.stderr.write("resume 123e4567-e89b-42d3-a456-426614174000\\n");
+process.stdout.write(JSON.stringify({ type: "assistant.message", data: { messageId: "m-1", content: "hello world", phase: "final_answer" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", exitCode: 0 }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runCopilotPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
+    }
+  );
+});
+
+test("runCopilotPrompt does not leak stdout on non-zero exit", () => {
+  withFakeCopilotBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "assistant.message", data: { content: "secret token", phase: "final_answer" } }) + "\\n");
+process.exit(2);
+`,
+    ({ root, bin }) => {
+      const result = runCopilotPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "copilot exited with code 2");
+    }
+  );
+});
+
 test("runCopilotPromptStreaming returns a structured failure on spawn error", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();

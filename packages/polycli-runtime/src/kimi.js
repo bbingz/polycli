@@ -7,6 +7,8 @@ const KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const PROMPT_STDIN_THRESHOLD_BYTES = 100_000;
+const KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+const KIMI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 
 export function buildKimiInvocation({
   prompt,
@@ -84,23 +86,33 @@ export function getKimiAvailability(cwd) {
   return binaryAvailable(KIMI_BIN, ["-V"], { cwd });
 }
 
-export function getKimiAuthStatus(cwd) {
-  const result = runKimiPrompt({
+function buildKimiAuthStatus(result) {
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: result.model ?? null,
+    };
+  }
+
+  const detail = String(result.error ?? "").trim() || "kimi auth probe failed";
+  if (KIMI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (KIMI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+  }
+  return { loggedIn: false, detail };
+}
+
+export function getKimiAuthStatus(cwd, { promptRunner = runKimiPrompt } = {}) {
+  const result = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS,
     extraArgs: ["--max-steps-per-turn", "1"],
   });
-
-  if (!result.ok) {
-    return { loggedIn: false, detail: result.error };
-  }
-
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: result.model ?? null,
-  };
+  return buildKimiAuthStatus(result);
 }
 
 export function runKimiPrompt({
@@ -132,13 +144,17 @@ export function runKimiPrompt({
   if (result.status !== 0) {
     return {
       ok: false,
-      error: result.stderr.trim() || result.stdout.trim() || `kimi exited with code ${result.status}`,
+      error: result.stderr.trim() || `kimi exited with code ${result.status}`,
       status: result.status,
     };
   }
 
   const parsed = parseKimiStreamText(result.stdout);
-  const session = resolveSessionId({ stderr: result.stderr, priority: ["stderr"] });
+  const session = resolveSessionId({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    priority: ["stdout", "stderr", "file"],
+  });
 
   return {
     ok: Boolean(parsed.response.trim()),
@@ -186,7 +202,11 @@ export function runKimiPromptStreaming({
     },
   }).then((result) => {
     const parsed = parseKimiStreamText(result.stdout);
-    const session = resolveSessionId({ stderr: result.stderr, priority: ["stderr"] });
+    const session = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"],
+    });
     const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,

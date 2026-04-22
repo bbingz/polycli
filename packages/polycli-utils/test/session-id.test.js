@@ -8,6 +8,11 @@ test("matchSessionId detects UUIDs in arbitrary text", () => {
   assert.equal(sessionId, "123e4567-e89b-12d3-a456-426614174000");
 });
 
+test("matchSessionId accepts modern UUIDv7 values", () => {
+  const sessionId = matchSessionId("resume 0195f2d5-8b11-7f4a-9234-6c6f0a12abcd");
+  assert.equal(sessionId, "0195f2d5-8b11-7f4a-9234-6c6f0a12abcd");
+});
+
 test("resolveSessionId respects source priority", () => {
   const resolved = resolveSessionId({
     stdout: "session 123e4567-e89b-12d3-a456-426614174000",

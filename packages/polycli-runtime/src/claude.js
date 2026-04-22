@@ -1,5 +1,6 @@
 import { parseStreamJsonLine } from "@bbingz/polycli-utils/parse-stream-json";
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
 import { spawnStreamingCommand } from "./spawn.js";
 
@@ -169,8 +170,13 @@ export function parseClaudeJsonResult(stdout, stderr, status) {
 
   try {
     const parsed = JSON.parse(text.slice(jsonStart));
+    const resolvedSession = resolveSessionId({
+      stdout,
+      stderr,
+      priority: ["stdout", "stderr", "file"],
+    });
     const response = typeof parsed.result === "string" ? parsed.result : "";
-    const sessionId = parsed.session_id ?? parsed.sessionId ?? null;
+    const sessionId = parsed.session_id ?? parsed.sessionId ?? resolvedSession.sessionId ?? null;
     const errorText = isClaudeErrorResultEvent(parsed) ? getClaudeErrorText(parsed) : null;
     const processError = status === 0
       ? null
@@ -292,6 +298,11 @@ export function runClaudePromptStreaming({
     },
   }).then((result) => {
     const parsed = parseClaudeStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"],
+    });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultError = isClaudeErrorResultEvent(parsed.resultEvent)
       ? getClaudeErrorText(parsed.resultEvent)
@@ -300,6 +311,7 @@ export function runClaudePromptStreaming({
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok
         ? (resultError || (hasVisibleText ? null : "claude produced no visible text"))

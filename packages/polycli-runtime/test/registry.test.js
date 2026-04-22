@@ -7,6 +7,7 @@ import {
   PROVIDER_OPERATION_NAMES,
   getProviderRuntime,
   listProviderRuntimes,
+  runProviderPrompt,
   runProviderPromptStreaming,
 } from "../src/index.js";
 
@@ -122,5 +123,32 @@ test("runProviderPromptStreaming ignores duplicate terminal summary text for pro
     }
   } finally {
     Date.now = realNow;
+  }
+});
+
+test("runProviderPrompt marks supported sync-only metrics as missing instead of unsupported", async () => {
+  const runtime = getProviderRuntime("gemini");
+  const originalRunPrompt = runtime.runPrompt;
+
+  runtime.runPrompt = async () => ({
+    ok: true,
+    response: "pong",
+    sessionId: "123e4567-e89b-42d3-a456-426614174000",
+  });
+
+  try {
+    const result = await runProviderPrompt({
+      provider: "gemini",
+      prompt: "ping",
+      cwd: process.cwd(),
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.timing.metrics.ttft.status, "missing");
+    assert.equal(result.timing.metrics.gen.status, "missing");
+    assert.equal(result.timing.metrics.tail.status, "missing");
+    assert.equal(result.timing.runtimePersistence, "session");
+  } finally {
+    runtime.runPrompt = originalRunPrompt;
   }
 });

@@ -1,14 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildGeminiInvocation,
   extractGeminiText,
   getGeminiAuthStatus,
   parseGeminiStreamText,
+  runGeminiPrompt,
   runGeminiPromptStreaming,
 } from "../src/index.js";
+
+function withFakeGeminiBin(source, fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-gemini-sync-"));
+  const bin = path.join(root, "gemini");
+  fs.writeFileSync(bin, source, { mode: 0o755 });
+
+  try {
+    return fn({ root, bin });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
 
 test("buildGeminiInvocation uses stdin for large prompts and preserves approval mode", () => {
   const prompt = "x".repeat(100_001);
@@ -98,4 +114,23 @@ test("getGeminiAuthStatus reports loggedIn=false for explicit auth failures", ()
 
   assert.equal(auth.loggedIn, false);
   assert.match(auth.detail, /unauthorized/i);
+});
+
+test("runGeminiPrompt falls back to stderr session ids when stdout has none", () => {
+  withFakeGeminiBin(
+    `#!/usr/bin/env node
+process.stderr.write("resume 123e4567-e89b-42d3-a456-426614174000\\n");
+process.stdout.write(JSON.stringify({ response: "pong" }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runGeminiPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
+    }
+  );
 });

@@ -82,3 +82,47 @@ test("aggregateTimingRecords keeps unsupported, missing, and zero separate", () 
     job: 1,
   });
 });
+
+test("aggregateTimingRecords excludes zero values from measured percentiles", () => {
+  const summary = aggregateTimingRecords([
+    {
+      version: 1,
+      provider: "qwen",
+      runtimePersistence: "session",
+      measurementScope: "request",
+      completedAt: "2026-04-21T10:00:00.000Z",
+      metrics: {
+        cold: { status: "unsupported", ms: null },
+        ttft: { status: "measured", ms: 100 },
+        gen: { status: "measured", ms: 200 },
+        tool: { status: "zero", ms: 0 },
+        retry: { status: "unsupported", ms: null },
+        tail: { status: "measured", ms: 30 },
+        total: { status: "measured", ms: 330 },
+      },
+    },
+    {
+      version: 1,
+      provider: "qwen",
+      runtimePersistence: "session",
+      measurementScope: "request",
+      completedAt: "2026-04-21T10:01:00.000Z",
+      metrics: {
+        cold: { status: "unsupported", ms: null },
+        ttft: { status: "measured", ms: 200 },
+        gen: { status: "measured", ms: 300 },
+        tool: { status: "measured", ms: 40 },
+        retry: { status: "unsupported", ms: null },
+        tail: { status: "measured", ms: 20 },
+        total: { status: "measured", ms: 520 },
+      },
+    },
+  ]);
+
+  const tool = summary.byProvider.qwen.metrics.tool;
+  assert.equal(tool.measuredCount, 1);
+  assert.equal(tool.zeroCount, 1);
+  assert.equal(tool.p50, 40);
+  assert.equal(tool.avg, 40);
+  assert.equal(tool.capability, "supported");
+});

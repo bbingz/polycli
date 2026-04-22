@@ -26,6 +26,19 @@ function defaultState() {
   };
 }
 
+function buildCorruptBackupPath(stateFile) {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${stateFile}.corrupt-${timestamp}`;
+}
+
+function backupCorruptStateFile(stateFile) {
+  try {
+    fs.renameSync(stateFile, buildCorruptBackupPath(stateFile));
+  } catch {
+    // ignore
+  }
+}
+
 function stateRootDir() {
   const pluginData = process.env[PLUGIN_DATA_ENV];
   if (pluginData) {
@@ -71,11 +84,20 @@ export function ensureStateDir(workspaceRoot) {
 }
 
 export function loadState(workspaceRoot) {
+  const stateFile = resolveStateFile(workspaceRoot);
+  let raw;
   try {
-    const raw = fs.readFileSync(resolveStateFile(workspaceRoot), "utf8");
-    if (!raw.trim()) return defaultState();
+    raw = fs.readFileSync(stateFile, "utf8");
+  } catch {
+    return defaultState();
+  }
+
+  if (!raw.trim()) return defaultState();
+
+  try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.jobs)) {
+      backupCorruptStateFile(stateFile);
       return defaultState();
     }
     return {
@@ -83,11 +105,12 @@ export function loadState(workspaceRoot) {
       jobs: parsed.jobs,
     };
   } catch {
+    backupCorruptStateFile(stateFile);
     return defaultState();
   }
 }
 
-function saveState(workspaceRoot, state) {
+export function saveState(workspaceRoot, state) {
   ensureStateDir(workspaceRoot);
   const jobs = state.jobs
     .slice()
@@ -104,6 +127,38 @@ export function updateState(workspaceRoot, mutate) {
     const state = loadState(workspaceRoot);
     mutate(state);
     return saveState(workspaceRoot, state);
+  });
+}
+
+export function updateJobAtomically(workspaceRoot, jobId, buildNext) {
+  ensureStateDir(workspaceRoot);
+  const lockPath = `${resolveStateFile(workspaceRoot)}.lock`;
+  return withLockfile(lockPath, () => {
+    const state = loadState(workspaceRoot);
+    const index = state.jobs.findIndex((job) => job.jobId === jobId);
+    const current = index >= 0 ? state.jobs[index] : null;
+    const next = buildNext(current);
+
+    if (!next) {
+      return { written: false, job: current, envelope: null };
+    }
+
+    const job = next.job ?? current;
+    if (!job) {
+      return { written: false, job: null, envelope: next.envelope ?? null };
+    }
+
+    if (Object.prototype.hasOwnProperty.call(next, "envelope")) {
+      writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), next.envelope);
+    }
+
+    if (index >= 0) {
+      state.jobs[index] = job;
+    } else {
+      state.jobs.push(job);
+    }
+    saveState(workspaceRoot, state);
+    return { written: true, job, envelope: next.envelope ?? null };
   });
 }
 

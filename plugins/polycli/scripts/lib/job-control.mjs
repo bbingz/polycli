@@ -8,6 +8,7 @@ import {
   listJobs,
   readJobFile,
   resolveJobFile,
+  updateJobAtomically,
   writeJobFile,
   upsertJob,
 } from "./state.mjs";
@@ -169,13 +170,35 @@ export async function cancelJob(workspaceRoot, jobId) {
     pid: null,
     finishedAt: new Date().toISOString(),
   };
-  upsertJob(workspaceRoot, cancelledJob);
-  writeJobFile(workspaceRoot, jobId, {
-    job: cancelledJob,
-    result: {
-      ok: false,
-      error: "cancelled",
-    },
+  let reason = null;
+  const write = updateJobAtomically(workspaceRoot, jobId, (current) => {
+    if (!current) {
+      reason = "not_found";
+      return null;
+    }
+    if (!ACTIVE_STATUSES.has(current.status)) {
+      reason = "not_cancellable";
+      return null;
+    }
+    const nextJob = {
+      ...current,
+      status: "cancelled",
+      pid: null,
+      finishedAt: cancelledJob.finishedAt,
+    };
+    return {
+      job: nextJob,
+      envelope: {
+        job: nextJob,
+        result: {
+          ok: false,
+          error: "cancelled",
+        },
+      },
+    };
   });
+  if (!write.written) {
+    return { cancelled: false, reason: reason || "not_cancellable", jobId };
+  }
   return { cancelled: true, jobId };
 }

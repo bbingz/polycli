@@ -1,4 +1,5 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
 import { spawnStreamingCommand } from "./spawn.js";
 
@@ -185,6 +186,11 @@ export function runCopilotPrompt({
   }
 
   const parsed = parseCopilotStreamText(result.stdout);
+  const resolvedSession = resolveSessionId({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    priority: ["stdout", "stderr", "file"],
+  });
   const resultError = parsed.resultEvent?.is_error
     ? (typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "copilot returned an error")
     : (parsed.resultEvent?.exitCode && parsed.resultEvent.exitCode !== 0
@@ -196,11 +202,11 @@ export function runCopilotPrompt({
     ok: result.status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId,
+    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model,
     error: result.status === 0
       ? (resultError || (hasVisibleText ? null : "copilot produced no visible text"))
-      : (result.stderr.trim() || result.stdout.trim() || `copilot exited with code ${result.status}`),
+      : (result.stderr.trim() || `copilot exited with code ${result.status}`),
     status: result.status,
   };
 }
@@ -244,6 +250,11 @@ export function runCopilotPromptStreaming({
     },
   }).then((result) => {
     const parsed = parseCopilotStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"],
+    });
     const resultError = parsed.resultEvent?.is_error
       ? (typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "copilot returned an error")
       : (parsed.resultEvent?.exitCode && parsed.resultEvent.exitCode !== 0
@@ -253,6 +264,7 @@ export function runCopilotPromptStreaming({
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok
         ? (resultError || (hasVisibleText ? null : "copilot produced no visible text"))

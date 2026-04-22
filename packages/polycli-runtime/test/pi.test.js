@@ -8,6 +8,7 @@ import path from "node:path";
 import {
   buildPiInvocation,
   extractPiText,
+  getPiAuthStatus,
   parsePiStreamText,
   runPiPrompt,
   runPiPromptStreaming,
@@ -97,6 +98,56 @@ process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: "hello 
       assert.equal(result.model, "pi-test");
     }
   );
+});
+
+test("runPiPrompt falls back to stderr session ids when stdout has none", () => {
+  withFakePiBin(
+    `#!/usr/bin/env node
+process.stderr.write("resume 123e4567-e89b-42d3-a456-426614174000\\n");
+process.stdout.write(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello world" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: "hello world" } }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runPiPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
+    }
+  );
+});
+
+test("runPiPrompt does not leak stdout on non-zero exit", () => {
+  withFakePiBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: "secret token" } }) + "\\n");
+process.exit(2);
+`,
+    ({ root, bin }) => {
+      const result = runPiPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "pi exited with code 2");
+    }
+  );
+});
+
+test("getPiAuthStatus keeps loggedIn=true for transient probe failures", () => {
+  const auth = getPiAuthStatus(process.cwd(), {
+    promptRunner() {
+      return { ok: false, error: "pi timed out after 30s" };
+    },
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /timed out after 30s/i);
 });
 
 test("runPiPromptStreaming returns a structured failure on spawn error", async () => {

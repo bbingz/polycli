@@ -9,6 +9,7 @@ export function spawnStreamingCommand({
   env,
   input,
   timeout,
+  killGraceMs = 2_000,
   stdio = ["pipe", "pipe", "pipe"],
   detached = false,
   unref = false,
@@ -43,18 +44,37 @@ export function spawnStreamingCommand({
     let timedOut = false;
     let settled = false;
     let timer = null;
+    let forceTimer = null;
+
+    const signalChild = (signal) => {
+      try {
+        if (detached && Number.isInteger(child.pid) && child.pid > 0 && process.platform !== "win32") {
+          process.kill(-child.pid, signal);
+          return;
+        }
+        child.kill(signal);
+      } catch {
+        // ignore
+      }
+    };
 
     const finish = (result) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
       resolve(result);
     };
 
     if (timeout != null) {
       timer = setTimeout(() => {
         timedOut = true;
-        try { child.kill("SIGTERM"); } catch {}
+        signalChild("SIGTERM");
+        if (killGraceMs > 0) {
+          forceTimer = setTimeout(() => {
+            signalChild("SIGKILL");
+          }, killGraceMs);
+        }
       }, timeout);
     }
 

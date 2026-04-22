@@ -7,10 +7,13 @@ import path from "node:path";
 import {
   ensureStateDir,
   listJobs,
+  loadState,
   readJobFile,
+  resolveStateFile,
   resolveJobFile,
   resolveStateDir,
   resolveWorkspaceRoot,
+  updateJobAtomically,
   upsertJob,
   writeJobFile,
 } from "../lib/state.mjs";
@@ -71,5 +74,70 @@ test("upsertJob stores jobs and writeJobFile persists envelopes", () => {
     const envelope = readJobFile(resolveJobFile(workspaceRoot, "job-1"));
     assert.equal(envelope.job.status, "completed");
     assert.equal(envelope.result.response, "PONG");
+  });
+});
+
+test("loadState preserves a backup when state.json is corrupt", () => {
+  withPluginData(() => {
+    const workspaceRoot = "/tmp/polycli-corrupt-state";
+    ensureStateDir(workspaceRoot);
+    const stateFile = resolveStateFile(workspaceRoot);
+    fs.writeFileSync(stateFile, "{not valid json\n", "utf8");
+
+    const state = loadState(workspaceRoot);
+    assert.deepEqual(state.jobs, []);
+
+    const backupDir = path.dirname(stateFile);
+    const backups = fs.readdirSync(backupDir).filter((entry) => entry.startsWith("state.json.corrupt-"));
+    assert.equal(backups.length, 1);
+    assert.match(fs.readFileSync(path.join(backupDir, backups[0]), "utf8"), /not valid json/);
+    assert.equal(fs.existsSync(stateFile), false);
+  });
+});
+
+test("updateJobAtomically can skip stale worker writes after cancellation", () => {
+  withPluginData(() => {
+    const workspaceRoot = "/tmp/polycli-atomic-job";
+    ensureStateDir(workspaceRoot);
+
+    upsertJob(workspaceRoot, {
+      jobId: "job-1",
+      provider: "qwen",
+      kind: "review",
+      status: "running",
+    });
+
+    updateJobAtomically(workspaceRoot, "job-1", (current) => ({
+      job: {
+        ...current,
+        status: "cancelled",
+      },
+      envelope: {
+        job: { ...current, status: "cancelled" },
+        result: { ok: false, error: "cancelled" },
+      },
+    }));
+
+    const staleWrite = updateJobAtomically(workspaceRoot, "job-1", (current) => {
+      if (current?.status === "cancelled") {
+        return null;
+      }
+      return {
+        job: {
+          ...current,
+          status: "completed",
+        },
+        envelope: {
+          job: { ...current, status: "completed" },
+          result: { ok: true, response: "late result" },
+        },
+      };
+    });
+
+    assert.equal(staleWrite.written, false);
+    assert.equal(listJobs(workspaceRoot)[0].status, "cancelled");
+    const envelope = readJobFile(resolveJobFile(workspaceRoot, "job-1"));
+    assert.equal(envelope.job.status, "cancelled");
+    assert.equal(envelope.result.error, "cancelled");
   });
 });

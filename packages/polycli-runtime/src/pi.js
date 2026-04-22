@@ -1,10 +1,13 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
 import { spawnStreamingCommand } from "./spawn.js";
 
 const PI_BIN = process.env.PI_CLI_BIN || "pi";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const PI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+const PI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 
 function collectPiContentText(content) {
   if (typeof content === "string") {
@@ -107,22 +110,32 @@ export function getPiAvailability(cwd) {
   return binaryAvailable(PI_BIN, ["--version"], { cwd });
 }
 
-export function getPiAuthStatus(cwd) {
-  const result = runPiPrompt({
+function buildPiAuthStatus(result) {
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: result.model ?? null,
+    };
+  }
+
+  const detail = String(result.error ?? "").trim() || "pi auth probe failed";
+  if (PI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (PI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+  }
+  return { loggedIn: false, detail };
+}
+
+export function getPiAuthStatus(cwd, { promptRunner = runPiPrompt } = {}) {
+  const result = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS,
   });
-
-  if (!result.ok) {
-    return { loggedIn: false, detail: result.error };
-  }
-
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: result.model ?? null,
-  };
+  return buildPiAuthStatus(result);
 }
 
 export function runPiPrompt({
@@ -158,6 +171,11 @@ export function runPiPrompt({
   }
 
   const parsed = parsePiStreamText(result.stdout);
+  const resolvedSession = resolveSessionId({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    priority: ["stdout", "stderr", "file"],
+  });
   const resultError = parsed.resultEvent?.error
     ? String(parsed.resultEvent.error)
     : null;
@@ -167,11 +185,11 @@ export function runPiPrompt({
     ok: result.status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId,
+    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model,
     error: result.status === 0
       ? (resultError || (hasVisibleText ? null : "pi produced no visible text"))
-      : (result.stderr.trim() || result.stdout.trim() || `pi exited with code ${result.status}`),
+      : (result.stderr.trim() || `pi exited with code ${result.status}`),
     status: result.status,
   };
 }
@@ -216,6 +234,11 @@ export function runPiPromptStreaming({
     },
   }).then((result) => {
     const parsed = parsePiStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"],
+    });
     const resultError = parsed.resultEvent?.error
       ? String(parsed.resultEvent.error)
       : null;
@@ -223,6 +246,7 @@ export function runPiPromptStreaming({
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok
         ? (resultError || (hasVisibleText ? null : "pi produced no visible text"))

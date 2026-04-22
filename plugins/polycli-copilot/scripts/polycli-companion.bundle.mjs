@@ -225,6 +225,43 @@ async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SI
   return true;
 }
 
+// packages/polycli-utils/src/session-id.js
+var UUID_SESSION_ID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
+function matchSessionId(text, { patterns = [UUID_SESSION_ID_REGEX] } = {}) {
+  if (typeof text !== "string" || text.length === 0) {
+    return null;
+  }
+  for (const pattern of patterns) {
+    const flags = pattern.flags.replace(/g/g, "");
+    const regex = new RegExp(pattern.source, flags);
+    const match = text.match(regex);
+    if (match) {
+      return match[0];
+    }
+  }
+  return null;
+}
+function resolveSessionId({
+  stdout = "",
+  stderr = "",
+  fileValue = null,
+  patterns,
+  priority = ["stdout", "stderr", "file"]
+} = {}) {
+  const sources = {
+    stdout,
+    stderr,
+    file: typeof fileValue === "string" ? fileValue : ""
+  };
+  for (const source of priority) {
+    const sessionId = matchSessionId(sources[source], { patterns });
+    if (sessionId) {
+      return { sessionId, source };
+    }
+  }
+  return { sessionId: null, source: null };
+}
+
 // packages/polycli-runtime/src/spawn.js
 import { spawn } from "node:child_process";
 
@@ -275,6 +312,7 @@ function spawnStreamingCommand({
   env,
   input,
   timeout,
+  killGraceMs = 2e3,
   stdio = ["pipe", "pipe", "pipe"],
   detached = false,
   unref = false,
@@ -309,18 +347,32 @@ function spawnStreamingCommand({
     let timedOut = false;
     let settled = false;
     let timer = null;
+    let forceTimer = null;
+    const signalChild = (signal) => {
+      try {
+        if (detached && Number.isInteger(child.pid) && child.pid > 0 && process.platform !== "win32") {
+          process.kill(-child.pid, signal);
+          return;
+        }
+        child.kill(signal);
+      } catch {
+      }
+    };
     const finish = (result) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
       resolve(result);
     };
     if (timeout != null) {
       timer = setTimeout(() => {
         timedOut = true;
-        try {
-          child.kill("SIGTERM");
-        } catch {
+        signalChild("SIGTERM");
+        if (killGraceMs > 0) {
+          forceTimer = setTimeout(() => {
+            signalChild("SIGKILL");
+          }, killGraceMs);
         }
       }, timeout);
     }
@@ -528,8 +580,13 @@ function parseClaudeJsonResult(stdout, stderr, status) {
   }
   try {
     const parsed = JSON.parse(text.slice(jsonStart));
+    const resolvedSession = resolveSessionId({
+      stdout,
+      stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
     const response = typeof parsed.result === "string" ? parsed.result : "";
-    const sessionId = parsed.session_id ?? parsed.sessionId ?? null;
+    const sessionId = parsed.session_id ?? parsed.sessionId ?? resolvedSession.sessionId ?? null;
     const errorText = isClaudeErrorResultEvent(parsed) ? getClaudeErrorText(parsed) : null;
     const processError = status === 0 ? null : String(stderr ?? "").trim() || `claude exited with code ${status}`;
     return {
@@ -640,11 +697,17 @@ function runClaudePromptStreaming({
     }
   }).then((result) => {
     const parsed = parseClaudeStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultError = isClaudeErrorResultEvent(parsed.resultEvent) ? getClaudeErrorText(parsed.resultEvent) : null;
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok ? resultError || (hasVisibleText ? null : "claude produced no visible text") : result.error
     };
@@ -804,15 +867,20 @@ function runCopilotPrompt({
     };
   }
   const parsed = parseCopilotStreamText(result.stdout);
+  const resolvedSession = resolveSessionId({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    priority: ["stdout", "stderr", "file"]
+  });
   const resultError = parsed.resultEvent?.is_error ? typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "copilot returned an error" : parsed.resultEvent?.exitCode && parsed.resultEvent.exitCode !== 0 ? `copilot exited with code ${parsed.resultEvent.exitCode}` : null;
   const hasVisibleText = Boolean(parsed.response.trim());
   return {
     ok: result.status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId,
+    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model,
-    error: result.status === 0 ? resultError || (hasVisibleText ? null : "copilot produced no visible text") : result.stderr.trim() || result.stdout.trim() || `copilot exited with code ${result.status}`,
+    error: result.status === 0 ? resultError || (hasVisibleText ? null : "copilot produced no visible text") : result.stderr.trim() || `copilot exited with code ${result.status}`,
     status: result.status
   };
 }
@@ -856,11 +924,17 @@ function runCopilotPromptStreaming({
     }
   }).then((result) => {
     const parsed = parseCopilotStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
     const resultError = parsed.resultEvent?.is_error ? typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "copilot returned an error" : parsed.resultEvent?.exitCode && parsed.resultEvent.exitCode !== 0 ? `copilot exited with code ${parsed.resultEvent.exitCode}` : null;
     const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok ? resultError || (hasVisibleText ? null : "copilot produced no visible text") : result.error
     };
@@ -934,6 +1008,11 @@ function parseGeminiJsonResult(stdout, stderr, status) {
   }
   try {
     const parsed = JSON.parse(text.slice(jsonStart));
+    const resolvedSession = resolveSessionId({
+      stdout,
+      stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
     if (parsed.error) {
       return {
         ok: false,
@@ -945,7 +1024,7 @@ function parseGeminiJsonResult(stdout, stderr, status) {
     return {
       ok: true,
       response: parsed.response ?? "",
-      sessionId: parsed.session_id ?? null,
+      sessionId: parsed.session_id ?? resolvedSession.sessionId ?? null,
       stats: parsed.stats ?? null,
       status
     };
@@ -1054,49 +1133,18 @@ function runGeminiPromptStreaming({
     }
   }).then((result) => {
     const parsed = parseGeminiStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       error: result.ok ? null : result.error
     };
   });
-}
-
-// packages/polycli-utils/src/session-id.js
-var UUID_SESSION_ID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
-function matchSessionId(text, { patterns = [UUID_SESSION_ID_REGEX] } = {}) {
-  if (typeof text !== "string" || text.length === 0) {
-    return null;
-  }
-  for (const pattern of patterns) {
-    const flags = pattern.flags.replace(/g/g, "");
-    const regex = new RegExp(pattern.source, flags);
-    const match = text.match(regex);
-    if (match) {
-      return match[0];
-    }
-  }
-  return null;
-}
-function resolveSessionId({
-  stdout = "",
-  stderr = "",
-  fileValue = null,
-  patterns,
-  priority = ["stdout", "stderr", "file"]
-} = {}) {
-  const sources = {
-    stdout,
-    stderr,
-    file: typeof fileValue === "string" ? fileValue : ""
-  };
-  for (const source of priority) {
-    const sessionId = matchSessionId(sources[source], { patterns });
-    if (sessionId) {
-      return { sessionId, source };
-    }
-  }
-  return { sessionId: null, source: null };
 }
 
 // packages/polycli-runtime/src/kimi.js
@@ -1104,6 +1152,8 @@ var KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
 var DEFAULT_TIMEOUT_MS4 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS4 = 3e4;
 var PROMPT_STDIN_THRESHOLD_BYTES = 1e5;
+var KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var KIMI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 function buildKimiInvocation({
   prompt,
   model = null,
@@ -1166,21 +1216,31 @@ function parseKimiStreamText(text) {
 function getKimiAvailability(cwd) {
   return binaryAvailable(KIMI_BIN, ["-V"], { cwd });
 }
-function getKimiAuthStatus(cwd) {
-  const result = runKimiPrompt({
+function buildKimiAuthStatus(result) {
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: result.model ?? null
+    };
+  }
+  const detail = String(result.error ?? "").trim() || "kimi auth probe failed";
+  if (KIMI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (KIMI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+  }
+  return { loggedIn: false, detail };
+}
+function getKimiAuthStatus(cwd, { promptRunner = runKimiPrompt } = {}) {
+  const result = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS4,
     extraArgs: ["--max-steps-per-turn", "1"]
   });
-  if (!result.ok) {
-    return { loggedIn: false, detail: result.error };
-  }
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: result.model ?? null
-  };
+  return buildKimiAuthStatus(result);
 }
 function runKimiPrompt({
   prompt,
@@ -1209,12 +1269,16 @@ function runKimiPrompt({
   if (result.status !== 0) {
     return {
       ok: false,
-      error: result.stderr.trim() || result.stdout.trim() || `kimi exited with code ${result.status}`,
+      error: result.stderr.trim() || `kimi exited with code ${result.status}`,
       status: result.status
     };
   }
   const parsed = parseKimiStreamText(result.stdout);
-  const session = resolveSessionId({ stderr: result.stderr, priority: ["stderr"] });
+  const session = resolveSessionId({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    priority: ["stdout", "stderr", "file"]
+  });
   return {
     ok: Boolean(parsed.response.trim()),
     response: parsed.response,
@@ -1263,7 +1327,11 @@ function runKimiPromptStreaming({
     }
   }).then((result) => {
     const parsed = parseKimiStreamText(result.stdout);
-    const session = resolveSessionId({ stderr: result.stderr, priority: ["stderr"] });
+    const session = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
     const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
@@ -1282,6 +1350,8 @@ var AUTH_CHECK_TIMEOUT_MS5 = 3e4;
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PROXY_KEYS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
 var NO_PROXY_DEFAULTS = ["localhost", "127.0.0.1"];
+var QWEN_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var QWEN_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 var ENV_ALLOW_EXACT = /* @__PURE__ */ new Set([
   "PATH",
   "HOME",
@@ -1477,25 +1547,33 @@ function parseQwenStreamText(text) {
 function getQwenAvailability(cwd) {
   return binaryAvailable(QWEN_BIN, ["--version"], { cwd });
 }
-function getQwenAuthStatus(cwd) {
-  const env = buildQwenEnv();
-  const authResult = runCommand(QWEN_BIN, ["auth", "status"], {
-    cwd,
-    env,
-    timeout: AUTH_CHECK_TIMEOUT_MS5
-  });
-  const pingResult = runQwenPrompt({
+function buildQwenAuthStatus(pingResult) {
+  if (pingResult.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: pingResult.model ?? null
+    };
+  }
+  const detail = String(pingResult.error ?? "").trim() || "qwen auth probe failed";
+  if (QWEN_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (QWEN_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: pingResult.model ?? null };
+  }
+  return { loggedIn: false, detail };
+}
+function getQwenAuthStatus(cwd, { promptRunner = runQwenPrompt, envBuilder = buildQwenEnv } = {}) {
+  const env = envBuilder();
+  const pingResult = promptRunner({
     prompt: "ping",
     cwd,
     env,
     timeout: AUTH_CHECK_TIMEOUT_MS5,
     maxSteps: 1
   });
-  return {
-    loggedIn: pingResult.ok,
-    detail: pingResult.ok ? "authenticated" : authResult.stdout.trim() || pingResult.error,
-    model: pingResult.model ?? null
-  };
+  return buildQwenAuthStatus(pingResult);
 }
 function runQwenPrompt({
   prompt,
@@ -1535,13 +1613,19 @@ function runQwenPrompt({
     return { ok: false, error: result.error.message };
   }
   const parsed = parseQwenStreamText(result.stdout);
+  const resolvedSession = resolveSessionId({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    priority: ["stdout", "stderr", "file"]
+  });
   const resultEventError = extractQwenResultError(parsed.resultEvent);
   return {
     ok: result.status === 0 && !resultEventError && Boolean(parsed.response.trim()),
     status: result.status,
     stderr: result.stderr,
     ...parsed,
-    error: result.status === 0 && !resultEventError && parsed.response.trim() ? null : result.stderr.trim() || resultEventError || parsed.response || `qwen exited with code ${result.status}`
+    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+    error: result.status === 0 && !resultEventError && parsed.response.trim() ? null : result.stderr.trim() || resultEventError || `qwen exited with code ${result.status}`
   };
 }
 function runQwenPromptStreaming({
@@ -1595,11 +1679,17 @@ function runQwenPromptStreaming({
     }
   }).then((result) => {
     const parsed = parseQwenStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultEventError = extractQwenResultError(parsed.resultEvent);
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultEventError && hasVisibleText,
       error: result.ok && !resultEventError ? hasVisibleText ? null : resultEventError || "qwen produced no visible text" : resultEventError || result.error
     };
@@ -1858,6 +1948,8 @@ async function runMiniMaxPromptStreaming({
 var OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
 var DEFAULT_TIMEOUT_MS7 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS7 = 3e4;
+var OPENCODE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var OPENCODE_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 function collectOpenCodeContentText(content) {
   if (typeof content === "string") {
     return content;
@@ -1950,13 +2042,18 @@ function parseOpenCodeStreamText(text) {
 }
 function parseOpenCodeJsonResult(stdout, stderr, status) {
   const parsed = parseOpenCodeStreamText(stdout);
+  const resolvedSession = resolveSessionId({
+    stdout,
+    stderr,
+    priority: ["stdout", "stderr", "file"]
+  });
   const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
   const hasVisibleText = Boolean(parsed.response.trim());
   return {
     ok: status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId,
+    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model,
     status,
     error: status === 0 ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : String(stderr ?? "").trim() || `opencode exited with code ${status}`
@@ -1965,20 +2062,30 @@ function parseOpenCodeJsonResult(stdout, stderr, status) {
 function getOpenCodeAvailability(cwd) {
   return binaryAvailable(OPENCODE_BIN, ["--version"], { cwd });
 }
-function getOpenCodeAuthStatus(cwd) {
-  const result = runOpenCodePrompt({
+function buildOpenCodeAuthStatus(result) {
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: result.model ?? null
+    };
+  }
+  const detail = String(result.error ?? "").trim() || "opencode auth probe failed";
+  if (OPENCODE_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (OPENCODE_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+  }
+  return { loggedIn: false, detail };
+}
+function getOpenCodeAuthStatus(cwd, { promptRunner = runOpenCodePrompt } = {}) {
+  const result = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS7
   });
-  if (!result.ok) {
-    return { loggedIn: false, detail: result.error };
-  }
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: result.model ?? null
-  };
+  return buildOpenCodeAuthStatus(result);
 }
 function runOpenCodePrompt({
   prompt,
@@ -2055,11 +2162,17 @@ function runOpenCodePromptStreaming({
     }
   }).then((result) => {
     const parsed = parseOpenCodeStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
     const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
     const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : result.error
     };
@@ -2070,6 +2183,8 @@ function runOpenCodePromptStreaming({
 var PI_BIN = process.env.PI_CLI_BIN || "pi";
 var DEFAULT_TIMEOUT_MS8 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS8 = 3e4;
+var PI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var PI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 function collectPiContentText(content) {
   if (typeof content === "string") {
     return content;
@@ -2152,20 +2267,30 @@ function parsePiStreamText(text) {
 function getPiAvailability(cwd) {
   return binaryAvailable(PI_BIN, ["--version"], { cwd });
 }
-function getPiAuthStatus(cwd) {
-  const result = runPiPrompt({
+function buildPiAuthStatus(result) {
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: result.model ?? null
+    };
+  }
+  const detail = String(result.error ?? "").trim() || "pi auth probe failed";
+  if (PI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (PI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+  }
+  return { loggedIn: false, detail };
+}
+function getPiAuthStatus(cwd, { promptRunner = runPiPrompt } = {}) {
+  const result = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS8
   });
-  if (!result.ok) {
-    return { loggedIn: false, detail: result.error };
-  }
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: result.model ?? null
-  };
+  return buildPiAuthStatus(result);
 }
 function runPiPrompt({
   prompt,
@@ -2196,15 +2321,20 @@ function runPiPrompt({
     };
   }
   const parsed = parsePiStreamText(result.stdout);
+  const resolvedSession = resolveSessionId({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    priority: ["stdout", "stderr", "file"]
+  });
   const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
   const hasVisibleText = Boolean(parsed.response.trim());
   return {
     ok: result.status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId,
+    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model,
-    error: result.status === 0 ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.stderr.trim() || result.stdout.trim() || `pi exited with code ${result.status}`,
+    error: result.status === 0 ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.stderr.trim() || `pi exited with code ${result.status}`,
     status: result.status
   };
 }
@@ -2249,11 +2379,17 @@ function runPiPromptStreaming({
     }
   }).then((result) => {
     const parsed = parsePiStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
     const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
     const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.error
     };
@@ -2364,7 +2500,8 @@ function createMetricSummary() {
     p50: null,
     p95: null,
     p99: null,
-    values: []
+    capability: "unsupported",
+    measuredValues: []
   };
 }
 function createProviderSummary() {
@@ -2376,19 +2513,25 @@ function createProviderSummary() {
   };
 }
 function finalizeMetric(summary) {
-  if (summary.values.length === 0) {
-    delete summary.values;
+  const supportedCount = summary.measuredCount + summary.zeroCount + summary.missingCount;
+  if (summary.unsupportedCount > 0 && supportedCount > 0) {
+    summary.capability = "mixed";
+  } else if (supportedCount > 0) {
+    summary.capability = "supported";
+  }
+  if (summary.measuredValues.length === 0) {
+    delete summary.measuredValues;
     return summary;
   }
-  const stats = calculatePercentiles(summary.values, [50, 95, 99]);
-  const total = summary.values.reduce((sum, value) => sum + value, 0);
-  summary.min = Math.min(...summary.values);
-  summary.max = Math.max(...summary.values);
-  summary.avg = total / summary.values.length;
+  const stats = calculatePercentiles(summary.measuredValues, [50, 95, 99]);
+  const total = summary.measuredValues.reduce((sum, value) => sum + value, 0);
+  summary.min = Math.min(...summary.measuredValues);
+  summary.max = Math.max(...summary.measuredValues);
+  summary.avg = total / summary.measuredValues.length;
   summary.p50 = stats.p50;
   summary.p95 = stats.p95;
   summary.p99 = stats.p99;
-  delete summary.values;
+  delete summary.measuredValues;
   return summary;
 }
 function aggregateTimingRecords(records) {
@@ -2416,11 +2559,10 @@ function aggregateTimingRecords(records) {
       if (metric.status === "measured") {
         metricSummary.measuredCount += 1;
         metricSummary.contributingCount += 1;
-        metricSummary.values.push(metric.ms);
+        metricSummary.measuredValues.push(metric.ms);
       } else if (metric.status === "zero") {
         metricSummary.zeroCount += 1;
         metricSummary.contributingCount += 1;
-        metricSummary.values.push(0);
       } else if (metric.status === "missing") {
         metricSummary.missingCount += 1;
       } else if (metric.status === "unsupported") {
@@ -2869,6 +3011,16 @@ function defaultState() {
     jobs: []
   };
 }
+function buildCorruptBackupPath(stateFile) {
+  const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+  return `${stateFile}.corrupt-${timestamp}`;
+}
+function backupCorruptStateFile(stateFile) {
+  try {
+    fs3.renameSync(stateFile, buildCorruptBackupPath(stateFile));
+  } catch {
+  }
+}
 function stateRootDir() {
   const pluginData = process.env[PLUGIN_DATA_ENV];
   if (pluginData) {
@@ -2905,11 +3057,18 @@ function ensureStateDir(workspaceRoot) {
   fs3.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
 }
 function loadState(workspaceRoot) {
+  const stateFile = resolveStateFile(workspaceRoot);
+  let raw;
   try {
-    const raw = fs3.readFileSync(resolveStateFile(workspaceRoot), "utf8");
-    if (!raw.trim()) return defaultState();
+    raw = fs3.readFileSync(stateFile, "utf8");
+  } catch {
+    return defaultState();
+  }
+  if (!raw.trim()) return defaultState();
+  try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.jobs)) {
+      backupCorruptStateFile(stateFile);
       return defaultState();
     }
     return {
@@ -2917,6 +3076,7 @@ function loadState(workspaceRoot) {
       jobs: parsed.jobs
     };
   } catch {
+    backupCorruptStateFile(stateFile);
     return defaultState();
   }
 }
@@ -2933,6 +3093,33 @@ function updateState(workspaceRoot, mutate) {
     const state = loadState(workspaceRoot);
     mutate(state);
     return saveState(workspaceRoot, state);
+  });
+}
+function updateJobAtomically(workspaceRoot, jobId, buildNext) {
+  ensureStateDir(workspaceRoot);
+  const lockPath = `${resolveStateFile(workspaceRoot)}.lock`;
+  return withLockfile(lockPath, () => {
+    const state = loadState(workspaceRoot);
+    const index = state.jobs.findIndex((job2) => job2.jobId === jobId);
+    const current = index >= 0 ? state.jobs[index] : null;
+    const next = buildNext(current);
+    if (!next) {
+      return { written: false, job: current, envelope: null };
+    }
+    const job = next.job ?? current;
+    if (!job) {
+      return { written: false, job: null, envelope: next.envelope ?? null };
+    }
+    if (Object.prototype.hasOwnProperty.call(next, "envelope")) {
+      writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), next.envelope);
+    }
+    if (index >= 0) {
+      state.jobs[index] = job;
+    } else {
+      state.jobs.push(job);
+    }
+    saveState(workspaceRoot, state);
+    return { written: true, job, envelope: next.envelope ?? null };
   });
 }
 function upsertJob(workspaceRoot, jobPatch) {
@@ -3133,14 +3320,36 @@ async function cancelJob(workspaceRoot, jobId) {
     pid: null,
     finishedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
-  upsertJob(workspaceRoot, cancelledJob);
-  writeJobFile(workspaceRoot, jobId, {
-    job: cancelledJob,
-    result: {
-      ok: false,
-      error: "cancelled"
+  let reason = null;
+  const write = updateJobAtomically(workspaceRoot, jobId, (current) => {
+    if (!current) {
+      reason = "not_found";
+      return null;
     }
+    if (!ACTIVE_STATUSES.has(current.status)) {
+      reason = "not_cancellable";
+      return null;
+    }
+    const nextJob = {
+      ...current,
+      status: "cancelled",
+      pid: null,
+      finishedAt: cancelledJob.finishedAt
+    };
+    return {
+      job: nextJob,
+      envelope: {
+        job: nextJob,
+        result: {
+          ok: false,
+          error: "cancelled"
+        }
+      }
+    };
   });
+  if (!write.written) {
+    return { cancelled: false, reason: reason || "not_cancellable", jobId };
+  }
   return { cancelled: true, jobId };
 }
 
@@ -4031,49 +4240,60 @@ async function runJobWorker(rawArgs) {
         appendPreview(current.logFile, execution.provider, event);
       }
     });
-    const latest = getJob(workspaceRoot, jobId);
-    if (latest?.status === "cancelled") {
+    const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {
+      if (!latest || latest.status === "cancelled") {
+        return null;
+      }
+      const finishedJob = {
+        ...latest,
+        ...execution.jobMeta,
+        status: result.ok ? "completed" : "failed",
+        pid: null,
+        finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        sessionId: result.sessionId ?? null,
+        error: result.error ?? null
+      };
+      return {
+        job: finishedJob,
+        envelope: {
+          job: finishedJob,
+          result
+        }
+      };
+    });
+    if (!write.written) {
       removeJobConfigFile(workspaceRoot, jobId);
       return;
     }
-    const finishedJob = {
-      ...current,
-      ...execution.jobMeta,
-      status: result.ok ? "completed" : "failed",
-      pid: null,
-      finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      sessionId: result.sessionId ?? null,
-      error: result.error ?? null
-    };
-    const envelope = {
-      job: finishedJob,
-      result
-    };
-    writeJobFile(workspaceRoot, jobId, envelope);
-    upsertJob(workspaceRoot, finishedJob);
     if (result.timing) {
       appendTimingRecord(workspaceRoot, result.timing);
     }
     removeJobConfigFile(workspaceRoot, jobId);
   } catch (error) {
-    const latest = getJob(workspaceRoot, jobId);
-    if (latest?.status === "cancelled") {
+    const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {
+      if (!latest || latest.status === "cancelled") {
+        return null;
+      }
+      const failedJob = {
+        ...latest,
+        ...execution.jobMeta,
+        status: "failed",
+        pid: null,
+        finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        error: error.message
+      };
+      return {
+        job: failedJob,
+        envelope: {
+          job: failedJob,
+          result: { ok: false, error: error.message }
+        }
+      };
+    });
+    if (!write.written) {
       removeJobConfigFile(workspaceRoot, jobId);
       return;
     }
-    const failedJob = {
-      ...current,
-      ...execution.jobMeta,
-      status: "failed",
-      pid: null,
-      finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      error: error.message
-    };
-    writeJobFile(workspaceRoot, jobId, {
-      job: failedJob,
-      result: { ok: false, error: error.message }
-    });
-    upsertJob(workspaceRoot, failedJob);
     removeJobConfigFile(workspaceRoot, jobId);
     throw error;
   }

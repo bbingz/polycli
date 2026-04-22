@@ -1,5 +1,6 @@
 import { parseStreamJsonLine } from "@bbingz/polycli-utils/parse-stream-json";
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
 import { spawnStreamingCommand } from "./spawn.js";
 
@@ -78,6 +79,11 @@ function parseGeminiJsonResult(stdout, stderr, status) {
 
   try {
     const parsed = JSON.parse(text.slice(jsonStart));
+    const resolvedSession = resolveSessionId({
+      stdout,
+      stderr,
+      priority: ["stdout", "stderr", "file"],
+    });
     if (parsed.error) {
       return {
         ok: false,
@@ -89,7 +95,7 @@ function parseGeminiJsonResult(stdout, stderr, status) {
     return {
       ok: true,
       response: parsed.response ?? "",
-      sessionId: parsed.session_id ?? null,
+      sessionId: parsed.session_id ?? resolvedSession.sessionId ?? null,
       stats: parsed.stats ?? null,
       status,
     };
@@ -206,9 +212,15 @@ export function runGeminiPromptStreaming({
     },
   }).then((result) => {
     const parsed = parseGeminiStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"],
+    });
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       error: result.ok ? null : result.error,
     };
   });

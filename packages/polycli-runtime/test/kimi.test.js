@@ -1,13 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildKimiInvocation,
   extractKimiText,
+  getKimiAuthStatus,
   parseKimiStreamText,
+  runKimiPrompt,
   runKimiPromptStreaming,
 } from "../src/index.js";
+
+function withFakeKimiBin(source, fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-sync-"));
+  const bin = path.join(root, "kimi");
+  fs.writeFileSync(bin, source, { mode: 0o755 });
+
+  try {
+    return fn({ root, bin });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
 
 test("buildKimiInvocation omits -p in stdin mode and enables input-format text", () => {
   const invocation = buildKimiInvocation({
@@ -51,6 +68,56 @@ test("extractKimiText supports string assistant content", () => {
     extractKimiText({ role: "assistant", content: "final review body" }),
     "final review body"
   );
+});
+
+test("runKimiPrompt prefers stdout session ids before stderr fallback", () => {
+  withFakeKimiBin(
+    `#!/usr/bin/env node
+process.stdout.write("stdout session 123e4567-e89b-42d3-a456-426614174000\\n");
+process.stderr.write("stderr session 223e4567-e89b-42d3-a456-426614174000\\n");
+process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "text", text: "hello world" }] }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runKimiPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
+    }
+  );
+});
+
+test("runKimiPrompt does not leak stdout on non-zero exit", () => {
+  withFakeKimiBin(
+    `#!/usr/bin/env node
+process.stdout.write("secret token\\n");
+process.exit(2);
+`,
+    ({ root, bin }) => {
+      const result = runKimiPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "kimi exited with code 2");
+    }
+  );
+});
+
+test("getKimiAuthStatus keeps loggedIn=true for transient probe failures", () => {
+  const auth = getKimiAuthStatus(process.cwd(), {
+    promptRunner() {
+      return { ok: false, error: "kimi timed out after 30s" };
+    },
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /timed out after 30s/i);
 });
 
 test("runKimiPromptStreaming returns a structured failure on spawn error", async () => {

@@ -1,4 +1,5 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
 import { spawnStreamingCommand } from "./spawn.js";
 
@@ -8,6 +9,8 @@ const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PROXY_KEYS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
 const NO_PROXY_DEFAULTS = ["localhost", "127.0.0.1"];
+const QWEN_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+const QWEN_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 const ENV_ALLOW_EXACT = new Set([
   "PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL", "LC_CTYPE",
   "LC_MESSAGES", "LC_NUMERIC", "LC_TIME", "TMPDIR", "TZ", "PWD", "LOGNAME",
@@ -214,28 +217,35 @@ export function getQwenAvailability(cwd) {
   return binaryAvailable(QWEN_BIN, ["--version"], { cwd });
 }
 
-export function getQwenAuthStatus(cwd) {
-  const env = buildQwenEnv();
-  const authResult = runCommand(QWEN_BIN, ["auth", "status"], {
-    cwd,
-    env,
-    timeout: AUTH_CHECK_TIMEOUT_MS,
-  });
-  const pingResult = runQwenPrompt({
+function buildQwenAuthStatus(pingResult) {
+  if (pingResult.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: pingResult.model ?? null,
+    };
+  }
+
+  const detail = String(pingResult.error ?? "").trim() || "qwen auth probe failed";
+  if (QWEN_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (QWEN_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: pingResult.model ?? null };
+  }
+  return { loggedIn: false, detail };
+}
+
+export function getQwenAuthStatus(cwd, { promptRunner = runQwenPrompt, envBuilder = buildQwenEnv } = {}) {
+  const env = envBuilder();
+  const pingResult = promptRunner({
     prompt: "ping",
     cwd,
     env,
     timeout: AUTH_CHECK_TIMEOUT_MS,
     maxSteps: 1,
   });
-
-  return {
-    loggedIn: pingResult.ok,
-    detail: pingResult.ok
-      ? "authenticated"
-      : authResult.stdout.trim() || pingResult.error,
-    model: pingResult.model ?? null,
-  };
+  return buildQwenAuthStatus(pingResult);
 }
 
 export function runQwenPrompt({
@@ -279,15 +289,21 @@ export function runQwenPrompt({
   }
 
   const parsed = parseQwenStreamText(result.stdout);
+  const resolvedSession = resolveSessionId({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    priority: ["stdout", "stderr", "file"],
+  });
   const resultEventError = extractQwenResultError(parsed.resultEvent);
   return {
     ok: result.status === 0 && !resultEventError && Boolean(parsed.response.trim()),
     status: result.status,
     stderr: result.stderr,
     ...parsed,
+    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     error: result.status === 0 && !resultEventError && parsed.response.trim()
       ? null
-      : result.stderr.trim() || resultEventError || parsed.response || `qwen exited with code ${result.status}`,
+      : result.stderr.trim() || resultEventError || `qwen exited with code ${result.status}`,
   };
 }
 
@@ -341,11 +357,17 @@ export function runQwenPromptStreaming({
     },
   }).then((result) => {
     const parsed = parseQwenStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"],
+    });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultEventError = extractQwenResultError(parsed.resultEvent);
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultEventError && hasVisibleText,
       error: result.ok && !resultEventError
         ? (hasVisibleText ? null : (resultEventError || "qwen produced no visible text"))

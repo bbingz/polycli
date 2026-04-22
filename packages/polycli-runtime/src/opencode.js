@@ -1,10 +1,13 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
 import { spawnStreamingCommand } from "./spawn.js";
 
 const OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const OPENCODE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+const OPENCODE_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 
 function collectOpenCodeContentText(content) {
   if (typeof content === "string") {
@@ -116,6 +119,11 @@ export function parseOpenCodeStreamText(text) {
 
 export function parseOpenCodeJsonResult(stdout, stderr, status) {
   const parsed = parseOpenCodeStreamText(stdout);
+  const resolvedSession = resolveSessionId({
+    stdout,
+    stderr,
+    priority: ["stdout", "stderr", "file"],
+  });
   const resultError = parsed.resultEvent?.error
     ? String(parsed.resultEvent.error)
     : null;
@@ -125,7 +133,7 @@ export function parseOpenCodeJsonResult(stdout, stderr, status) {
     ok: status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId,
+    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model,
     status,
     error: status === 0
@@ -138,22 +146,32 @@ export function getOpenCodeAvailability(cwd) {
   return binaryAvailable(OPENCODE_BIN, ["--version"], { cwd });
 }
 
-export function getOpenCodeAuthStatus(cwd) {
-  const result = runOpenCodePrompt({
+function buildOpenCodeAuthStatus(result) {
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: result.model ?? null,
+    };
+  }
+
+  const detail = String(result.error ?? "").trim() || "opencode auth probe failed";
+  if (OPENCODE_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (OPENCODE_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+  }
+  return { loggedIn: false, detail };
+}
+
+export function getOpenCodeAuthStatus(cwd, { promptRunner = runOpenCodePrompt } = {}) {
+  const result = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS,
   });
-
-  if (!result.ok) {
-    return { loggedIn: false, detail: result.error };
-  }
-
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: result.model ?? null,
-  };
+  return buildOpenCodeAuthStatus(result);
 }
 
 export function runOpenCodePrompt({
@@ -235,6 +253,11 @@ export function runOpenCodePromptStreaming({
     },
   }).then((result) => {
     const parsed = parseOpenCodeStreamText(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"],
+    });
     const resultError = parsed.resultEvent?.error
       ? String(parsed.resultEvent.error)
       : null;
@@ -242,6 +265,7 @@ export function runOpenCodePromptStreaming({
     return {
       ...result,
       ...parsed,
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok
         ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))

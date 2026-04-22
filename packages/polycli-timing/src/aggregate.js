@@ -19,7 +19,8 @@ function createMetricSummary() {
     p50: null,
     p95: null,
     p99: null,
-    values: [],
+    capability: "unsupported",
+    measuredValues: [],
   };
 }
 
@@ -33,21 +34,28 @@ function createProviderSummary() {
 }
 
 function finalizeMetric(summary) {
-  if (summary.values.length === 0) {
-    delete summary.values;
+  const supportedCount = summary.measuredCount + summary.zeroCount + summary.missingCount;
+  if (summary.unsupportedCount > 0 && supportedCount > 0) {
+    summary.capability = "mixed";
+  } else if (supportedCount > 0) {
+    summary.capability = "supported";
+  }
+
+  if (summary.measuredValues.length === 0) {
+    delete summary.measuredValues;
     return summary;
   }
 
-  const stats = calculatePercentiles(summary.values, [50, 95, 99]);
-  const total = summary.values.reduce((sum, value) => sum + value, 0);
+  const stats = calculatePercentiles(summary.measuredValues, [50, 95, 99]);
+  const total = summary.measuredValues.reduce((sum, value) => sum + value, 0);
 
-  summary.min = Math.min(...summary.values);
-  summary.max = Math.max(...summary.values);
-  summary.avg = total / summary.values.length;
+  summary.min = Math.min(...summary.measuredValues);
+  summary.max = Math.max(...summary.measuredValues);
+  summary.avg = total / summary.measuredValues.length;
   summary.p50 = stats.p50;
   summary.p95 = stats.p95;
   summary.p99 = stats.p99;
-  delete summary.values;
+  delete summary.measuredValues;
   return summary;
 }
 
@@ -80,11 +88,10 @@ export function aggregateTimingRecords(records) {
       if (metric.status === "measured") {
         metricSummary.measuredCount += 1;
         metricSummary.contributingCount += 1;
-        metricSummary.values.push(metric.ms);
+        metricSummary.measuredValues.push(metric.ms);
       } else if (metric.status === "zero") {
         metricSummary.zeroCount += 1;
         metricSummary.contributingCount += 1;
-        metricSummary.values.push(0);
       } else if (metric.status === "missing") {
         metricSummary.missingCount += 1;
       } else if (metric.status === "unsupported") {

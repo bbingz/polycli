@@ -249,7 +249,7 @@ OpenCode packaging checks completed:
 Latest verification completed after the provider hardening pass:
 
 - local `npm test` passed with final result:
-  - `123` passed
+  - `146` passed
   - `0` failed
 - focused runtime regressions passed:
   - `claude` / `copilot` / `opencode` / `pi` / `registry`
@@ -276,6 +276,20 @@ Latest real-usage follow-up fixes completed on `2026-04-22`:
 - bundle parity
   - plugin bundles were rebuilt after both runtime fixes, so host adapters and tests are aligned with source
 
+Latest review-driven hardening completed on `2026-04-22`:
+
+- P0 fixes shipped:
+  - sync `runProviderPrompt` timing now preserves provider capability metadata instead of falsely emitting `unsupported`
+  - background job completion and cancel now coordinate through one locked CAS path, so a late worker cannot overwrite `cancelled`
+  - corrupt `state.json` now gets renamed to `state.json.corrupt-<timestamp>` before recovery instead of being silently clobbered
+  - `spawnStreamingCommand` now escalates timed-out children from `SIGTERM` to `SIGKILL`, and detached runs signal the whole process group
+  - session-id matching now accepts modern UUID versions including v7
+  - timing aggregation now keeps `zero` out of measured percentiles and exposes per-metric capability state
+- selected P1 follow-ups shipped:
+  - transient auth-probe handling from `gemini` is now mirrored in `opencode` / `pi` / `kimi` / `qwen`
+  - provider prompt paths now use `resolveSessionId` as a stderr fallback instead of trusting stdout JSON only
+  - non-zero exit paths no longer fall back to stdout as error text for `copilot` / `kimi` / `pi` / `qwen`
+
 Observed provider notes:
 
 - `claude` requires `--verbose` whenever `--output-format stream-json` is used
@@ -286,6 +300,7 @@ Observed provider notes:
 - `kimi` can still show high TTFT variance in foreground runs, but both foreground and background review flows completed successfully within current timeout windows
 - `pi` integration is present, but upstream service reliability can still dominate live review outcomes; treat server-side failures as external unless local parsing evidence points otherwise
 - `gemini` does not expose a dedicated local auth-status subcommand in the current CLI, so auth probing is necessarily inference-based; do not regress back to treating every timeout / 429 as `loggedIn=false`
+- `qwen` should not call `qwen auth status` for setup probing; current hardening relies on the prompt probe only
 - `pi` can still choose to invoke tools for trivial prompts in live runs; that behavior appears upstream/host-driven rather than caused by local parsing, so treat it as an environment note unless a local invocation flag is found that suppresses it cleanly
 
 ## Key Files

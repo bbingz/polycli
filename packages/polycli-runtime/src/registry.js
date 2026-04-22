@@ -255,6 +255,7 @@ export async function runProviderPrompt({
     runtimePersistence,
     measurementScope,
     totalMs: Date.now() - startedAt,
+    supportedMetrics: getTimingSupport(provider),
     meta,
   });
 }

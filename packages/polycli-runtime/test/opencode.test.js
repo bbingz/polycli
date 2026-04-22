@@ -8,6 +8,7 @@ import path from "node:path";
 import {
   buildOpenCodeInvocation,
   extractOpenCodeText,
+  getOpenCodeAuthStatus,
   parseOpenCodeJsonResult,
   parseOpenCodeStreamText,
   runOpenCodePrompt,
@@ -100,6 +101,17 @@ test("parseOpenCodeJsonResult extracts final response from raw event output", ()
   assert.equal(parsed.sessionId, "open-2");
 });
 
+test("parseOpenCodeJsonResult does not leak stdout on non-zero exit", () => {
+  const parsed = parseOpenCodeJsonResult(
+    '{"type":"result","text":"secret token"}',
+    "",
+    2
+  );
+
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error, "opencode exited with code 2");
+});
+
 test("runOpenCodePrompt returns parsed success payloads", () => {
   withFakeOpenCodeBin(
     `#!/usr/bin/env node
@@ -120,6 +132,37 @@ process.stdout.write(JSON.stringify({ type: "result", text: "hello world" }) + "
       assert.equal(result.model, "open-test");
     }
   );
+});
+
+test("runOpenCodePrompt falls back to stderr session ids when stdout has none", () => {
+  withFakeOpenCodeBin(
+    `#!/usr/bin/env node
+process.stderr.write("resume 123e4567-e89b-42d3-a456-426614174000\\n");
+process.stdout.write(JSON.stringify({ type: "text", part: { type: "text", text: "hello world" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", text: "hello world" }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runOpenCodePrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
+    }
+  );
+});
+
+test("getOpenCodeAuthStatus keeps loggedIn=true for transient probe failures", () => {
+  const auth = getOpenCodeAuthStatus(process.cwd(), {
+    promptRunner() {
+      return { ok: false, error: "opencode timed out after 30s" };
+    },
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /timed out after 30s/i);
 });
 
 test("runOpenCodePromptStreaming returns a structured failure on spawn error", async () => {
