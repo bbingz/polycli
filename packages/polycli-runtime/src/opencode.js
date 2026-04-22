@@ -62,6 +62,7 @@ export function buildOpenCodeInvocation({
   continueLast = false,
   agent = null,
   variant = null,
+  skipPermissions = true,
   extraArgs = [],
   bin = OPENCODE_BIN,
 } = {}) {
@@ -72,9 +73,9 @@ export function buildOpenCodeInvocation({
     "json",
     "--dir",
     cwd || process.cwd(),
-    "--dangerously-skip-permissions",
   ];
 
+  if (skipPermissions) args.push("--dangerously-skip-permissions");
   if (model) args.push("--model", model);
   if (agent) args.push("--agent", agent);
   if (variant) args.push("--variant", variant);
@@ -206,11 +207,13 @@ export function runOpenCodePrompt({
   model = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
+  env = process.env,
   extraArgs = [],
   resumeSessionId = null,
   continueLast = false,
   agent = null,
   variant = null,
+  skipPermissions = true,
   bin = OPENCODE_BIN,
 } = {}) {
   const invocation = buildOpenCodeInvocation({
@@ -221,11 +224,12 @@ export function runOpenCodePrompt({
     continueLast,
     agent,
     variant,
+    skipPermissions,
     extraArgs,
     bin,
   });
 
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
   if (result.error) {
     return {
       ok: false,
@@ -243,11 +247,13 @@ export function runOpenCodePromptStreaming({
   model = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
+  env = process.env,
   extraArgs = [],
   resumeSessionId = null,
   continueLast = false,
   agent = null,
   variant = null,
+  skipPermissions = true,
   onEvent = () => {},
   bin = OPENCODE_BIN,
   spawnImpl,
@@ -260,6 +266,7 @@ export function runOpenCodePromptStreaming({
     continueLast,
     agent,
     variant,
+    skipPermissions,
     extraArgs,
     bin,
   });
@@ -268,7 +275,7 @@ export function runOpenCodePromptStreaming({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env: { ...env },
     timeout,
     spawnImpl,
     onStdoutLine(line) {

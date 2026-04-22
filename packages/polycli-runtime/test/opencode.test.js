@@ -50,6 +50,18 @@ test("buildOpenCodeInvocation targets run json mode with session support", () =>
   ]);
 });
 
+test("buildOpenCodeInvocation omits skip-permissions when disabled", () => {
+  const invocation = buildOpenCodeInvocation({
+    prompt: "ping",
+    cwd: "/tmp/project",
+    skipPermissions: false,
+    extraArgs: ["--agent", "plan"],
+  });
+
+  assert.equal(invocation.args.includes("--dangerously-skip-permissions"), false);
+  assert.deepEqual(invocation.args.slice(-2), ["--agent", "plan"]);
+});
+
 test("parseOpenCodeStreamText collects session id and assistant text", () => {
   const parsed = parseOpenCodeStreamText(
     [
@@ -222,4 +234,29 @@ test("runOpenCodePromptStreaming captures standalone error events as terminal fa
   assert.equal(result.ok, false);
   assert.equal(result.response, "partial");
   assert.equal(result.error, "permission denied");
+});
+
+test("runOpenCodePromptStreaming passes custom env through to the spawned process", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+  let seenOptions = null;
+
+  const result = await runOpenCodePromptStreaming({
+    prompt: "ping",
+    env: { PATH: process.env.PATH, OPENCODE_CONFIG_CONTENT: '{"permission":"deny"}' },
+    spawnImpl(bin, args, options) {
+      seenOptions = options;
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"result","text":"ok"}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(seenOptions.env.OPENCODE_CONFIG_CONTENT, '{"permission":"deny"}');
 });

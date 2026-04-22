@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildReviewPrompt,
+  buildReviewRuntimeOptions,
   normalizeReviewScope,
 } from "../lib/review.mjs";
 
@@ -29,4 +33,102 @@ test("buildReviewPrompt includes adversarial and truncation guidance", () => {
   assert.match(prompt, /must contain a visible final answer/i);
   assert.match(prompt, /No issues found\./);
   assert.match(prompt, /Do not run tools, commands, or tests/i);
+});
+
+test("buildReviewRuntimeOptions applies claude hard constraints", () => {
+  const options = buildReviewRuntimeOptions({
+    provider: "claude",
+    cwd: process.cwd(),
+  });
+
+  assert.deepEqual(options.extraArgs, ["--max-turns", "1", "--tools", ""]);
+});
+
+test("buildReviewRuntimeOptions applies gemini deny-all policy", () => {
+  const options = buildReviewRuntimeOptions({
+    provider: "gemini",
+    cwd: process.cwd(),
+  });
+
+  assert.equal(options.approvalMode, "plan");
+  const policyIndex = options.extraArgs.indexOf("--policy");
+  assert.notEqual(policyIndex, -1);
+  const policyPath = options.extraArgs[policyIndex + 1];
+  const policyText = fs.readFileSync(policyPath, "utf8");
+  assert.match(policyText, /toolName = "\*"/);
+  assert.match(policyText, /decision = "deny"/);
+});
+
+test("buildReviewRuntimeOptions applies copilot tool-exclusion hard constraints", () => {
+  const options = buildReviewRuntimeOptions({
+    provider: "copilot",
+    cwd: process.cwd(),
+  });
+
+  const excludedIndex = options.extraArgs.indexOf("--excluded-tools");
+  assert.notEqual(excludedIndex, -1);
+  assert.match(options.extraArgs[excludedIndex + 1], /apply_patch/);
+  assert.match(options.extraArgs[excludedIndex + 1], /ask_user/);
+});
+
+test("buildReviewRuntimeOptions applies opencode plan agent and deny-all config", () => {
+  const options = buildReviewRuntimeOptions({
+    provider: "opencode",
+    cwd: process.cwd(),
+  });
+
+  assert.equal(options.skipPermissions, false);
+  assert.deepEqual(options.extraArgs, ["--agent", "plan"]);
+  assert.deepEqual(JSON.parse(options.env.OPENCODE_CONFIG_CONTENT), {
+    "$schema": "https://opencode.ai/config.json",
+    permission: "deny",
+  });
+});
+
+test("buildReviewRuntimeOptions applies pi hard constraints", () => {
+  const options = buildReviewRuntimeOptions({
+    provider: "pi",
+    cwd: process.cwd(),
+  });
+
+  assert.deepEqual(options.extraArgs, ["--no-tools"]);
+});
+
+test("buildReviewRuntimeOptions writes a tool-disabled minimax config override", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-minimax-"));
+  const baseConfigPath = path.join(root, "config.yaml");
+  fs.writeFileSync(
+    baseConfigPath,
+    [
+      'api_key: "test-key"',
+      'api_base: "https://api.example.test"',
+      'model: "MiniMax-M1"',
+      'provider: "anthropic"',
+    ].join("\n"),
+    "utf8"
+  );
+
+  const options = buildReviewRuntimeOptions({
+    provider: "minimax",
+    cwd: process.cwd(),
+    env: { ...process.env, MINI_AGENT_CONFIG_PATH: baseConfigPath },
+  });
+
+  const configText = fs.readFileSync(options.env.MINI_AGENT_CONFIG_PATH, "utf8");
+  assert.match(configText, /enable_file_tools: false/);
+  assert.match(configText, /enable_bash: false/);
+  assert.match(configText, /enable_note: false/);
+  assert.match(configText, /enable_skills: false/);
+  assert.match(configText, /enable_mcp: false/);
+});
+
+test("buildReviewRuntimeOptions rejects conflicting user overrides", () => {
+  assert.throws(
+    () => buildReviewRuntimeOptions({
+      provider: "claude",
+      cwd: process.cwd(),
+      runtimeOptions: { extraArgs: ["--max-turns", "5"] },
+    }),
+    /non-overridable review hard constraints/i
+  );
 });

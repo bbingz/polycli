@@ -71,6 +71,7 @@ function createFakeGeminiBin() {
   fs.writeFileSync(
     bin,
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const args = process.argv.slice(2);
 
@@ -78,6 +79,9 @@ const args = process.argv.slice(2);
   if (args.includes("-v")) {
     process.stdout.write("gemini 0.0.0-test\\n");
     process.exit(0);
+  }
+  if (process.env.GEMINI_ARGV_LOG) {
+    fs.writeFileSync(process.env.GEMINI_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
   }
   const outputFormat = args[args.indexOf("-o") + 1] || "json";
   const prompt = args[args.indexOf("-p") + 1] || "";
@@ -88,7 +92,7 @@ const args = process.argv.slice(2);
   const tailDelayMatch = prompt.match(/__tail=(\\d+)/);
   const tailDelay = tailDelayMatch ? Number.parseInt(tailDelayMatch[1], 10) : 0;
   const replyMatch = prompt.match(/__reply=([^\\n]+)/);
-  const reply = replyMatch ? replyMatch[1] : prompt || "ping";
+  const reply = process.env.GEMINI_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt || "ping");
   if (outputFormat === "json") {
     process.stdout.write(JSON.stringify({
       response: reply,
@@ -187,9 +191,15 @@ if (args.includes("--version")) {
   process.stdout.write("mini-agent 0.0.0-test\\n");
   process.exit(0);
 }
+if (process.env.MINI_AGENT_ENV_LOG) {
+  fs.writeFileSync(process.env.MINI_AGENT_ENV_LOG, JSON.stringify({
+    argv: args,
+    MINI_AGENT_CONFIG_PATH: process.env.MINI_AGENT_CONFIG_PATH || null,
+  }) + "\\n");
+}
 const prompt = args[args.indexOf("-t") + 1] || "ping";
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
-const reply = replyMatch ? replyMatch[1] : prompt;
+const reply = process.env.MINI_AGENT_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
 const logDir = process.env.MINI_AGENT_LOG_DIR;
 fs.mkdirSync(logDir, { recursive: true });
 const logPath = path.join(logDir, "mini-agent-test.log");
@@ -232,6 +242,9 @@ if (args.includes("--version")) {
   process.stdout.write("claude 0.0.0-test\\n");
   process.exit(0);
 }
+if (process.env.CLAUDE_ARGV_LOG) {
+  fs.writeFileSync(process.env.CLAUDE_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
+}
 const readArg = (name) => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : null;
@@ -247,7 +260,7 @@ const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : 0;
 const tailDelayMatch = prompt.match(/__tail=(\\d+)/);
 const tailDelay = tailDelayMatch ? Number.parseInt(tailDelayMatch[1], 10) : 0;
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
-const reply = replyMatch ? replyMatch[1] : (prompt || "ping");
+const reply = process.env.CLAUDE_FIXED_REPLY || (replyMatch ? replyMatch[1] : (prompt || "ping"));
 if (outputFormat === "json") {
   process.stdout.write(JSON.stringify({
     type: "result",
@@ -288,10 +301,14 @@ function createFakeCopilotBin() {
   fs.writeFileSync(
     bin,
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args.includes("--version") || args.includes("-v")) {
   process.stdout.write("copilot 0.0.0-test\\n");
   process.exit(0);
+}
+if (process.env.COPILOT_ARGV_LOG) {
+  fs.writeFileSync(process.env.COPILOT_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
 }
 const readArg = (name) => {
   const index = args.indexOf(name);
@@ -299,7 +316,7 @@ const readArg = (name) => {
 };
 const prompt = readArg("-p") || readArg("--prompt") || "ping";
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
-const reply = replyMatch ? replyMatch[1] : prompt;
+const reply = process.env.COPILOT_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
 const sessionId = "55555555-5555-4555-8555-555555555555";
 process.stdout.write(JSON.stringify({ type: "session_start", sessionId, model: "copilot-test" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "assistant.message_delta", data: { messageId: "copilot-msg-1", deltaContent: reply.slice(0, Math.max(1, Math.floor(reply.length / 2))) } }) + "\\n");
@@ -323,10 +340,19 @@ function createFakeOpenCodeBin() {
   fs.writeFileSync(
     bin,
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args.includes("--version") || args.includes("-v")) {
   process.stdout.write("opencode 0.0.0-test\\n");
   process.exit(0);
+}
+if (process.env.OPENCODE_ARGV_LOG) {
+  fs.writeFileSync(process.env.OPENCODE_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
+}
+if (process.env.OPENCODE_ENV_LOG) {
+  fs.writeFileSync(process.env.OPENCODE_ENV_LOG, JSON.stringify({
+    OPENCODE_CONFIG_CONTENT: process.env.OPENCODE_CONFIG_CONTENT || null,
+  }) + "\\n");
 }
 if (args[0] !== "run") {
   process.stderr.write("expected run\\n");
@@ -334,7 +360,7 @@ if (args[0] !== "run") {
 }
 const prompt = args[1] || "ping";
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
-const reply = replyMatch ? replyMatch[1] : prompt;
+const reply = process.env.OPENCODE_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
 process.stdout.write(JSON.stringify({ type: "step_start", sessionID: "open-555", part: { sessionID: "open-555", type: "step-start" } }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "text", sessionID: "open-555", part: { sessionID: "open-555", type: "text", text: reply } }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "step_finish", sessionID: "open-555", part: { sessionID: "open-555", type: "step-finish", reason: "stop" } }) + "\\n");
@@ -356,14 +382,18 @@ function createFakePiBin() {
   fs.writeFileSync(
     bin,
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args.includes("--version") || args.includes("-v")) {
   process.stdout.write("pi 0.0.0-test\\n");
   process.exit(0);
 }
+if (process.env.PI_ARGV_LOG) {
+  fs.writeFileSync(process.env.PI_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
+}
 const prompt = args.at(-1) || "ping";
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
-const reply = replyMatch ? replyMatch[1] : prompt;
+const reply = process.env.PI_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
 process.stdout.write(JSON.stringify({ type: "session_header", sessionId: "pi-555", model: "pi-test" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: reply } }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: reply } }) + "\\n");
@@ -415,6 +445,10 @@ function runCompanion(args, { cwd, env, timeout = 30_000 } = {}) {
       resolve({ code, stdout, stderr });
     });
   });
+}
+
+function readJsonLine(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8").trim());
 }
 
 async function waitForTerminalJob(jobId, context) {
@@ -734,6 +768,195 @@ test("integration: kimi string-content review still records preview text", async
 
     const logText = fs.readFileSync(started.job.logFile, "utf8");
     assert.match(logText, /STRING_KIMI_OK/);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: review constrains claude to one turn with no tools", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "claude-review-argv.jsonl");
+  const fake = createFakeClaudeBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      CLAUDE_CLI_BIN: fake.bin,
+      CLAUDE_ARGV_LOG: argLog,
+      CLAUDE_FIXED_REPLY: "CLAUDE_REVIEW_OK",
+    });
+    const review = await runCompanion(
+      ["review", "--provider", "claude", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(review.code, 0, review.stderr);
+    const payload = JSON.parse(review.stdout);
+    assert.equal(payload.response, "CLAUDE_REVIEW_OK");
+
+    const logged = readJsonLine(argLog);
+    assert.match(logged.argv.join(" "), /--max-turns 1/);
+    const toolsIndex = logged.argv.indexOf("--tools");
+    assert.notEqual(toolsIndex, -1);
+    assert.equal(logged.argv[toolsIndex + 1], "");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: review constrains gemini with a deny-all policy file", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "gemini-review-argv.jsonl");
+  const fake = createFakeGeminiBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      GEMINI_CLI_BIN: fake.bin,
+      GEMINI_ARGV_LOG: argLog,
+      GEMINI_FIXED_REPLY: "GEMINI_REVIEW_OK",
+    });
+    const review = await runCompanion(
+      ["review", "--provider", "gemini", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(review.code, 0, review.stderr);
+    const payload = JSON.parse(review.stdout);
+    assert.equal(payload.response, "GEMINI_REVIEW_OK");
+
+    const logged = readJsonLine(argLog);
+    assert.match(logged.argv.join(" "), /--approval-mode plan/);
+    const policyIndex = logged.argv.indexOf("--policy");
+    assert.notEqual(policyIndex, -1);
+    const policyText = fs.readFileSync(logged.argv[policyIndex + 1], "utf8");
+    assert.match(policyText, /toolName = "\*"/);
+    assert.match(policyText, /decision = "deny"/);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: review constrains copilot with exhaustive tool exclusion", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "copilot-review-argv.jsonl");
+  const fake = createFakeCopilotBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      COPILOT_CLI_BIN: fake.bin,
+      COPILOT_ARGV_LOG: argLog,
+      COPILOT_FIXED_REPLY: "COPILOT_REVIEW_OK",
+    });
+    const review = await runCompanion(
+      ["review", "--provider", "copilot", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(review.code, 0, review.stderr);
+    const payload = JSON.parse(review.stdout);
+    assert.equal(payload.response, "COPILOT_REVIEW_OK");
+
+    const logged = readJsonLine(argLog);
+    const excludedIndex = logged.argv.indexOf("--excluded-tools");
+    assert.notEqual(excludedIndex, -1);
+    assert.match(logged.argv[excludedIndex + 1], /apply_patch/);
+    assert.match(logged.argv[excludedIndex + 1], /ask_user/);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: review constrains opencode with plan agent and deny-all config", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "opencode-review-argv.jsonl");
+  const envLog = path.join(pluginData, "opencode-review-env.jsonl");
+  const fake = createFakeOpenCodeBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      OPENCODE_CLI_BIN: fake.bin,
+      OPENCODE_ARGV_LOG: argLog,
+      OPENCODE_ENV_LOG: envLog,
+      OPENCODE_FIXED_REPLY: "OPENCODE_REVIEW_OK",
+    });
+    const review = await runCompanion(
+      ["review", "--provider", "opencode", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(review.code, 0, review.stderr);
+    const payload = JSON.parse(review.stdout);
+    assert.equal(payload.response, "OPENCODE_REVIEW_OK");
+
+    const loggedArgs = readJsonLine(argLog);
+    assert.match(loggedArgs.argv.join(" "), /--agent plan/);
+    assert.equal(loggedArgs.argv.includes("--dangerously-skip-permissions"), false);
+
+    const loggedEnv = readJsonLine(envLog);
+    assert.deepEqual(JSON.parse(loggedEnv.OPENCODE_CONFIG_CONTENT), {
+      "$schema": "https://opencode.ai/config.json",
+      permission: "deny",
+    });
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: review constrains pi with no-tools", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "pi-review-argv.jsonl");
+  const fake = createFakePiBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      PI_CLI_BIN: fake.bin,
+      PI_ARGV_LOG: argLog,
+      PI_FIXED_REPLY: "PI_REVIEW_OK",
+    });
+    const review = await runCompanion(
+      ["review", "--provider", "pi", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(review.code, 0, review.stderr);
+    const payload = JSON.parse(review.stdout);
+    assert.equal(payload.response, "PI_REVIEW_OK");
+
+    const logged = readJsonLine(argLog);
+    assert.match(logged.argv.join(" "), /--no-tools/);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: review constrains minimax with a tool-disabled config override", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const envLog = path.join(pluginData, "minimax-review-env.jsonl");
+  const fake = createFakeMiniMaxFixture();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      MINI_AGENT_BIN: fake.bin,
+      MINI_AGENT_LOG_DIR: fake.logDir,
+      MINI_AGENT_CONFIG_PATH: fake.configPath,
+      MINI_AGENT_ENV_LOG: envLog,
+      MINI_AGENT_FIXED_REPLY: "MINIMAX_REVIEW_OK",
+    });
+    const review = await runCompanion(
+      ["review", "--provider", "minimax", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(review.code, 0, review.stderr);
+    const payload = JSON.parse(review.stdout);
+    assert.equal(payload.response, "MINIMAX_REVIEW_OK");
+
+    const loggedEnv = readJsonLine(envLog);
+    const configText = fs.readFileSync(loggedEnv.MINI_AGENT_CONFIG_PATH, "utf8");
+    assert.match(configText, /enable_file_tools: false/);
+    assert.match(configText, /enable_bash: false/);
+    assert.match(configText, /enable_note: false/);
+    assert.match(configText, /enable_skills: false/);
+    assert.match(configText, /enable_mcp: false/);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });

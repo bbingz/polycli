@@ -20,7 +20,7 @@ import {
   waitForJob,
 } from "./lib/job-control.mjs";
 import { resolveProvider } from "./lib/providers.mjs";
-import { buildReviewPrompt, collectReviewContext } from "./lib/review.mjs";
+import { buildReviewPrompt, buildReviewRuntimeOptions, collectReviewContext } from "./lib/review.mjs";
 import {
   getJob,
   readJobConfigFile,
@@ -559,14 +559,10 @@ function buildReviewExecution(rawArgs, { adversarial }) {
         adversarial,
       },
       measurementScope: "request",
-      runtimeOptions: provider === "kimi"
-        ? { extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] }
-        : provider === "qwen"
-          ? {
-            maxSteps: 1,
-            appendSystem: "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.",
-          }
-          : {},
+      runtimeOptions: buildReviewRuntimeOptions({
+        provider,
+        cwd: process.cwd(),
+      }),
     },
   };
 }

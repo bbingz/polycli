@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 // plugins/polycli/scripts/polycli-companion.mjs
-import fs6 from "node:fs";
+import fs7 from "node:fs";
 import process5 from "node:process";
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import { spawn as spawn2 } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -2042,6 +2042,7 @@ function buildOpenCodeInvocation({
   continueLast = false,
   agent = null,
   variant = null,
+  skipPermissions = true,
   extraArgs = [],
   bin = OPENCODE_BIN
 } = {}) {
@@ -2051,9 +2052,9 @@ function buildOpenCodeInvocation({
     "--format",
     "json",
     "--dir",
-    cwd || process.cwd(),
-    "--dangerously-skip-permissions"
+    cwd || process.cwd()
   ];
+  if (skipPermissions) args.push("--dangerously-skip-permissions");
   if (model) args.push("--model", model);
   if (agent) args.push("--agent", agent);
   if (variant) args.push("--variant", variant);
@@ -2165,11 +2166,13 @@ function runOpenCodePrompt({
   model = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS7,
+  env = process.env,
   extraArgs = [],
   resumeSessionId = null,
   continueLast = false,
   agent = null,
   variant = null,
+  skipPermissions = true,
   bin = OPENCODE_BIN
 } = {}) {
   const invocation = buildOpenCodeInvocation({
@@ -2180,10 +2183,11 @@ function runOpenCodePrompt({
     continueLast,
     agent,
     variant,
+    skipPermissions,
     extraArgs,
     bin
   });
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
   if (result.error) {
     return {
       ok: false,
@@ -2197,11 +2201,13 @@ function runOpenCodePromptStreaming({
   model = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS7,
+  env = process.env,
   extraArgs = [],
   resumeSessionId = null,
   continueLast = false,
   agent = null,
   variant = null,
+  skipPermissions = true,
   onEvent = () => {
   },
   bin = OPENCODE_BIN,
@@ -2215,6 +2221,7 @@ function runOpenCodePromptStreaming({
     continueLast,
     agent,
     variant,
+    skipPermissions,
     extraArgs,
     bin
   });
@@ -2222,7 +2229,7 @@ function runOpenCodePromptStreaming({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env: { ...env },
     timeout,
     spawnImpl,
     onStdoutLine(line) {
@@ -2997,12 +3004,13 @@ import fs4 from "node:fs";
 import process4 from "node:process";
 
 // plugins/polycli/scripts/lib/state.mjs
-import crypto from "node:crypto";
+import crypto2 from "node:crypto";
 import fs3 from "node:fs";
 import os2 from "node:os";
 import path3 from "node:path";
 
 // packages/polycli-utils/src/atomic-save.js
+import crypto from "node:crypto";
 import fs2 from "node:fs";
 import path2 from "node:path";
 import process3 from "node:process";
@@ -3021,24 +3029,75 @@ function sleepSync(ms) {
 function ensureParentDir(filePath) {
   fs2.mkdirSync(path2.dirname(filePath), { recursive: true });
 }
-function writeFileAtomic(filePath, contents, options = {}) {
+function normalizeWriteOptions(options) {
+  if (typeof options === "string") {
+    return {
+      flag: "w",
+      mode: 438,
+      writeOptions: options
+    };
+  }
+  if (options && typeof options === "object") {
+    const { flag = "w", mode = 438, ...writeOptions } = options;
+    return {
+      flag,
+      mode,
+      writeOptions: Object.keys(writeOptions).length > 0 ? writeOptions : void 0
+    };
+  }
+  return {
+    flag: "w",
+    mode: 438,
+    writeOptions: void 0
+  };
+}
+function writeFileAtomicSync(filePath, contents, options = {}) {
   ensureParentDir(filePath);
-  const tmpPath = `${filePath}.tmp.${process3.pid}.${Date.now()}`;
-  fs2.writeFileSync(tmpPath, contents, options);
+  const tmpPath = `${filePath}.tmp.${process3.pid}.${Date.now()}.${crypto.randomUUID()}`;
+  const { flag, mode, writeOptions } = normalizeWriteOptions(options);
+  const fd = fs2.openSync(tmpPath, flag, mode);
+  try {
+    fs2.writeFileSync(fd, contents, writeOptions);
+    fs2.fsyncSync(fd);
+  } finally {
+    fs2.closeSync(fd);
+  }
   fs2.renameSync(tmpPath, filePath);
+  const dirFd = fs2.openSync(path2.dirname(filePath), "r");
+  try {
+    fs2.fsyncSync(dirFd);
+  } catch (error) {
+    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
+      throw error;
+    }
+  } finally {
+    fs2.closeSync(dirFd);
+  }
+}
+function writeFileAtomic(filePath, contents, options = {}) {
+  writeFileAtomicSync(filePath, contents, options);
   return filePath;
 }
 function writeJsonAtomic(filePath, value, { spaces = 2, finalNewline = true } = {}) {
   const text = JSON.stringify(value, null, spaces) + (finalNewline ? "\n" : "");
   return writeFileAtomic(filePath, text, "utf8");
 }
-function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 3e4, pollMs = 25 } = {}) {
+function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 25 } = {}) {
   ensureParentDir(lockPath);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const fd = fs2.openSync(lockPath, fs2.constants.O_CREAT | fs2.constants.O_EXCL | fs2.constants.O_WRONLY);
-      fs2.closeSync(fd);
+      const fd = fs2.openSync(
+        lockPath,
+        fs2.constants.O_CREAT | fs2.constants.O_EXCL | fs2.constants.O_WRONLY,
+        384
+      );
+      try {
+        fs2.writeFileSync(fd, JSON.stringify({ pid: process3.pid, acquiredAt: Date.now() }), "utf8");
+        fs2.fsyncSync(fd);
+      } finally {
+        fs2.closeSync(fd);
+      }
       try {
         return fn();
       } finally {
@@ -3052,8 +3111,27 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 3e4, pollMs = 2
         throw error;
       }
       try {
-        const stat = fs2.statSync(lockPath);
-        if (Date.now() - stat.mtimeMs > staleMs) {
+        const lock = JSON.parse(fs2.readFileSync(lockPath, "utf8"));
+        const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
+        const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
+        const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
+        let ownerAlive = false;
+        if (pid != null) {
+          try {
+            process3.kill(pid, 0);
+            ownerAlive = true;
+          } catch (killError) {
+            if (killError.code === "ESRCH") {
+              fs2.unlinkSync(lockPath);
+              continue;
+            }
+            if (killError.code !== "EPERM") {
+              throw killError;
+            }
+            ownerAlive = true;
+          }
+        }
+        if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
           fs2.unlinkSync(lockPath);
           continue;
         }
@@ -3075,7 +3153,7 @@ var PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
 var FALLBACK_STATE_ROOT = path3.join(os2.tmpdir(), "polycli-companion");
 function computeWorkspaceSlug(workspaceRoot) {
   const base = path3.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
-  const hash = crypto.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
+  const hash = crypto2.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
   return `${base}-${hash}`;
 }
 function defaultState() {
@@ -3443,8 +3521,38 @@ function resolveProvider({ provider, positionals = [] } = {}) {
 }
 
 // plugins/polycli/scripts/lib/review.mjs
+import fs5 from "node:fs";
+import os3 from "node:os";
+import path4 from "node:path";
+import { randomUUID } from "node:crypto";
 var DEFAULT_MAX_DIFF_BYTES = 2e5;
 var REVIEW_SCOPES = /* @__PURE__ */ new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
+var REVIEW_APPEND_SYSTEM = "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
+var REVIEW_CONSTRAINT_ERROR = "non-overridable review hard constraints";
+var COPILOT_REVIEW_EXCLUDED_TOOLS = [
+  "bash",
+  "read_bash",
+  "write_bash",
+  "stop_bash",
+  "list_bash",
+  "powershell",
+  "read_powershell",
+  "write_powershell",
+  "stop_powershell",
+  "list_powershell",
+  "view",
+  "create",
+  "edit",
+  "apply_patch",
+  "task",
+  "read_agent",
+  "list_agents",
+  "grep",
+  "glob",
+  "web_fetch",
+  "skill",
+  "ask_user"
+].join(",");
 function normalizeReviewScope(scope) {
   const effective = scope || "auto";
   if (!REVIEW_SCOPES.has(effective)) {
@@ -3454,6 +3562,134 @@ function normalizeReviewScope(scope) {
 }
 function git(cwd, args) {
   return runCommand("git", args, { cwd });
+}
+function writeReviewTempFile(prefix, extension, text) {
+  const root = fs5.mkdtempSync(path4.join(os3.tmpdir(), `polycli-review-${prefix}-`));
+  const filePath = path4.join(root, `${prefix}-${randomUUID()}${extension}`);
+  fs5.writeFileSync(filePath, text, "utf8");
+  return filePath;
+}
+function readYamlScalar(text, key) {
+  const match = String(text ?? "").match(new RegExp(`^${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^#\\n]+))`, "m"));
+  return match ? match[1] ?? match[2] ?? match[3]?.trim() ?? null : null;
+}
+function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
+  const extraArgs = Array.isArray(runtimeOptions.extraArgs) ? runtimeOptions.extraArgs : [];
+  if (extraArgs.length > 0) {
+    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
+  if (provider === "gemini" && runtimeOptions.approvalMode && runtimeOptions.approvalMode !== "plan") {
+    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
+  if (provider === "opencode" && runtimeOptions.skipPermissions !== void 0 && runtimeOptions.skipPermissions !== false) {
+    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
+  if (provider === "qwen" && runtimeOptions.maxSteps !== void 0 && runtimeOptions.maxSteps !== 1) {
+    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
+}
+function buildGeminiReviewPolicy() {
+  return writeReviewTempFile("gemini-policy", ".toml", [
+    "[[rule]]",
+    'toolName = "*"',
+    'decision = "deny"',
+    "priority = 999",
+    "interactive = false",
+    ""
+  ].join("\n"));
+}
+function buildMiniMaxReviewEnv(parentEnv = process.env) {
+  const baseConfigPath = parentEnv.MINI_AGENT_CONFIG_PATH || path4.join(os3.homedir(), ".mini-agent", "config", "config.yaml");
+  let baseConfigText = "";
+  try {
+    baseConfigText = fs5.readFileSync(baseConfigPath, "utf8");
+  } catch {
+  }
+  const lines = [];
+  for (const key of ["api_key", "api_base", "model", "provider"]) {
+    const value = readYamlScalar(baseConfigText, key);
+    if (value != null && value !== "") {
+      lines.push(`${key}: ${JSON.stringify(value)}`);
+    }
+  }
+  lines.push(
+    "tools:",
+    "  enable_file_tools: false",
+    "  enable_bash: false",
+    "  enable_note: false",
+    "  enable_skills: false",
+    "  enable_mcp: false",
+    ""
+  );
+  return {
+    ...parentEnv,
+    MINI_AGENT_CONFIG_PATH: writeReviewTempFile("minimax-config", ".yaml", lines.join("\n"))
+  };
+}
+var REVIEW_HARD_CONSTRAINTS = {
+  kimi() {
+    return { extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] };
+  },
+  qwen() {
+    return {
+      maxSteps: 1,
+      appendSystem: REVIEW_APPEND_SYSTEM
+    };
+  },
+  claude() {
+    return { extraArgs: ["--max-turns", "1", "--tools", ""] };
+  },
+  gemini() {
+    return {
+      approvalMode: "plan",
+      extraArgs: ["--policy", buildGeminiReviewPolicy()]
+    };
+  },
+  copilot() {
+    return {
+      extraArgs: ["--excluded-tools", COPILOT_REVIEW_EXCLUDED_TOOLS]
+    };
+  },
+  opencode({ env } = {}) {
+    return {
+      skipPermissions: false,
+      extraArgs: ["--agent", "plan"],
+      env: {
+        ...env || process.env,
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          permission: "deny"
+        })
+      }
+    };
+  },
+  pi() {
+    return { extraArgs: ["--no-tools"] };
+  },
+  minimax({ env } = {}) {
+    return { env: buildMiniMaxReviewEnv(env) };
+  }
+};
+function buildReviewRuntimeOptions({
+  provider,
+  cwd,
+  runtimeOptions = {},
+  env = process.env
+} = {}) {
+  const constraintBuilder = REVIEW_HARD_CONSTRAINTS[provider];
+  if (!constraintBuilder) {
+    return runtimeOptions;
+  }
+  assertNoReviewConstraintOverride(provider, runtimeOptions);
+  const constrained = constraintBuilder({ cwd, env });
+  const merged = { ...runtimeOptions, ...constrained };
+  if (runtimeOptions.env || constrained.env) {
+    merged.env = { ...runtimeOptions.env || {}, ...constrained.env || {} };
+  }
+  if (runtimeOptions.extraArgs || constrained.extraArgs) {
+    merged.extraArgs = [...runtimeOptions.extraArgs || [], ...constrained.extraArgs || []];
+  }
+  return merged;
 }
 function ensureGitRepository(cwd) {
   const result = git(cwd, ["rev-parse", "--is-inside-work-tree"]);
@@ -3561,10 +3797,10 @@ function buildReviewPrompt({
 }
 
 // plugins/polycli/scripts/lib/timing.mjs
-import path4 from "node:path";
+import path5 from "node:path";
 
 // packages/polycli-utils/src/ndjson.js
-import fs5 from "node:fs";
+import fs6 from "node:fs";
 function safeParseLine(line) {
   try {
     return JSON.parse(line);
@@ -3575,7 +3811,7 @@ function safeParseLine(line) {
 function readNdjson(filePath) {
   let text;
   try {
-    text = fs5.readFileSync(filePath, "utf8");
+    text = fs6.readFileSync(filePath, "utf8");
   } catch {
     return [];
   }
@@ -3596,14 +3832,14 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
     ensureParentDir(filePath);
     let needsLeadingNewline = false;
     try {
-      const stat = fs5.statSync(filePath);
+      const stat = fs6.statSync(filePath);
       if (stat.size > 0) {
-        const fd = fs5.openSync(filePath, "r");
+        const fd = fs6.openSync(filePath, "r");
         const lastByte = Buffer.alloc(1);
         try {
-          fs5.readSync(fd, lastByte, 0, 1, stat.size - 1);
+          fs6.readSync(fd, lastByte, 0, 1, stat.size - 1);
         } finally {
-          fs5.closeSync(fd);
+          fs6.closeSync(fd);
         }
         needsLeadingNewline = lastByte[0] !== 10;
       }
@@ -3611,11 +3847,11 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
     }
     const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}
 `;
-    fs5.appendFileSync(filePath, line, "utf8");
+    fs6.appendFileSync(filePath, line, "utf8");
     if (maxBytes != null) {
-      const stat = fs5.statSync(filePath);
+      const stat = fs6.statSync(filePath);
       if (stat.size > maxBytes) {
-        const lines = fs5.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
+        const lines = fs6.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
         const valid = lines.filter((entry) => safeParseLine(entry) != null);
         const keepFrom = Math.floor(valid.length * (1 - keepRatio));
         const kept = valid.slice(keepFrom);
@@ -3631,7 +3867,7 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
 var TIMING_FILE_NAME = "timings.ndjson";
 var MAX_TIMING_BYTES = 2e6;
 function resolveTimingHistoryFile(workspaceRoot) {
-  return path4.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
+  return path5.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
 }
 function appendTimingRecord(workspaceRoot, record) {
   const validation = validateTimingRecord(record);
@@ -3708,7 +3944,7 @@ function previewText(text, maxLength = 120) {
 }
 function createJobId(kind) {
   const prefix = JOB_PREFIXES[kind] || "pj";
-  return `${prefix}-${randomUUID().slice(0, 8)}`;
+  return `${prefix}-${randomUUID2().slice(0, 8)}`;
 }
 function parseExecutionMode(options) {
   if (options.background && options.wait) {
@@ -3795,13 +4031,13 @@ function appendPreview(logFile, provider, event) {
   if (lines.length === 0) return;
   const block = lines.join("\n");
   try {
-    const existingLines = fs6.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const existingLines = fs7.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     if (existingLines.slice(-lines.length).join("\n") === block) {
       return;
     }
   } catch {
   }
-  fs6.appendFileSync(logFile, `${block}
+  fs7.appendFileSync(logFile, `${block}
 `, "utf8");
 }
 function buildExecutionEnvelope(execution, result) {
@@ -3947,9 +4183,9 @@ async function startBackgroundExecution(execution, asJson) {
     },
     jobId: job.jobId
   });
-  fs6.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
+  fs7.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
 `, "utf8");
-  const logFd = fs6.openSync(job.logFile, "a");
+  const logFd = fs7.openSync(job.logFile, "a");
   const child = spawn2(process5.execPath, [COMPANION_PATH, "_job-worker", resolveJobConfigFile(workspaceRoot, job.jobId)], {
     cwd: execution.cwd,
     env: { ...process5.env },
@@ -3957,7 +4193,7 @@ async function startBackgroundExecution(execution, asJson) {
     detached: true
   });
   child.unref();
-  fs6.closeSync(logFd);
+  fs7.closeSync(logFd);
   const runningJob = upsertJob(workspaceRoot, {
     ...job,
     status: "running",
@@ -4116,10 +4352,10 @@ function buildReviewExecution(rawArgs, { adversarial }) {
         adversarial
       },
       measurementScope: "request",
-      runtimeOptions: provider === "kimi" ? { extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] } : provider === "qwen" ? {
-        maxSteps: 1,
-        appendSystem: "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found."
-      } : {}
+      runtimeOptions: buildReviewRuntimeOptions({
+        provider,
+        cwd: process5.cwd()
+      })
     }
   };
 }

@@ -119,3 +119,40 @@ Source verified unchanged but checked for post-fix state:
 - `packages/polycli-runtime/src/{claude,opencode}.js` (stdout-as-error paths verified clean via grep)
 
 Tests run: `npm test` → 146 / 146 passing.
+
+---
+
+## Follow-up commit 6636b7a `fix: tighten streaming parser invariants` — verdict A
+
+Group 1 executed cleanly. `npm test` → 152 / 152 passing (+6 new regression tests across opencode / pi / gemini / copilot / registry).
+
+**All four Group 1 items landed:**
+
+- **P1-C (generic `event.text` fallback dropped)** — `pi.js` removed the branch entirely; `opencode.js` kept only the explicit `type === "text"` branch and added a new `type === "message.delta"` branch; `gemini.js` now gates every text extraction on `type === "result"` or `type === "message"`. No code path extracts text from untyped events.
+- **P1-D (`type:"error"` terminal event captured)** — extracted as `getCopilotResultError` / `getOpenCodeResultError` pure helpers handling both `type:"result"`/`"final"` and standalone `type:"error"`, checking `error.message` / string `error` / `is_error` / `exitCode` / `status` with consistent fallback text. `parseCopilotStreamText` and `parseOpenCodeStreamText` both fold `type:"error"` into `resultEvent`. Sync and streaming paths share the helper so they cannot drift.
+- **P1-E (gemini visible-text check)** — `runGeminiPromptStreaming` now follows the canonical six-provider shape: `ok: result.ok && !resultError && hasVisibleText`, fails with `"gemini produced no visible text"`. `parseGeminiStreamText` also returns a `resultEvent` so the error-extraction step has a canonical input. Result text is only folded into `response` when no earlier assistant text exists (`if (!response.trim())`), matching qwen's constraint-4 style.
+- **Registry terminal gap** — `registry.js` adds a gemini branch returning `event.type === "result"` to `isTerminalSummaryEvent`, preventing terminal summary text from extending the ttft/tail window.
+
+**Beyond-spec improvements:**
+
+- Extracted `getCopilotResultError` and `getOpenCodeResultError` as reusable pure helpers rather than inline ternaries; this eliminates the sync / streaming drift risk that the original review called out and makes the error-shape contract visible in one place.
+- gemini extractor priority is now strict: `type === "result"` with explicit `event.text` wins; `type === "message"` branches require `role === "assistant"` (or no role); untyped events return empty. The old "any event with a text-ish field is assistant" bug class is closed.
+- Integration fixtures were tightened to emit real-shape events matching the stricter parser, rather than loosening the parser to match synthetic fixtures. This is the correct direction.
+
+**Final status for the original P1 scope:**
+
+- **Group 2 (P1-F atomic-save durability)** — complete. `writeFileAtomic` now uses fd-level flush plus parent-dir fsync, temp files get a `crypto.randomUUID()` suffix, and lock reclaim is owner-PID based with explicit live / dead / PID-reuse coverage.
+- **Group 3 (P1-I `/review` hard constraints)** — complete. Phase 1 findings are recorded in [review-cli-flags.md](/home/user/-Code-/polycli/docs/review-cli-flags.md). `/review` now applies provider-specific hard constraints for `claude`, `gemini`, `copilot`, `opencode`, `pi`, and `minimax`; the constraints are explicitly non-overridable.
+
+Verification after Group 2 + 3: `npm test` → 171 / 171 passing.
+
+---
+
+## Release backlog
+
+Original `docs/review-2026-04-22.md` P0 / P1 scope is now fully cleared. Remaining work moves to release triage only:
+
+- **P2 items**: parser minor bugs (`args.js` short-option concat, double-quote escapes, `--flag=` empty), `stream.js` `maxBufferBytes`, `spawn.js` `AbortSignal`, host-plugin nits (O(n²) `appendPreview`, emoji slicing in `previewText`, `auto`-scope shallow-clone distinction, etc.).
+- **P3 items**: exit-code `130/143/124` mapping, `listModels` decision, test-fixture migration from synthetic to real-CLI saved stdout.
+
+Do not bundle these into the completed Group 2 / Group 3 fixes; schedule them as separate release-backlog PRs.
