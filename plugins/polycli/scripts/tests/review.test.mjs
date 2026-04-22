@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,7 @@ import path from "node:path";
 import {
   buildReviewPrompt,
   buildReviewRuntimeOptions,
+  collectReviewContext,
   normalizeReviewScope,
 } from "../lib/review.mjs";
 
@@ -131,4 +133,42 @@ test("buildReviewRuntimeOptions rejects conflicting user overrides", () => {
     }),
     /non-overridable review hard constraints/i
   );
+});
+
+test("collectReviewContext auto scope returns warnings when branch fallback fails in a single-commit repo", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-git-"));
+  execFileSync("git", ["init", "-b", "scratch"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Test User"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+  fs.writeFileSync(path.join(root, "file.txt"), "hello\n", "utf8");
+  execFileSync("git", ["add", "file.txt"], { cwd: root });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: root });
+
+  const context = collectReviewContext({ cwd: root, scope: "auto" });
+
+  assert.equal(context.ok, true);
+  assert.equal(context.diff, "");
+  assert.equal(context.scope, "auto");
+  assert.equal(context.baseRef, "HEAD~1");
+  assert.ok(Array.isArray(context.warnings));
+  assert.match(context.warnings.join("\n"), /branch diff failed/i);
+});
+
+test("collectReviewContext auto scope stays warning-free for a clean repo when branch diff succeeds", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-git-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Test User"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+  fs.writeFileSync(path.join(root, "file.txt"), "hello\n", "utf8");
+  execFileSync("git", ["add", "file.txt"], { cwd: root });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: root });
+  fs.writeFileSync(path.join(root, "file.txt"), "hello\nworld\n", "utf8");
+  execFileSync("git", ["commit", "-am", "second"], { cwd: root });
+
+  const context = collectReviewContext({ cwd: root, scope: "auto" });
+
+  assert.equal(context.ok, true);
+  assert.equal(context.diff, "");
+  assert.equal(context.scope, "auto");
+  assert.equal(context.warnings, undefined);
 });

@@ -40,6 +40,7 @@ import {
   listTimingRecords,
   summarizeTimingRecords,
 } from "./lib/timing.mjs";
+import { appendPreview, previewText } from "./lib/preview.mjs";
 
 const COMPANION_PATH = fileURLToPath(import.meta.url);
 const JOB_PREFIXES = {
@@ -80,18 +81,6 @@ function output(value, asJson) {
   process.stdout.write(typeof value === "string" ? `${value}\n` : `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function collapseWhitespace(text) {
-  return String(text ?? "").replace(/\s+/g, " ").trim();
-}
-
-function previewText(text, maxLength = 120) {
-  const collapsed = collapseWhitespace(text);
-  if (collapsed.length <= maxLength) {
-    return collapsed;
-  }
-  return `${collapsed.slice(0, maxLength - 1)}…`;
-}
-
 function createJobId(kind) {
   const prefix = JOB_PREFIXES[kind] || "pj";
   return `${prefix}-${randomUUID().slice(0, 8)}`;
@@ -104,123 +93,6 @@ function parseExecutionMode(options) {
   return {
     background: Boolean(options.background),
   };
-}
-
-function summarizeEventText(provider, event) {
-  if (!event || typeof event !== "object") return "";
-
-  if (provider === "claude") {
-    if (event.type === "result" && event.is_error !== true && event.subtype !== "error" && typeof event.result === "string") {
-      return event.result;
-    }
-    if (typeof event.text === "string") return event.text;
-    if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && typeof event.delta.text === "string") {
-      return event.delta.text;
-    }
-    const content = event.content ?? event.message?.content;
-    if (typeof content === "string") return content;
-    if (!Array.isArray(content)) return "";
-    return content
-      .filter((block) => block?.type === "text" && typeof block.text === "string")
-      .map((block) => block.text)
-      .join("");
-  }
-
-  if (provider === "copilot") {
-    if ((event.type === "result" || event.type === "final") && typeof event.result === "string") return event.result;
-    if (event.type === "assistant.message_delta" && typeof event.data?.deltaContent === "string") return event.data.deltaContent;
-    if (event.type === "assistant.message" && typeof event.data?.content === "string") return event.data.content;
-    if (typeof event.delta === "string") return event.delta;
-    if (typeof event.text === "string") return event.text;
-    const content = event.content ?? event.message?.content;
-    if (typeof content === "string") return content;
-    if (!Array.isArray(content)) return "";
-    return content
-      .filter((block) => block?.type === "text" && typeof block.text === "string")
-      .map((block) => block.text)
-      .join("");
-  }
-
-  if (provider === "gemini") {
-    if (typeof event.delta === "string") return event.delta;
-    if (typeof event.content === "string") return event.content;
-    if (typeof event.text === "string") return event.text;
-    if (typeof event.message?.content === "string") return event.message.content;
-    return "";
-  }
-
-  if (provider === "kimi") {
-    if (event.role !== "assistant") return "";
-    if (typeof event.content === "string") return event.content;
-    if (!Array.isArray(event.content)) return "";
-    return event.content
-      .filter((block) => block?.type === "text" && typeof block.text === "string")
-      .map((block) => block.text)
-      .join("");
-  }
-
-  if (provider === "qwen") {
-    if (event.type === "result" && event.is_error !== true && event.subtype !== "error" && typeof event.result === "string") {
-      return event.result;
-    }
-    if (event.type !== "assistant" || !Array.isArray(event.message?.content)) return "";
-    return event.message.content
-      .filter((block) => block?.type === "text" && typeof block.text === "string")
-      .map((block) => block.text)
-      .join("");
-  }
-
-  if (provider === "minimax") {
-    if (event.type === "progress" && typeof event.text === "string") return event.text;
-    if (event.type === "result" && typeof event.response === "string") return event.response;
-  }
-
-  if (provider === "opencode") {
-    if (event.type === "result" && typeof event.text === "string") return event.text;
-    if (event.type === "text" && typeof event.part?.text === "string") return event.part.text;
-    if (typeof event.delta === "string") return event.delta;
-    if (typeof event.text === "string") return event.text;
-    if (typeof event.part?.text === "string") return event.part.text;
-    const content = event.content ?? event.message?.content;
-    if (typeof content === "string") return content;
-    if (!Array.isArray(content)) return "";
-    return content
-      .filter((block) => block?.type === "text" && typeof block.text === "string")
-      .map((block) => block.text)
-      .join("");
-  }
-
-  if (provider === "pi") {
-    if (event.assistantMessageEvent?.type === "text_delta" && typeof event.assistantMessageEvent.delta === "string") {
-      return event.assistantMessageEvent.delta;
-    }
-    if (event.type === "agent_end" && typeof event.result?.text === "string") return event.result.text;
-    if (typeof event.text === "string") return event.text;
-  }
-
-  return "";
-}
-
-function appendPreview(logFile, provider, event) {
-  const text = summarizeEventText(provider, event);
-  if (!text) return;
-  const lines = String(text)
-    .split(/\r?\n/)
-    .map((line) => collapseWhitespace(line))
-    .filter(Boolean)
-    .slice(0, 10);
-  if (lines.length === 0) return;
-  const block = lines.join("\n");
-  try {
-    const existingLines = fs.readFileSync(logFile, "utf8")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (existingLines.slice(-lines.length).join("\n") === block) {
-      return;
-    }
-  } catch {}
-  fs.appendFileSync(logFile, `${block}\n`, "utf8");
 }
 
 function buildExecutionEnvelope(execution, result) {
@@ -570,10 +442,16 @@ function buildReviewExecution(rawArgs, { adversarial }) {
 async function runReviewCommand(rawArgs, { adversarial }) {
   const { options, provider, reviewContext, execution } = buildReviewExecution(rawArgs, { adversarial });
   if (!reviewContext.diff.trim()) {
+    const warnings = Array.isArray(reviewContext.warnings) && reviewContext.warnings.length > 0
+      ? reviewContext.warnings
+      : undefined;
     output(
       options.json
-        ? { ok: true, provider, verdict: "no_changes", scope: reviewContext.scope }
-        : "No changes to review.",
+        ? { ok: true, provider, verdict: "no_changes", scope: reviewContext.scope, warnings }
+        : [
+          ...(warnings ? [`Note: ${warnings.join(" | ")}`] : []),
+          "No changes to review.",
+        ].join("\n\n"),
       options.json
     );
     return;

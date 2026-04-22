@@ -235,18 +235,32 @@ export function collectReviewContext({ cwd, scope = "auto", baseRef = null, maxD
 
   let selected = null;
   if (effectiveScope === "auto") {
+    const attempts = [];
     const staged = diffForScope(cwd, "staged", null);
+    attempts.push({ scope: "staged", ...staged });
     if (staged.ok && staged.diff.trim()) selected = { ...staged, scope: "staged" };
     if (!selected) {
       const unstaged = diffForScope(cwd, "unstaged", null);
+      attempts.push({ scope: "unstaged", ...unstaged });
       if (unstaged.ok && unstaged.diff.trim()) selected = { ...unstaged, scope: "unstaged" };
     }
     if (!selected) {
       const branch = diffForScope(cwd, "branch", baseRef);
+      attempts.push({ scope: "branch", ...branch });
       if (branch.ok && branch.diff.trim()) selected = { ...branch, scope: "branch" };
     }
     if (!selected) {
-      selected = { ok: true, diff: "", scope: "auto", baseRef: baseRef || detectDefaultBaseRef(cwd) };
+      const warnings = attempts
+        .filter((attempt) => !attempt.ok)
+        .map((attempt) => `${attempt.scope} diff failed: ${attempt.error}`);
+      const branchAttempt = attempts.find((attempt) => attempt.scope === "branch");
+      selected = {
+        ok: true,
+        diff: "",
+        scope: "auto",
+        baseRef: branchAttempt?.baseRef || baseRef || detectDefaultBaseRef(cwd),
+        warnings: warnings.length > 0 ? warnings : undefined,
+      };
     }
   } else {
     selected = { ...diffForScope(cwd, effectiveScope, baseRef), scope: effectiveScope };
@@ -267,6 +281,7 @@ export function collectReviewContext({ cwd, scope = "auto", baseRef = null, maxD
     scope: selected.scope,
     baseRef: selected.baseRef || baseRef,
     diff: truncatedDiff,
+    warnings: selected.warnings,
     truncated,
     truncationNotice: truncated
       ? `Diff truncated to ${maxDiffBytes} bytes before sending to provider.`

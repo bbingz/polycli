@@ -963,6 +963,51 @@ test("integration: review constrains minimax with a tool-disabled config overrid
   }
 });
 
+test("integration: review surfaces auto-scope warnings when branch diff fallback fails", async () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-auto-"));
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn("git", ["init", "-b", "scratch"], { cwd: repoRoot });
+      child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`git init exited ${code}`)));
+      child.on("error", reject);
+    });
+    await new Promise((resolve, reject) => {
+      const child = spawn("git", ["config", "user.name", "Test User"], { cwd: repoRoot });
+      child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`git config name exited ${code}`)));
+      child.on("error", reject);
+    });
+    await new Promise((resolve, reject) => {
+      const child = spawn("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot });
+      child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`git config email exited ${code}`)));
+      child.on("error", reject);
+    });
+    fs.writeFileSync(path.join(repoRoot, "README.md"), "# test\n", "utf8");
+    await new Promise((resolve, reject) => {
+      const child = spawn("git", ["add", "README.md"], { cwd: repoRoot });
+      child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`git add exited ${code}`)));
+      child.on("error", reject);
+    });
+    await new Promise((resolve, reject) => {
+      const child = spawn("git", ["commit", "-m", "init"], { cwd: repoRoot });
+      child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`git commit exited ${code}`)));
+      child.on("error", reject);
+    });
+
+    const review = await runCompanion(
+      ["review", "--provider", "qwen", "--json"],
+      { cwd: repoRoot, env: cleanEnv() }
+    );
+    assert.equal(review.code, 0, review.stderr);
+
+    const payload = JSON.parse(review.stdout);
+    assert.equal(payload.verdict, "no_changes");
+    assert.ok(Array.isArray(payload.warnings));
+    assert.match(payload.warnings.join("\n"), /branch diff failed/i);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("integration: setup and ask succeed for minimax via bundled companion", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   const fake = createFakeMiniMaxFixture();

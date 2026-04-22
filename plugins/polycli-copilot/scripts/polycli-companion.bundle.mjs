@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // plugins/polycli/scripts/polycli-companion.mjs
-import fs7 from "node:fs";
+import fs8 from "node:fs";
 import process5 from "node:process";
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { spawn as spawn2 } from "node:child_process";
@@ -3734,18 +3734,30 @@ function collectReviewContext({ cwd, scope = "auto", baseRef = null, maxDiffByte
   }
   let selected = null;
   if (effectiveScope === "auto") {
+    const attempts = [];
     const staged = diffForScope(cwd, "staged", null);
+    attempts.push({ scope: "staged", ...staged });
     if (staged.ok && staged.diff.trim()) selected = { ...staged, scope: "staged" };
     if (!selected) {
       const unstaged = diffForScope(cwd, "unstaged", null);
+      attempts.push({ scope: "unstaged", ...unstaged });
       if (unstaged.ok && unstaged.diff.trim()) selected = { ...unstaged, scope: "unstaged" };
     }
     if (!selected) {
       const branch = diffForScope(cwd, "branch", baseRef);
+      attempts.push({ scope: "branch", ...branch });
       if (branch.ok && branch.diff.trim()) selected = { ...branch, scope: "branch" };
     }
     if (!selected) {
-      selected = { ok: true, diff: "", scope: "auto", baseRef: baseRef || detectDefaultBaseRef(cwd) };
+      const warnings = attempts.filter((attempt) => !attempt.ok).map((attempt) => `${attempt.scope} diff failed: ${attempt.error}`);
+      const branchAttempt = attempts.find((attempt) => attempt.scope === "branch");
+      selected = {
+        ok: true,
+        diff: "",
+        scope: "auto",
+        baseRef: branchAttempt?.baseRef || baseRef || detectDefaultBaseRef(cwd),
+        warnings: warnings.length > 0 ? warnings : void 0
+      };
     }
   } else {
     selected = { ...diffForScope(cwd, effectiveScope, baseRef), scope: effectiveScope };
@@ -3761,6 +3773,7 @@ function collectReviewContext({ cwd, scope = "auto", baseRef = null, maxDiffByte
     scope: selected.scope,
     baseRef: selected.baseRef || baseRef,
     diff: truncatedDiff,
+    warnings: selected.warnings,
     truncated,
     truncationNotice: truncated ? `Diff truncated to ${maxDiffBytes} bytes before sending to provider.` : null
   };
@@ -3892,67 +3905,20 @@ function summarizeTimingRecords(records) {
   return aggregateTimingRecords(records);
 }
 
-// plugins/polycli/scripts/polycli-companion.mjs
-var COMPANION_PATH = fileURLToPath(import.meta.url);
-var JOB_PREFIXES = {
-  ask: "pa",
-  rescue: "pr",
-  review: "pv",
-  "adversarial-review": "pv"
-};
-var TIMEOUTS_MS = {
-  ask: 12e4,
-  rescue: 6e5,
-  review: 18e4,
-  "adversarial-review": 18e4
-};
-function printUsage() {
-  console.log(
-    [
-      "Usage:",
-      "  polycli-companion.mjs setup [--provider <provider>] [--json]",
-      "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
-      "  polycli-companion.mjs rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>",
-      "  polycli-companion.mjs review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--json] [focus ...]",
-      "  polycli-companion.mjs adversarial-review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--json] [focus ...]",
-      "  polycli-companion.mjs status [job-id] [--all] [--wait] [--timeout-ms <ms>] [--json]",
-      "  polycli-companion.mjs result [job-id] [--json]",
-      "  polycli-companion.mjs cancel [job-id] [--json]",
-      "  polycli-companion.mjs timing [--provider <provider>] [--history <count>] [--json]"
-    ].join("\n")
-  );
-}
-function output(value, asJson) {
-  if (asJson) {
-    process5.stdout.write(`${JSON.stringify(value, null, 2)}
-`);
-    return;
-  }
-  process5.stdout.write(typeof value === "string" ? `${value}
-` : `${JSON.stringify(value, null, 2)}
-`);
-}
+// plugins/polycli/scripts/lib/preview.mjs
+import fs7 from "node:fs";
+var PREVIEW_MAX_LINES = 10;
+var PREVIEW_TAIL_CACHE = /* @__PURE__ */ new Map();
 function collapseWhitespace(text) {
   return String(text ?? "").replace(/\s+/g, " ").trim();
 }
 function previewText(text, maxLength = 120) {
   const collapsed = collapseWhitespace(text);
-  if (collapsed.length <= maxLength) {
+  const points = Array.from(collapsed);
+  if (points.length <= maxLength) {
     return collapsed;
   }
-  return `${collapsed.slice(0, maxLength - 1)}\u2026`;
-}
-function createJobId(kind) {
-  const prefix = JOB_PREFIXES[kind] || "pj";
-  return `${prefix}-${randomUUID2().slice(0, 8)}`;
-}
-function parseExecutionMode(options) {
-  if (options.background && options.wait) {
-    throw new Error("Choose either --background or --wait, not both.");
-  }
-  return {
-    background: Boolean(options.background)
-  };
+  return `${points.slice(0, maxLength - 1).join("")}\u2026`;
 }
 function summarizeEventText(provider, event) {
   if (!event || typeof event !== "object") return "";
@@ -4024,21 +3990,71 @@ function summarizeEventText(provider, event) {
   }
   return "";
 }
-function appendPreview(logFile, provider, event) {
+function appendPreview(logFile, provider, event, { fsImpl = fs7, tailCache = PREVIEW_TAIL_CACHE } = {}) {
   const text = summarizeEventText(provider, event);
   if (!text) return;
-  const lines = String(text).split(/\r?\n/).map((line) => collapseWhitespace(line)).filter(Boolean).slice(0, 10);
+  const lines = String(text).split(/\r?\n/).map((line) => collapseWhitespace(line)).filter(Boolean).slice(0, PREVIEW_MAX_LINES);
   if (lines.length === 0) return;
-  const block = lines.join("\n");
-  try {
-    const existingLines = fs7.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    if (existingLines.slice(-lines.length).join("\n") === block) {
-      return;
-    }
-  } catch {
+  const currentTail = tailCache.get(logFile) || [];
+  if (currentTail.slice(-lines.length).join("\n") === lines.join("\n")) {
+    return;
   }
-  fs7.appendFileSync(logFile, `${block}
+  fsImpl.appendFileSync(logFile, `${lines.join("\n")}
 `, "utf8");
+  tailCache.set(logFile, [...currentTail, ...lines].slice(-PREVIEW_MAX_LINES));
+}
+
+// plugins/polycli/scripts/polycli-companion.mjs
+var COMPANION_PATH = fileURLToPath(import.meta.url);
+var JOB_PREFIXES = {
+  ask: "pa",
+  rescue: "pr",
+  review: "pv",
+  "adversarial-review": "pv"
+};
+var TIMEOUTS_MS = {
+  ask: 12e4,
+  rescue: 6e5,
+  review: 18e4,
+  "adversarial-review": 18e4
+};
+function printUsage() {
+  console.log(
+    [
+      "Usage:",
+      "  polycli-companion.mjs setup [--provider <provider>] [--json]",
+      "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
+      "  polycli-companion.mjs rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>",
+      "  polycli-companion.mjs review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--json] [focus ...]",
+      "  polycli-companion.mjs adversarial-review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--json] [focus ...]",
+      "  polycli-companion.mjs status [job-id] [--all] [--wait] [--timeout-ms <ms>] [--json]",
+      "  polycli-companion.mjs result [job-id] [--json]",
+      "  polycli-companion.mjs cancel [job-id] [--json]",
+      "  polycli-companion.mjs timing [--provider <provider>] [--history <count>] [--json]"
+    ].join("\n")
+  );
+}
+function output(value, asJson) {
+  if (asJson) {
+    process5.stdout.write(`${JSON.stringify(value, null, 2)}
+`);
+    return;
+  }
+  process5.stdout.write(typeof value === "string" ? `${value}
+` : `${JSON.stringify(value, null, 2)}
+`);
+}
+function createJobId(kind) {
+  const prefix = JOB_PREFIXES[kind] || "pj";
+  return `${prefix}-${randomUUID2().slice(0, 8)}`;
+}
+function parseExecutionMode(options) {
+  if (options.background && options.wait) {
+    throw new Error("Choose either --background or --wait, not both.");
+  }
+  return {
+    background: Boolean(options.background)
+  };
 }
 function buildExecutionEnvelope(execution, result) {
   return {
@@ -4183,9 +4199,9 @@ async function startBackgroundExecution(execution, asJson) {
     },
     jobId: job.jobId
   });
-  fs7.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
+  fs8.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
 `, "utf8");
-  const logFd = fs7.openSync(job.logFile, "a");
+  const logFd = fs8.openSync(job.logFile, "a");
   const child = spawn2(process5.execPath, [COMPANION_PATH, "_job-worker", resolveJobConfigFile(workspaceRoot, job.jobId)], {
     cwd: execution.cwd,
     env: { ...process5.env },
@@ -4193,7 +4209,7 @@ async function startBackgroundExecution(execution, asJson) {
     detached: true
   });
   child.unref();
-  fs7.closeSync(logFd);
+  fs8.closeSync(logFd);
   const runningJob = upsertJob(workspaceRoot, {
     ...job,
     status: "running",
@@ -4362,8 +4378,12 @@ function buildReviewExecution(rawArgs, { adversarial }) {
 async function runReviewCommand(rawArgs, { adversarial }) {
   const { options, provider, reviewContext, execution } = buildReviewExecution(rawArgs, { adversarial });
   if (!reviewContext.diff.trim()) {
+    const warnings = Array.isArray(reviewContext.warnings) && reviewContext.warnings.length > 0 ? reviewContext.warnings : void 0;
     output(
-      options.json ? { ok: true, provider, verdict: "no_changes", scope: reviewContext.scope } : "No changes to review.",
+      options.json ? { ok: true, provider, verdict: "no_changes", scope: reviewContext.scope, warnings } : [
+        ...warnings ? [`Note: ${warnings.join(" | ")}`] : [],
+        "No changes to review."
+      ].join("\n\n"),
       options.json
     );
     return;
