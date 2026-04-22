@@ -156,3 +156,52 @@ Original `docs/review-2026-04-22.md` P0 / P1 scope is now fully cleared. Remaini
 - **P3 items**: exit-code `130/143/124` mapping, `listModels` decision, test-fixture migration from synthetic to real-CLI saved stdout.
 
 Do not bundle these into the completed Group 2 / Group 3 fixes; schedule them as separate release-backlog PRs.
+
+---
+
+## Follow-up commit 95b003c `fix: harden atomic save and review constraints` — verdict A
+
+Group 2 and Group 3 both landed cleanly. `npm test` → 171 / 171 passing (+19 new regression tests).
+
+**Group 2 — atomic-save durability: complete.**
+
+- `writeFileAtomicSync` now opens fd, `writeFileSync(fd)`, `fsyncSync(fd)`, `closeSync`, `renameSync`, then opens the parent dir and `fsyncSync(dirFd)`. Parent-dir fsync is wrapped in a tolerant catch for `EINVAL` / `ENOTSUP` / `EPERM` (filesystems that don't honor directory fsync).
+- Tmp filename is now `${filePath}.tmp.${pid}.${Date.now()}.${crypto.randomUUID()}`, eliminating the same-ms same-PID collision window.
+- `withLockfile` now writes JSON `{pid, acquiredAt}` into the lockfile on acquisition. Stale reclaim goes through `process.kill(pid, 0)`: `ESRCH` → owner dead, unlink + retry; `EPERM` → owner alive (safe default); success → owner alive. A PID-reuse fallback reclaims the lock when `ownerAlive && lockAgeMs > staleMs` (default raised from 30s to 600s to fit the new semantics).
+- `normalizeWriteOptions` preserves the existing `(string | object)` call shape, so callers passing `"utf8"` or `{flag, mode, encoding}` keep working.
+- Regression tests cover: fsync ordering (file-fsync before rename, dir-fsync after rename), live-PID no-reclaim, dead-PID reclaim via child spawn + exit, and the PID-reuse time-boxed fallback.
+
+**Group 3 — `/review` CLI hard constraints: complete.**
+
+- Codex delivered a Phase 1 research artifact at [docs/review-cli-flags.md](review-cli-flags.md) (230 lines, all findings verified against locally installed CLI versions with `--help` / official docs / installed source). Four of the six hypotheses from this doc were corrected:
+  - claude: `--tools ""` works directly; the exhaustive `--disallowed-tools` list was unnecessary.
+  - gemini: `--approval-mode plan` is read-only, not no-tools; correct shape is a one-shot Policy Engine TOML with `toolName = "*"` / `decision = "deny"`, passed via `--policy <tmpfile>`.
+  - copilot: `--available-tools ''` is filtered out by the CLI's own normalizer; correct shape is an exhaustive `--excluded-tools` denylist (22 documented tool names).
+  - opencode: no CLI flag exists; correct shape is injecting `OPENCODE_CONFIG_CONTENT` with `permission: "deny"`, plus `--agent plan`, plus removing the default `--dangerously-skip-permissions`.
+  - Confirmed: pi `--no-tools`, minimax `MINI_AGENT_CONFIG_PATH` one-shot YAML.
+- Phase 2 implementation centralizes everything in `plugins/polycli/scripts/lib/review.mjs` under `buildReviewRuntimeOptions` + a `REVIEW_HARD_CONSTRAINTS` per-provider map. `assertNoReviewConstraintOverride` makes constraints **non-overridable** — any user-supplied `extraArgs` or conflicting `approvalMode` / `skipPermissions` / `maxSteps` throws before dispatch.
+- `packages/polycli-runtime/src/opencode.js` grew two parameters (`skipPermissions`, `env`) that thread through both sync and streaming paths, enabling the env-injection constraint layer.
+- `polycli-companion.mjs:559-570` replaced inline provider branching with a single `buildReviewRuntimeOptions` call.
+- New tests: `plugins/polycli/scripts/tests/review.test.mjs` (+102), `plugins/polycli/scripts/tests/integration.test.mjs` (+235 LoC), `packages/polycli-runtime/test/opencode.test.js` (+37).
+
+**Beyond-spec quality:**
+
+- The research doc is a standalone reusable artifact, citing CLI versions (claude 2.1.117, gemini 0.38.2, copilot 1.0.34, opencode 1.14.20, pi 0.68.1, mini-agent 0.1.0) and primary sources for each finding. If any upstream CLI flag-surface drifts, this doc points directly at what to re-verify.
+- The non-overridable decision was chosen explicitly and justified in the research doc's "Phase 2 implementation decision" section.
+- opencode's three-layer defense (disable `--dangerously-skip-permissions`, add `--agent plan`, inject `permission: "deny"`) reflects real defense-in-depth reasoning rather than trusting a single switch.
+
+**Minor nits (non-blocking):**
+
+- `writeReviewTempFile` creates `mkdtempSync` directories that aren't cleaned up at process exit. Long-running hosts will slowly accumulate per-review dirs in `os.tmpdir()`. One-line `process.on("exit", ...)` cleanup or a tmp-registry pattern is sufficient. Release-blocker only if a host runs review thousands of times without restart.
+- `readYamlScalar` in `review.mjs` still uses regex parsing for `api_key` / `api_base` / `model` / `provider`. Simple key-value configs parse fine; multi-line values or unusual quoting would be missed. Agent finding #26 in the original review flagged this — carrying forward as a future cleanup when MiniMax flow is next touched.
+
+---
+
+## Final scope status
+
+- **P0**: 6 / 6 shipped.
+- **P1 (A–I)**: 9 / 9 shipped.
+- **P2**: ~15 items deferred to release-backlog (parser minor bugs, stream/spawn robustness, host-plugin UX nits).
+- **P3**: ~20 items deferred to release-backlog (exit-code mapping, listModels, real-CLI fixture migration).
+
+The original `docs/review-2026-04-22.md` scope is now fully closed. Further work is tracked separately as release-candidate polish.
