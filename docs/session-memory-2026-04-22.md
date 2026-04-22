@@ -2,151 +2,196 @@
 
 This file is the handoff context for the next Codex session in `/home/user/-Code-/polycli`.
 
-## Goal
+## Current State
 
-Build `polycli` as an independent project under `-Code-/polycli`.
+Repo:
 
-Important boundary:
+- path: `/home/user/-Code-/polycli`
+- branch: `main`
+- remote: `https://github.com/bbingz/polycli.git`
+- working tree: clean at the time this file was updated
+
+Release state:
+
+- GitHub repository exists and is public:
+  - `https://github.com/bbingz/polycli`
+- GitHub Release exists:
+  - `v0.3.0`
+  - `https://github.com/bbingz/polycli/releases/tag/v0.3.0`
+- npm package publish command completed for:
+  - `@bbingz/polycli-opencode@0.3.0`
+- local OpenCode tarball artifact exists at:
+  - [dist/bbingz-polycli-opencode-0.3.0.tgz](/home/user/-Code-/polycli/dist/bbingz-polycli-opencode-0.3.0.tgz)
+
+Important note:
+
+- Immediately after the first npm publish of a new scoped package, `npm view` may briefly return `404` due to registry propagation lag even though the publish command already succeeded.
+
+## Product Boundary
+
+The product is now:
+
+- `@bbingz/polycli-utils`
+- `@bbingz/polycli-timing`
+- `@bbingz/polycli-runtime`
+- host adapters for:
+  - Claude
+  - Codex
+  - GitHub Copilot CLI
+  - OpenCode
+
+Legacy repos remain reference-only and must not be edited as part of normal `polycli` work:
 
 - `gemini-plugin-cc`
 - `qwen-plugin-cc`
 - `kimi-plugin-cc`
 - `minimax-plugin-cc`
 
-are **not** migration targets. They are legacy/reference repos only. New work should land in `polycli`, not in those repos.
+## What Was Finished
 
-## Proposal
+### Runtime integration
 
-The proposal document has been moved here:
+Provider runtime integration is implemented for:
 
-- [docs/polycli-proposal.md](/home/user/-Code-/polycli/docs/polycli-proposal.md)
+- `gemini`
+- `kimi`
+- `qwen`
+- `minimax`
 
-That document is the primary product/context doc and should be read first in the next session.
+The runtime package includes:
 
-## Current `polycli` State
+- provider registry
+- availability/auth probes
+- foreground prompt execution
+- streaming execution
+- per-provider parser logic
+- timing attachment
 
-Repo:
+### Timing
 
-- path: `/home/user/-Code-/polycli`
-- git: initialized, clean working tree at the time this file was written
+Timing is implemented as a capability-aware local telemetry layer.
 
-Recent commits:
+Working metrics now are:
 
-1. `7e8854e` `feat: bootstrap polycli utils and timing packages`
-2. `7a6c997` `feat: support preserve-null process status`
+- `qwen`
+  - `total`
+  - `ttft`
+  - `gen`
+  - `tool`
+  - `tail`
+  - `runtimePersistence=session`
+- `gemini`
+  - `total`
+  - `ttft`
+  - `gen`
+  - `tail`
+  - `runtimePersistence=session`
+- `kimi`
+  - `total`
+  - `ttft`
+  - `gen`
+  - `tail`
+  - `runtimePersistence=session`
+- `minimax`
+  - `total`
+  - the rest stay explicit `unsupported`
 
-Current package layout:
+Still intentionally not implemented:
 
-- `packages/polycli-utils`
-- `packages/polycli-timing`
+- `cold`
+- `retry`
 
-Current test command:
+Reason:
+
+- upstream CLIs do not currently expose a stable enough signal to measure them honestly
+
+Do not fake them and do not silently convert them to `missing`.
+
+### Host adapters
+
+Host adapters exist and are bundled:
+
+- Claude plugin at `plugins/polycli`
+- Codex plugin at `plugins/polycli-codex`
+- Copilot plugin at `plugins/polycli-copilot`
+- OpenCode package at `plugins/polycli-opencode`
+
+All host-facing companion entrypoints now use bundled files rather than raw source paths.
+
+## Validation Status
+
+Primary verification command:
 
 ```bash
 npm test
 ```
 
-This was passing before handoff.
+Current result at handoff:
 
-## What Exists In `polycli`
+- `71` tests passed
+- `0` failed
 
-### `polycli-utils`
+Additional verified release checks:
 
-Shared utility layer currently includes:
+```bash
+npm run release:check
+npm run pack:opencode
+```
 
-- arg parsing
-- sync process execution
-- stream helpers
-- atomic save / lockfile helpers
-- NDJSON helpers
-- session-id helpers
-- stream JSON parsing
+Claude manifest validation passed for:
 
-Important note:
+- `.claude-plugin/marketplace.json`
+- `plugins/polycli/.claude-plugin/plugin.json`
 
-- `runCommand(..., { preserveNullStatus: true })` exists because one legacy provider (`kimi`) depended on `spawnSync` preserving `status = null` for signaled exits. This option now lives in `polycli` itself as a compatibility affordance, but no old repo should be wired to it anymore.
+Remote-install smoke checks were completed against `bbingz/polycli`:
 
-### `polycli-timing`
+- Claude:
+  - `claude plugin marketplace add bbingz/polycli`
+  - `claude plugin install polycli@polycli-hosts`
+- Codex:
+  - `codex plugin marketplace add bbingz/polycli`
+- Copilot:
+  - `copilot plugin marketplace add bbingz/polycli`
+  - `copilot plugin install polycli-copilot@polycli-hosts`
 
-Timing contract work already started and includes:
+OpenCode packaging checks completed:
 
-- timing record validation
-- aggregation
-- percentile calculation
-- capability-aware status handling
+- `npm publish ./plugins/polycli-opencode --dry-run --access public`
+- real `npm publish ./plugins/polycli-opencode --access public` was run successfully after interactive npm auth
 
-This aligns with the proposal's Path B direction:
+## Key Files
 
-- utility layer shared
-- timing schema independent
-- capability states must distinguish:
-  - unsupported / no capability
-  - missing data
-  - genuine zero contribution
+Read these first in the next session:
 
-## Critical Product Direction
+1. [README.md](/home/user/-Code-/polycli/README.md)
+2. [docs/release.md](/home/user/-Code-/polycli/docs/release.md)
+3. [docs/session-memory-2026-04-22.md](/home/user/-Code-/polycli/docs/session-memory-2026-04-22.md)
+4. [packages/polycli-runtime/README.md](/home/user/-Code-/polycli/packages/polycli-runtime/README.md)
 
-The intended direction is **Path B**, not framework coupling:
+Important implementation files:
 
-- shared utilities are fine
-- timing schema should stay explicit and capability-aware
-- do not force provider-specific semantics into one fake-unified runtime
+- [packages/polycli-runtime/src/registry.js](/home/user/-Code-/polycli/packages/polycli-runtime/src/registry.js:1)
+- [packages/polycli-runtime/src/timing.js](/home/user/-Code-/polycli/packages/polycli-runtime/src/timing.js:1)
+- [plugins/polycli/scripts/polycli-companion.mjs](/home/user/-Code-/polycli/plugins/polycli/scripts/polycli-companion.mjs:1)
+- [plugins/polycli/scripts/tests/integration.test.mjs](/home/user/-Code-/polycli/plugins/polycli/scripts/tests/integration.test.mjs:1)
+- [plugins/polycli/scripts/tests/host-packaging.test.mjs](/home/user/-Code-/polycli/plugins/polycli/scripts/tests/host-packaging.test.mjs:1)
 
-The extra user motive that materially affects design:
+## Suggested Next Focus
 
-- timing data is not only for self-observability
-- it is intended for **cross-AI capability comparison**
+The core initial goals are done. Next work should be one of:
 
-That makes capability flags and "missing vs unsupported vs zero" separation non-negotiable.
+1. Post-release stabilization:
+   - watch for marketplace or npm install issues from real consumption
+2. Documentation cleanup:
+   - tighten wording now that release is public
+3. CI/release automation:
+   - automate tag/release/npm publish once desired
+4. New capability work:
+   - only after confirming upstream providers actually expose the needed signals
 
-## Mistake Made In This Session
+## Do Not Regress
 
-There was a wrong turn:
-
-- old plugin repos were temporarily edited to import `polycli` source directly
-
-That was incorrect because it created cross-repo source coupling instead of building `polycli` as a standalone project.
-
-This has already been cleaned up.
-
-## Legacy Repo Cleanup Status
-
-At handoff time:
-
-- `qwen-plugin-cc` was reset back to `origin/main`
-- `kimi-plugin-cc` was reset back to `origin/main`
-- `minimax-plugin-cc` was reset back to `origin/main`
-- `gemini-plugin-cc` had the temporary migration reverted with commit:
-  - `3e0cdb7` `Revert "refactor: connect gemini timing and utils to polycli"`
-
-Also verified:
-
-- no remaining source references from old plugin `plugins/` directories into `polycli`
-
-This means the old repos should now be treated as read-only references.
-
-## Recommended Next Start For The New Session
-
-Open these first:
-
-1. [docs/polycli-proposal.md](/home/user/-Code-/polycli/docs/polycli-proposal.md)
-2. [docs/session-memory-2026-04-22.md](/home/user/-Code-/polycli/docs/session-memory-2026-04-22.md)
-
-Then continue only inside `/home/user/-Code-/polycli`.
-
-## Suggested Immediate Focus
-
-The next implementation pass should likely answer:
-
-1. What is `polycli` v1.0's executable/package surface?
-2. How are provider adapters represented inside `polycli` without touching legacy repos?
-3. How is timing data written, validated, and compared under the Path B model?
-4. What fixtures/tests are needed to prove capability-state correctness for cross-provider comparison?
-
-## Do Not Repeat
-
-- Do not modify old plugin repos to "integrate" `polycli`
-- Do not rely on sibling relative imports into legacy repos
-- Do not use legacy repo cleanliness as a success metric for `polycli`
-
-The success metric is whether `polycli` itself stands as a self-contained project with its own docs, packages, tests, and future provider model.
+- Do not reintroduce source-path coupling from host plugins to monorepo source layout.
+- Do not weaken timing semantics by collapsing `unsupported`, `missing`, `zero`, and `measured`.
+- Do not claim `cold` or `retry` metrics unless upstreams expose a real signal.
+- Do not treat legacy provider repos as active integration targets.

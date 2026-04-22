@@ -5,6 +5,25 @@ This repository publishes in two different ways:
 - `Claude` / `Codex` / `Copilot` ship from the GitHub repository marketplace files.
 - `OpenCode` ships as the npm package `@bbingz/polycli-opencode`.
 
+## Current Release State
+
+As of `2026-04-22`, the initial public release has been executed:
+
+- GitHub repo: `https://github.com/bbingz/polycli`
+- GitHub release: `v0.3.0`
+- npm package: `@bbingz/polycli-opencode@0.3.0`
+
+Verified release paths:
+
+- `Claude`: marketplace add/install from `bbingz/polycli`
+- `Codex`: marketplace add from `bbingz/polycli`
+- `Copilot`: marketplace add/install from `bbingz/polycli`
+- `OpenCode`: package publish command completed successfully
+
+Note:
+
+- npm registry read-after-write may briefly lag immediately after the first publish of a new scoped package.
+
 ## Pre-release
 
 Run the full release checks from the repository root:
@@ -35,6 +54,7 @@ For subsequent releases:
 git push origin main
 git tag v0.3.0
 git push origin v0.3.0
+gh release create v0.3.0 dist/bbingz-polycli-opencode-0.3.0.tgz --title "v0.3.0"
 ```
 
 Consumers install from the repository:
@@ -62,3 +82,5 @@ Consumers install with:
 ```bash
 opencode plugin @bbingz/polycli-opencode
 ```
+
+If npm account policy requires interactive browser verification, complete the CLI auth challenge and then re-run the same `npm publish` command.

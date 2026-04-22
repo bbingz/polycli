@@ -39,8 +39,9 @@ test("parseGeminiStreamText collects session id, stats, and assistant text", () 
   const parsed = parseGeminiStreamText(
     [
       'noise before json {"type":"init","session_id":"gem-1","model":"gemini-2.5-pro"}',
-      '{"type":"message","content":"hello "}',
-      '{"type":"message","delta":"world"}',
+      '{"type":"message","role":"user","content":"ignore me"}',
+      '{"type":"message","role":"assistant","content":"hello "}',
+      '{"type":"message","role":"assistant","delta":"world"}',
       '{"type":"result","stats":{"turns":1}}',
     ].join("\n")
   );
@@ -48,8 +49,9 @@ test("parseGeminiStreamText collects session id, stats, and assistant text", () 
   assert.equal(parsed.sessionId, "gem-1");
   assert.equal(parsed.response, "hello world");
   assert.deepEqual(parsed.stats, { turns: 1 });
-  assert.equal(parsed.events.length, 4);
-  assert.equal(extractGeminiText({ type: "message", delta: "ok" }), "ok");
+  assert.equal(parsed.events.length, 5);
+  assert.equal(extractGeminiText({ type: "message", role: "assistant", delta: "ok" }), "ok");
+  assert.equal(extractGeminiText({ type: "message", role: "user", content: "nope" }), "");
 });
 
 test("runGeminiPromptStreaming returns a structured failure on spawn error", async () => {

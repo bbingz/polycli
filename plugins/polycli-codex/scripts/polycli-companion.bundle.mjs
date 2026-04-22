@@ -421,6 +421,8 @@ function buildGeminiInvocation({
 }
 function extractGeminiText(event) {
   if (!event || typeof event !== "object") return "";
+  const role = event.role ?? event.message?.role ?? null;
+  if (role && role !== "assistant") return "";
   if (typeof event.delta === "string") return event.delta;
   if (typeof event.content === "string") return event.content;
   if (typeof event.text === "string") return event.text;
