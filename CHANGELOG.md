@@ -6,6 +6,13 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-22 — Claude — v0.4.0 shipped
+
+- Pushed `main` + tag `v0.4.0` (HEAD at 08f84c3).
+- GitHub release live at https://github.com/bbingz/polycli/releases/tag/v0.4.0 (notes from `docs/release-notes-v0.4.0.md`).
+- npm: `@bbingz/polycli-opencode@0.4.0` published; `npm view` confirms no propagation lag.
+- Closes the review loop that began with `docs/review-2026-04-22.md`. All P0/P1 from that review plus P3 fixture migration landed. 185/185 tests pass at release tag.
+
 ## 2026-04-22 — Claude — Group 4 / 5 / release specs for Codex
 
 - Appended three spec sections to [docs/review-fb64b1e.md](docs/review-fb64b1e.md):
