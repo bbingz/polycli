@@ -24,6 +24,31 @@ Note:
 
 - npm registry read-after-write may briefly lag immediately after the first publish of a new scoped package.
 
+## Current Post-release Head
+
+Current repo head after stabilization work:
+
+- commit: `4d4c684`
+- message: `fix: harden qwen and kimi review flows`
+
+This commit is newer than the current public release artifacts and records post-release hardening work, mainly around:
+
+- `qwen` / `kimi` review parser edge cases
+- foreground/background review parity
+- background job preview behavior
+- timing correctness for `qwen result-only` flows
+- expanded runtime and integration coverage
+
+Verification status for this post-release head:
+
+- `npm test`
+  - `90` passed
+  - `0` failed
+- final multi-way retest:
+  - static review: `No issues found.`
+  - real `qwen review` foreground/background: passed
+  - real `kimi review` foreground/background: passed
+
 ## Pre-release
 
 Run the full release checks from the repository root:

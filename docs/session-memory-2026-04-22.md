@@ -9,6 +9,7 @@ Repo:
 - path: `/home/user/-Code-/polycli`
 - branch: `main`
 - remote: `https://github.com/bbingz/polycli.git`
+- HEAD: `4d4c684 fix: harden qwen and kimi review flows`
 - working tree: clean at the time this file was updated
 
 Release state:
@@ -22,6 +23,7 @@ Release state:
   - `@bbingz/polycli-opencode@0.3.0`
 - local OpenCode tarball artifact exists at:
   - [dist/bbingz-polycli-opencode-0.3.0.tgz](/home/user/-Code-/polycli/dist/bbingz-polycli-opencode-0.3.0.tgz)
+- published release state is still `v0.3.0`; the latest hardening work is committed locally in `4d4c684` and not yet tagged/released
 
 Important note:
 
@@ -118,6 +120,30 @@ Host adapters exist and are bundled:
 
 All host-facing companion entrypoints now use bundled files rather than raw source paths.
 
+### Review and background-job hardening
+
+The post-release stabilization work completed in `4d4c684` specifically hardened `review` flows for `qwen` and `kimi`.
+
+What is now fixed:
+
+- `qwen review`
+  - accepts `result-only` success replies when assistant text is absent
+  - rejects `result` events marked as error even if the process exits `0`
+  - rejects mixed flows where assistant text appears before an error terminal result
+  - keeps timing semantics honest by only using `result.result` for timing when no earlier visible text exists
+- `kimi review`
+  - accepts `assistant.content` as either block array or raw string
+  - returns explicit failure text when a run exits cleanly but produces no visible assistant output
+- companion / background jobs
+  - provider-specific `runtimeOptions` now propagate to background review workers
+  - review prompts explicitly forbid tools / extra repo inspection and require a visible final answer
+  - background preview deduplicates repeated final text when both assistant text and result summary are emitted
+
+This means foreground and background `review` behavior is now aligned for:
+
+- `qwen`
+- `kimi`
+
 ## Validation Status
 
 Primary verification command:
@@ -128,7 +154,7 @@ npm test
 
 Current result at handoff:
 
-- `71` tests passed
+- `90` tests passed
 - `0` failed
 
 Additional verified release checks:
@@ -159,6 +185,22 @@ OpenCode packaging checks completed:
 - `npm publish ./plugins/polycli-opencode --dry-run --access public`
 - real `npm publish ./plugins/polycli-opencode --access public` was run successfully after interactive npm auth
 
+Final stabilization verification completed after `4d4c684`:
+
+- local `npm test` passed repeatedly with final result:
+  - `90` passed
+  - `0` failed
+- multi-way review / retest completed on the final code:
+  - test lane: green
+  - static review lane: `No issues found.`
+  - real `qwen review` foreground/background: green, non-empty responses
+  - real `kimi review` foreground/background: green, non-empty responses
+
+Observed provider notes:
+
+- `qwen` review timings are functional and now semantically tighter around `tail`
+- `kimi` can still show high TTFT variance in foreground runs, but both foreground and background review flows completed successfully within current timeout windows
+
 ## Key Files
 
 Read these first in the next session:
@@ -172,6 +214,8 @@ Important implementation files:
 
 - [packages/polycli-runtime/src/registry.js](/home/user/-Code-/polycli/packages/polycli-runtime/src/registry.js:1)
 - [packages/polycli-runtime/src/timing.js](/home/user/-Code-/polycli/packages/polycli-runtime/src/timing.js:1)
+- [packages/polycli-runtime/src/qwen.js](/home/user/-Code-/polycli/packages/polycli-runtime/src/qwen.js:1)
+- [packages/polycli-runtime/src/kimi.js](/home/user/-Code-/polycli/packages/polycli-runtime/src/kimi.js:1)
 - [plugins/polycli/scripts/polycli-companion.mjs](/home/user/-Code-/polycli/plugins/polycli/scripts/polycli-companion.mjs:1)
 - [plugins/polycli/scripts/tests/integration.test.mjs](/home/user/-Code-/polycli/plugins/polycli/scripts/tests/integration.test.mjs:1)
 - [plugins/polycli/scripts/tests/host-packaging.test.mjs](/home/user/-Code-/polycli/plugins/polycli/scripts/tests/host-packaging.test.mjs:1)
@@ -180,13 +224,16 @@ Important implementation files:
 
 The core initial goals are done. Next work should be one of:
 
-1. Post-release stabilization:
+1. Cut the next release:
+   - decide whether `4d4c684` should become `v0.3.1` or later
+   - if yes, repeat `npm run release:check`, tag, GitHub release, and OpenCode publish flow
+2. Post-release stabilization:
    - watch for marketplace or npm install issues from real consumption
-2. Documentation cleanup:
+3. Documentation cleanup:
    - tighten wording now that release is public
-3. CI/release automation:
+4. CI/release automation:
    - automate tag/release/npm publish once desired
-4. New capability work:
+5. New capability work:
    - only after confirming upstream providers actually expose the needed signals
 
 ## Do Not Regress
