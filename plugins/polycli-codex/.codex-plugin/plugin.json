@@ -1,0 +1,30 @@
+{
+  "name": "polycli-codex",
+  "version": "0.3.0",
+  "description": "Codex skill adapter for the shared polycli companion.",
+  "author": {
+    "name": "bing"
+  },
+  "homepage": "https://github.com/bbingz/polycli",
+  "repository": "https://github.com/bbingz/polycli",
+  "license": "MIT",
+  "keywords": ["codex", "polycli", "providers", "timing"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Polycli",
+    "shortDescription": "Multi-provider companion skills for Codex",
+    "longDescription": "Run the shared polycli companion from Codex to inspect provider setup, ask questions, run rescue/review flows, inspect background jobs, and query timing history.",
+    "developerName": "bing",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/bbingz/polycli",
+    "privacyPolicyURL": "https://github.com/bbingz/polycli",
+    "termsOfServiceURL": "https://github.com/bbingz/polycli",
+    "defaultPrompt": [
+      "Run polycli-codex:polycli setup --provider qwen",
+      "Run polycli-codex:polycli review --provider gemini --scope staged",
+      "Run polycli-codex:polycli timing --provider qwen"
+    ],
+    "brandColor": "#1F6FEB"
+  }
+}

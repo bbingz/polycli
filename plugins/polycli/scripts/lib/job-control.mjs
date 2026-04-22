@@ -1,0 +1,181 @@
+import fs from "node:fs";
+import process from "node:process";
+
+import { terminateProcessTree } from "@bbingz/polycli-utils/process";
+
+import {
+  getJob,
+  listJobs,
+  readJobFile,
+  resolveJobFile,
+  writeJobFile,
+  upsertJob,
+} from "./state.mjs";
+
+const ACTIVE_STATUSES = new Set(["queued", "running"]);
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const DEFAULT_STATUS_LIMIT = 8;
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sortJobsNewestFirst(jobs) {
+  return jobs
+    .slice()
+    .sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
+}
+
+function readProgressPreview(logFile, maxLines = 4) {
+  if (!logFile) return "";
+  try {
+    const lines = fs.readFileSync(logFile, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return lines.slice(-maxLines).join("\n");
+  } catch {
+    return "";
+  }
+}
+
+function enrichJob(workspaceRoot, job) {
+  const envelope = readJobFile(resolveJobFile(workspaceRoot, job.jobId));
+  return {
+    ...job,
+    progressPreview: readProgressPreview(job.logFile),
+    result: envelope?.result ?? null,
+  };
+}
+
+export function refreshJob(workspaceRoot, job) {
+  if (!job || !ACTIVE_STATUSES.has(job.status)) {
+    return job ? enrichJob(workspaceRoot, job) : null;
+  }
+  if (!job.pid || isProcessAlive(job.pid)) {
+    return enrichJob(workspaceRoot, job);
+  }
+
+  const envelope = readJobFile(resolveJobFile(workspaceRoot, job.jobId));
+  if (envelope?.job) {
+    const finalized = {
+      ...job,
+      ...envelope.job,
+      pid: null,
+    };
+    upsertJob(workspaceRoot, finalized);
+    return enrichJob(workspaceRoot, finalized);
+  }
+
+  const failed = {
+    ...job,
+    status: "failed",
+    pid: null,
+    finishedAt: new Date().toISOString(),
+    error: "worker exited before writing a result envelope",
+  };
+  upsertJob(workspaceRoot, failed);
+  writeJobFile(workspaceRoot, job.jobId, {
+    job: failed,
+    result: { ok: false, error: failed.error },
+  });
+  return enrichJob(workspaceRoot, failed);
+}
+
+export function buildStatusSnapshot(workspaceRoot, { showAll = false } = {}) {
+  const refreshed = sortJobsNewestFirst(listJobs(workspaceRoot)).map((job) => refreshJob(workspaceRoot, job));
+  const limited = showAll ? refreshed : refreshed.slice(0, DEFAULT_STATUS_LIMIT);
+  return {
+    totalJobs: refreshed.length,
+    running: limited.filter((job) => ACTIVE_STATUSES.has(job.status)),
+    recent: limited.filter((job) => TERMINAL_STATUSES.has(job.status)),
+  };
+}
+
+export function resolveJobReference(workspaceRoot, reference, predicate = () => true) {
+  const candidates = sortJobsNewestFirst(listJobs(workspaceRoot)).filter(predicate);
+  if (!reference) return candidates[0] || null;
+
+  const exact = candidates.find((job) => job.jobId === reference);
+  if (exact) return exact;
+
+  const prefixMatches = candidates.filter((job) => job.jobId.startsWith(reference));
+  if (prefixMatches.length === 1) {
+    return prefixMatches[0];
+  }
+  return null;
+}
+
+export function resolveLatestActiveJob(workspaceRoot) {
+  return resolveJobReference(workspaceRoot, null, (job) => ACTIVE_STATUSES.has(job.status));
+}
+
+export function resolveLatestTerminalJob(workspaceRoot) {
+  return resolveJobReference(workspaceRoot, null, (job) => TERMINAL_STATUSES.has(job.status));
+}
+
+export async function waitForJob(workspaceRoot, jobId, { timeoutMs = 240_000, pollIntervalMs = 500 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const current = getJob(workspaceRoot, jobId);
+    if (!current) {
+      return { error: "job_not_found", job: null, waitTimedOut: false };
+    }
+    const refreshed = refreshJob(workspaceRoot, current);
+    if (!ACTIVE_STATUSES.has(refreshed.status)) {
+      return { job: refreshed, waitTimedOut: false };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  const timed = getJob(workspaceRoot, jobId);
+  return { job: timed ? refreshJob(workspaceRoot, timed) : null, waitTimedOut: true };
+}
+
+export async function cancelJob(workspaceRoot, jobId) {
+  const job = getJob(workspaceRoot, jobId);
+  if (!job) {
+    return { cancelled: false, reason: "not_found", jobId };
+  }
+  if (!ACTIVE_STATUSES.has(job.status)) {
+    return { cancelled: false, reason: "not_cancellable", jobId };
+  }
+
+  try {
+    if (job.pid) {
+      await terminateProcessTree(job.pid, {
+        signal: "SIGINT",
+        forceSignal: "SIGKILL",
+        forceAfterMs: 2_000,
+      });
+    }
+  } catch (error) {
+    return {
+      cancelled: false,
+      reason: "cancel_failed",
+      jobId,
+      error: error.message,
+    };
+  }
+
+  const cancelledJob = {
+    ...job,
+    status: "cancelled",
+    pid: null,
+    finishedAt: new Date().toISOString(),
+  };
+  upsertJob(workspaceRoot, cancelledJob);
+  writeJobFile(workspaceRoot, jobId, {
+    job: cancelledJob,
+    result: {
+      ok: false,
+      error: "cancelled",
+    },
+  });
+  return { cancelled: true, jobId };
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@bbingz/polycli-opencode",
+  "version": "0.3.0",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "description": "OpenCode adapter for the shared polycli companion.",
+  "license": "MIT",
+  "homepage": "https://github.com/bbingz/polycli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bbingz/polycli.git",
+    "directory": "plugins/polycli-opencode"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.14.20"
+  }
+}

@@ -10,6 +10,13 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test packages/polycli-utils/test/*.test.js packages/polycli-timing/test/*.test.js"
+    "build:plugins": "node scripts/build-plugin-bundles.mjs",
+    "test": "npm run build:plugins && node --test packages/polycli-utils/test/*.test.js packages/polycli-timing/test/*.test.js packages/polycli-runtime/test/*.test.js plugins/polycli/scripts/tests/*.test.mjs",
+    "pack:opencode": "mkdir -p dist && npm pack ./plugins/polycli-opencode --pack-destination dist",
+    "release:check": "npm test && claude plugin validate .claude-plugin/marketplace.json && claude plugin validate plugins/polycli/.claude-plugin/plugin.json && npm publish ./plugins/polycli-opencode --dry-run --access public"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.14.20",
+    "esbuild": "^0.28.0"
   }
 }

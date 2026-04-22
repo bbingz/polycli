@@ -1,0 +1,12 @@
+{
+  "name": "polycli-copilot",
+  "description": "GitHub Copilot CLI adapter for the shared polycli companion.",
+  "version": "0.3.0",
+  "author": {
+    "name": "bing"
+  },
+  "license": "MIT",
+  "keywords": ["copilot", "polycli", "providers", "timing"],
+  "category": "Developer Tools",
+  "skills": "skills/"
+}

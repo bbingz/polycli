@@ -11,12 +11,14 @@
 
 ## Current Scope
 
-当前仓库只落地了两个包：
+当前仓库已经落地三层能力：
 
 - `@bbingz/polycli-utils`
 - `@bbingz/polycli-timing`
+- `@bbingz/polycli-runtime`
+- multi-host plugin adapters (`Claude` / `Codex` / `Copilot` / `OpenCode`)
 
-虽然文档和示例会提到 `gemini` / `kimi` / `qwen` / `minimax`，但这 4 个 provider 并没有作为实现或 adapter 收进本仓。它们目前仍是外部 reference repo 语境，不是 `polycli v1` 的包面。
+`v1` 阶段只有前两个包；从 `v2` 开始，`gemini` / `kimi` / `qwen` / `minimax` 的 runtime adapter 已经进入本仓，集中在 `@bbingz/polycli-runtime`。旧 4 个 plugin repo 仍然是 reference implementation，不再作为运行依赖。
 
 ## Packages
 
@@ -35,6 +37,31 @@
   - `calculatePercentiles()`: p50 / p95 / p99
   - `aggregateTimingRecords()`: capability-aware 聚合
 
+- `@bbingz/polycli-runtime`
+  - provider registry
+  - `gemini` / `kimi` / `qwen` / `minimax` runtime adapter
+  - availability / auth probes
+  - prompt args builder
+  - prompt-level foreground / streaming runtime execution
+  - stream / log parsing
+
+- `plugins/polycli`
+  - repo-local Claude plugin entry
+  - `/polycli:setup` / `ask` / `rescue` / `review` / `adversarial-review`
+  - background job lifecycle with `/polycli:status` / `result` / `cancel`
+  - persisted per-workspace plugin state for background runs
+  - timing history with `/polycli:timing`
+
+- host adapters
+  - `plugins/polycli` for Claude Code
+  - `plugins/polycli-codex` for Codex
+  - `plugins/polycli-copilot` for GitHub Copilot CLI
+  - `plugins/polycli-opencode` plus `.opencode/plugins/polycli.mjs` for OpenCode
+  - repo marketplaces:
+    - `.claude-plugin/marketplace.json`
+    - `.agents/plugins/marketplace.json`
+    - `.github/plugin/marketplace.json`
+
 ## Quick Start
 
 仓库当前是 monorepo 本地开发形态，先进入根目录：
@@ -42,6 +69,22 @@
 ```bash
 cd /home/user/-Code-/polycli
 npm test
+```
+
+## Published Install Targets
+
+发布态安装入口已经固定为：
+
+- Claude Code: `claude plugin marketplace add bbingz/polycli` 然后 `claude plugin install polycli@polycli-hosts`
+- Codex: `codex plugin marketplace add bbingz/polycli`
+- GitHub Copilot CLI: `copilot plugin marketplace add bbingz/polycli` 然后 `copilot plugin install polycli-copilot@polycli-hosts`
+- OpenCode: `opencode plugin @bbingz/polycli-opencode`
+
+仓库内可重复执行的发布前校验：
+
+```bash
+npm run release:check
+npm run pack:opencode
 ```
 
 在本仓内直接从源码引用：
@@ -189,10 +232,13 @@ console.log(summary.byProvider.gemini.metrics.cold.p50);
 - v1 public surface：`docs/polycli-v1-public-surface.md`
 - utils 包说明：`packages/polycli-utils/README.md`
 - timing 包说明：`packages/polycli-timing/README.md`
+- runtime 包说明：`packages/polycli-runtime/README.md`
+- plugin 说明：`plugins/polycli/README.md`
 - timing schema：`packages/polycli-timing/timing.schema.json`
 
 ## Development
 
 ```bash
+npm run build:plugins
 npm test
 ```

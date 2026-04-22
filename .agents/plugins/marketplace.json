@@ -1,0 +1,20 @@
+{
+  "name": "polycli-hosts",
+  "interface": {
+    "displayName": "Polycli Hosts"
+  },
+  "plugins": [
+    {
+      "name": "polycli-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/polycli-codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
