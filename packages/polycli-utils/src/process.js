@@ -11,11 +11,12 @@ export function runCommand(command, args = [], options = {}) {
     stdio: options.stdio ?? "pipe",
     detached: options.detached ?? false,
   });
+  const preserveNullStatus = options.preserveNullStatus ?? false;
 
   return {
     command,
     args,
-    status: result.status ?? 0,
+    status: result.status ?? (preserveNullStatus ? null : 0),
     signal: result.signal ?? null,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",

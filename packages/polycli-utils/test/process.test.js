@@ -9,6 +9,16 @@ test("runCommand captures stdout and exit status", () => {
   assert.equal(result.stdout.trim(), "pong");
 });
 
+test("runCommand can preserve null status for signaled children", () => {
+  const result = runCommand(
+    process.execPath,
+    ["-e", "process.kill(process.pid, 'SIGTERM')"],
+    { preserveNullStatus: true }
+  );
+  assert.equal(result.status, null);
+  assert.equal(result.signal, "SIGTERM");
+});
+
 test("binaryAvailable reports missing binaries as unavailable", () => {
   const result = binaryAvailable("__polycli_missing_binary__");
   assert.equal(result.available, false);
