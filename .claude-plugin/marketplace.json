@@ -5,19 +5,19 @@
   },
   "metadata": {
     "description": "Polycli host adapters for Claude Code and related agent CLIs",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "plugins": [
     {
       "name": "polycli",
       "description": "Claude Code adapter for the shared polycli companion",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "source": "./plugins/polycli"
     },
     {
       "name": "polycli-copilot",
       "description": "GitHub Copilot CLI adapter for the shared polycli companion",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "source": "./plugins/polycli-copilot"
     }
   ]

@@ -51,6 +51,24 @@ test("host plugin manifests exist", () => {
   assert.equal(opencodePackage.name, "@bbingz/polycli-opencode");
 });
 
+test("release-facing marketplace versions stay aligned with host manifests", () => {
+  const claudeMarketplace = readJson(".claude-plugin/marketplace.json");
+  const copilotMarketplace = readJson(".github/plugin/marketplace.json");
+  const claudeManifest = readJson("plugins/polycli/.claude-plugin/plugin.json");
+  const copilotManifest = readJson("plugins/polycli-copilot/plugin.json");
+
+  assert.equal(claudeMarketplace.metadata.version, claudeManifest.version);
+  assert.equal(copilotMarketplace.metadata.version, copilotManifest.version);
+
+  const claudePlugin = claudeMarketplace.plugins.find((candidate) => candidate.name === "polycli");
+  const claudeCopilotPlugin = claudeMarketplace.plugins.find((candidate) => candidate.name === "polycli-copilot");
+  const copilotPlugin = copilotMarketplace.plugins.find((candidate) => candidate.name === "polycli-copilot");
+
+  assert.equal(claudePlugin?.version, claudeManifest.version);
+  assert.equal(claudeCopilotPlugin?.version, copilotManifest.version);
+  assert.equal(copilotPlugin?.version, copilotManifest.version);
+});
+
 test("host adapter entry files exist", () => {
   assert.equal(fs.existsSync(path.join(REPO_ROOT, "plugins/polycli-codex/skills/polycli/SKILL.md")), true);
   assert.equal(fs.existsSync(path.join(REPO_ROOT, "plugins/polycli-copilot/skills/polycli/SKILL.md")), true);
