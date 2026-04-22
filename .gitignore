@@ -3,4 +3,5 @@ coverage/
 .DS_Store
 tmp/
 dist/
+.worktrees/
 *.tgz
