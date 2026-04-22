@@ -7,6 +7,8 @@ const GEMINI_BIN = process.env.GEMINI_CLI_BIN || "gemini";
 const DEFAULT_TIMEOUT_MS = 300_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const PROMPT_STDIN_THRESHOLD = 100_000;
+const GEMINI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+const GEMINI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 
 export function buildGeminiInvocation({
   prompt,
@@ -100,22 +102,32 @@ export function getGeminiAvailability(cwd) {
   return binaryAvailable(GEMINI_BIN, ["-v"], { cwd });
 }
 
-export function getGeminiAuthStatus(cwd) {
-  const test = runGeminiPrompt({
+function buildGeminiAuthStatus(test) {
+  if (test.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: Object.keys(test.stats?.models ?? {})[0] || null,
+    };
+  }
+
+  const detail = String(test.error ?? "").trim() || "gemini auth probe failed";
+  if (GEMINI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (GEMINI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: null };
+  }
+  return { loggedIn: false, detail };
+}
+
+export function getGeminiAuthStatus(cwd, { promptRunner = runGeminiPrompt } = {}) {
+  const test = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS,
   });
-
-  if (!test.ok) {
-    return { loggedIn: false, detail: test.error };
-  }
-
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: Object.keys(test.stats?.models ?? {})[0] || null,
-  };
+  return buildGeminiAuthStatus(test);
 }
 
 export function runGeminiPrompt({

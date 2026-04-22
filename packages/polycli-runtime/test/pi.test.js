@@ -63,6 +63,19 @@ test("parsePiStreamText collects session id and streaming deltas from json mode"
   );
 });
 
+test("parsePiStreamText captures top-level session envelope ids", () => {
+  const parsed = parsePiStreamText(
+    [
+      '{"type":"session","id":"pi-live-1","version":3}',
+      '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"OK"}}',
+      '{"type":"agent_end","result":{"text":"OK"}}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.sessionId, "pi-live-1");
+  assert.equal(parsed.response, "OK");
+});
+
 test("runPiPrompt returns parsed success payloads", () => {
   withFakePiBin(
     `#!/usr/bin/env node

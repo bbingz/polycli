@@ -84,6 +84,7 @@ export function parsePiStreamText(text) {
     }
 
     events.push(event);
+    if (!sessionId && event.type === "session" && typeof event.id === "string") sessionId = event.id;
     if (!sessionId && typeof event.sessionId === "string") sessionId = event.sessionId;
     if (!sessionId && typeof event.session?.id === "string") sessionId = event.session.id;
     if (!model && typeof event.model === "string") model = event.model;

@@ -872,6 +872,8 @@ var GEMINI_BIN = process.env.GEMINI_CLI_BIN || "gemini";
 var DEFAULT_TIMEOUT_MS3 = 3e5;
 var AUTH_CHECK_TIMEOUT_MS3 = 3e4;
 var PROMPT_STDIN_THRESHOLD2 = 1e5;
+var GEMINI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var GEMINI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 function buildGeminiInvocation({
   prompt,
   model = null,
@@ -954,20 +956,30 @@ function parseGeminiJsonResult(stdout, stderr, status) {
 function getGeminiAvailability(cwd) {
   return binaryAvailable(GEMINI_BIN, ["-v"], { cwd });
 }
-function getGeminiAuthStatus(cwd) {
-  const test = runGeminiPrompt({
+function buildGeminiAuthStatus(test) {
+  if (test.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: Object.keys(test.stats?.models ?? {})[0] || null
+    };
+  }
+  const detail = String(test.error ?? "").trim() || "gemini auth probe failed";
+  if (GEMINI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (GEMINI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: null };
+  }
+  return { loggedIn: false, detail };
+}
+function getGeminiAuthStatus(cwd, { promptRunner = runGeminiPrompt } = {}) {
+  const test = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS3
   });
-  if (!test.ok) {
-    return { loggedIn: false, detail: test.error };
-  }
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: Object.keys(test.stats?.models ?? {})[0] || null
-  };
+  return buildGeminiAuthStatus(test);
 }
 function runGeminiPrompt({
   prompt,
@@ -2121,6 +2133,7 @@ function parsePiStreamText(text) {
       continue;
     }
     events.push(event);
+    if (!sessionId && event.type === "session" && typeof event.id === "string") sessionId = event.id;
     if (!sessionId && typeof event.sessionId === "string") sessionId = event.sessionId;
     if (!sessionId && typeof event.session?.id === "string") sessionId = event.session.id;
     if (!model && typeof event.model === "string") model = event.model;

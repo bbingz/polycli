@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import {
   buildGeminiInvocation,
   extractGeminiText,
+  getGeminiAuthStatus,
   parseGeminiStreamText,
   runGeminiPromptStreaming,
 } from "../src/index.js";
@@ -75,4 +76,26 @@ test("runGeminiPromptStreaming returns a structured failure on spawn error", asy
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+});
+
+test("getGeminiAuthStatus keeps loggedIn=true for transient probe failures", () => {
+  const auth = getGeminiAuthStatus(process.cwd(), {
+    promptRunner() {
+      return { ok: false, error: "gemini timed out after 30s" };
+    },
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /timed out after 30s/i);
+});
+
+test("getGeminiAuthStatus reports loggedIn=false for explicit auth failures", () => {
+  const auth = getGeminiAuthStatus(process.cwd(), {
+    promptRunner() {
+      return { ok: false, error: "401 unauthorized: please log in again" };
+    },
+  });
+
+  assert.equal(auth.loggedIn, false);
+  assert.match(auth.detail, /unauthorized/i);
 });

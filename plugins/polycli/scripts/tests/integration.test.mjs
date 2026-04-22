@@ -73,27 +73,30 @@ function createFakeGeminiBin() {
     `#!/usr/bin/env node
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const args = process.argv.slice(2);
-if (args.includes("-v")) {
-  process.stdout.write("gemini 0.0.0-test\\n");
-  process.exit(0);
-}
-const outputFormat = args[args.indexOf("-o") + 1] || "json";
-const prompt = args[args.indexOf("-p") + 1] || "";
-const delayMatch = prompt.match(/__delay=(\\d+)/);
-const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : 0;
-const tailDelayMatch = prompt.match(/__tail=(\\d+)/);
-const tailDelay = tailDelayMatch ? Number.parseInt(tailDelayMatch[1], 10) : 0;
-const replyMatch = prompt.match(/__reply=([^\\n]+)/);
-const reply = replyMatch ? replyMatch[1] : prompt || "ping";
-if (outputFormat === "json") {
-  process.stdout.write(JSON.stringify({
-    response: reply,
-    session_id: "22222222-2222-2222-2222-222222222222",
-    stats: { models: { "gemini-test": 1 } }
-  }) + "\\n");
-  process.exit(0);
-}
+
 (async () => {
+  if (args.includes("-v")) {
+    process.stdout.write("gemini 0.0.0-test\\n");
+    process.exit(0);
+  }
+  const outputFormat = args[args.indexOf("-o") + 1] || "json";
+  const prompt = args[args.indexOf("-p") + 1] || "";
+  const pingDelay = prompt === "ping" ? Number.parseInt(process.env.GEMINI_PING_DELAY_MS || "0", 10) : 0;
+  if (pingDelay > 0) await sleep(pingDelay);
+  const delayMatch = prompt.match(/__delay=(\\d+)/);
+  const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : 0;
+  const tailDelayMatch = prompt.match(/__tail=(\\d+)/);
+  const tailDelay = tailDelayMatch ? Number.parseInt(tailDelayMatch[1], 10) : 0;
+  const replyMatch = prompt.match(/__reply=([^\\n]+)/);
+  const reply = replyMatch ? replyMatch[1] : prompt || "ping";
+  if (outputFormat === "json") {
+    process.stdout.write(JSON.stringify({
+      response: reply,
+      session_id: "22222222-2222-2222-2222-222222222222",
+      stats: { models: { "gemini-test": 1 } }
+    }) + "\\n");
+    process.exit(0);
+  }
   process.stdout.write(JSON.stringify({ type: "init", session_id: "22222222-2222-2222-2222-222222222222", model: "gemini-test" }) + "\\n");
   if (delay > 0) await sleep(delay);
   process.stdout.write(JSON.stringify({ type: "message", content: reply }) + "\\n");
@@ -489,6 +492,43 @@ test("integration: setup and ask succeed for gemini via bundled companion", asyn
     assert.equal(askPayload.timing.metrics.gen.status, "measured");
     assert.equal(askPayload.timing.metrics.tail.status, "measured");
     assert.equal(askPayload.timing.metrics.tool.status, "unsupported");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: gemini setup stays logged in when auth probe times out but ask still works", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeGeminiBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      GEMINI_CLI_BIN: fake.bin,
+      GEMINI_PING_DELAY_MS: "31000",
+    });
+
+    const setup = await runCompanion(["setup", "--json", "--provider", "gemini"], {
+      cwd: process.cwd(),
+      env,
+      timeout: 40_000,
+    });
+    assert.equal(setup.code, 0, setup.stderr);
+
+    const setupPayload = JSON.parse(setup.stdout);
+    assert.equal(setupPayload.length, 1);
+    assert.equal(setupPayload[0].provider, "gemini");
+    assert.equal(setupPayload[0].available, true);
+    assert.equal(setupPayload[0].loggedIn, true);
+    assert.match(setupPayload[0].authDetail, /timed out/i);
+
+    const ask = await runCompanion(
+      ["ask", "--provider", "gemini", "--json", "__reply=PONG"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(ask.code, 0, ask.stderr);
+    const askPayload = JSON.parse(ask.stdout);
+    assert.equal(askPayload.response, "PONG");
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });

@@ -249,7 +249,7 @@ OpenCode packaging checks completed:
 Latest verification completed after the provider hardening pass:
 
 - local `npm test` passed with final result:
-  - `119` passed
+  - `123` passed
   - `0` failed
 - focused runtime regressions passed:
   - `claude` / `copilot` / `opencode` / `pi` / `registry`
@@ -263,6 +263,19 @@ Latest verification completed after the provider hardening pass:
   - `qwen` foreground/background review
   - `kimi` foreground/background review
 
+Latest real-usage follow-up fixes completed on `2026-04-22`:
+
+- `gemini setup`
+  - auth probing no longer treats transient runtime failures as logged-out
+  - real fix target: timeouts / capacity failures now surface as `loggedIn=true` with `auth probe inconclusive: ...`
+  - this matches live behavior where `setup` had previously said `loggedIn=false` while `ask` still succeeded
+- `pi ask / timing`
+  - parser now captures top-level `{"type":"session","id":"..."}` envelopes
+  - real fix target: `sessionId` is no longer dropped for current live PI JSON mode
+  - timing now correctly reports `runtimePersistence=session` instead of falling back to `ephemeral`
+- bundle parity
+  - plugin bundles were rebuilt after both runtime fixes, so host adapters and tests are aligned with source
+
 Observed provider notes:
 
 - `claude` requires `--verbose` whenever `--output-format stream-json` is used
@@ -272,6 +285,8 @@ Observed provider notes:
 - `claude` / `copilot` / `opencode` / `pi` timing should ignore duplicate terminal summary text once a stream has already produced visible output
 - `kimi` can still show high TTFT variance in foreground runs, but both foreground and background review flows completed successfully within current timeout windows
 - `pi` integration is present, but upstream service reliability can still dominate live review outcomes; treat server-side failures as external unless local parsing evidence points otherwise
+- `gemini` does not expose a dedicated local auth-status subcommand in the current CLI, so auth probing is necessarily inference-based; do not regress back to treating every timeout / 429 as `loggedIn=false`
+- `pi` can still choose to invoke tools for trivial prompts in live runs; that behavior appears upstream/host-driven rather than caused by local parsing, so treat it as an environment note unless a local invocation flag is found that suppresses it cleanly
 
 ## Key Files
 
