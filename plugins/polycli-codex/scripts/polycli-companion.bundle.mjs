@@ -406,6 +406,23 @@ function collectTextFromContent(content) {
   }
   return content.filter((block) => block && block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
 }
+function isClaudeErrorResultEvent(event) {
+  return Boolean(
+    event && event.type === "result" && (event.is_error === true || event.subtype === "error")
+  );
+}
+function getClaudeErrorText(event) {
+  if (!event || typeof event !== "object") {
+    return "claude returned an error";
+  }
+  if (typeof event.error?.message === "string" && event.error.message.trim()) {
+    return event.error.message;
+  }
+  if (typeof event.result === "string" && event.result.trim()) {
+    return event.result;
+  }
+  return "claude returned an error";
+}
 function buildClaudeInvocation({
   prompt,
   model = null,
@@ -452,7 +469,7 @@ function extractClaudeText(event) {
   if (!event || typeof event !== "object") {
     return "";
   }
-  if (event.type === "result" && event.is_error !== true && event.subtype !== "error" && typeof event.result === "string") {
+  if (event.type === "result" && !isClaudeErrorResultEvent(event) && typeof event.result === "string") {
     return event.result;
   }
   if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
@@ -513,16 +530,16 @@ function parseClaudeJsonResult(stdout, stderr, status) {
     const parsed = JSON.parse(text.slice(jsonStart));
     const response = typeof parsed.result === "string" ? parsed.result : "";
     const sessionId = parsed.session_id ?? parsed.sessionId ?? null;
-    const errorText = parsed.error?.message || (parsed.is_error ? typeof parsed.result === "string" ? parsed.result : "claude returned an error" : null);
+    const errorText = isClaudeErrorResultEvent(parsed) ? getClaudeErrorText(parsed) : null;
     const processError = status === 0 ? null : String(stderr ?? "").trim() || `claude exited with code ${status}`;
     return {
-      ok: status === 0 && !parsed.is_error,
+      ok: status === 0 && !isClaudeErrorResultEvent(parsed),
       response,
       sessionId,
       durationMs: parsed.duration_ms ?? null,
       totalCostUsd: parsed.total_cost_usd ?? null,
       status,
-      error: parsed.is_error ? errorText : processError
+      error: isClaudeErrorResultEvent(parsed) ? errorText : processError
     };
   } catch (error) {
     return { ok: false, error: `JSON parse failed: ${error.message}`, status };
@@ -624,7 +641,7 @@ function runClaudePromptStreaming({
   }).then((result) => {
     const parsed = parseClaudeStreamText(result.stdout);
     const hasVisibleText = Boolean(parsed.response.trim());
-    const resultError = parsed.resultEvent?.is_error ? typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "claude returned an error" : null;
+    const resultError = isClaudeErrorResultEvent(parsed.resultEvent) ? getClaudeErrorText(parsed.resultEvent) : null;
     return {
       ...result,
       ...parsed,
@@ -2668,14 +2685,26 @@ function trackQwenToolTiming(event, timestamp, state) {
     state.toolMs = (state.toolMs ?? 0) + Math.max(timestamp - startedAt, 0);
   }
 }
+function isTerminalSummaryEvent(provider, event) {
+  if (!event || typeof event !== "object") {
+    return false;
+  }
+  if (provider === "qwen" || provider === "claude" || provider === "opencode") {
+    return event.type === "result";
+  }
+  if (provider === "copilot") {
+    return event.type === "assistant.message" || event.type === "result" || event.type === "final";
+  }
+  if (provider === "pi") {
+    return event.type === "agent_end";
+  }
+  return false;
+}
 function shouldCountEventTextForTiming(provider, event, firstTextAt) {
-  if (provider !== "qwen") {
+  if (firstTextAt == null) {
     return true;
   }
-  if (event?.type !== "result") {
-    return true;
-  }
-  return firstTextAt == null;
+  return !isTerminalSummaryEvent(provider, event);
 }
 function getProviderRuntime(providerId) {
   const runtime = RUNTIMES[providerId];

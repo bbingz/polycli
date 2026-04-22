@@ -181,6 +181,7 @@ What is now fixed:
 - `claude prompt / review transport`
   - `stream-json` runs now include `--verbose`, matching the real CLI contract
   - JSON-mode success now respects the process exit code instead of trusting parsed payload shape alone
+  - subtype-only terminal error results now fail consistently in both sync and streaming paths
 - `copilot prompt / review transport`
   - accepts real `assistant.message_delta` events with `data.deltaContent`
   - accepts real `assistant.message` final answers with `data.content`
@@ -188,6 +189,9 @@ What is now fixed:
 - `opencode prompt / review transport`
   - accepts real `type: "text"` events with `part.text`
   - captures `sessionID` from real CLI output instead of dropping resume identity
+- `timing for streamed providers`
+  - terminal summary events from `claude` / `copilot` / `opencode` / `pi` no longer extend the visible-text window once real streaming text has already started
+  - this keeps `tail` aligned with the last visible token instead of the final bookkeeping/result envelope
 - companion / background jobs
   - provider-specific `runtimeOptions` now propagate to background review workers
   - review prompts explicitly forbid tools / extra repo inspection and require a visible final answer
@@ -211,7 +215,7 @@ npm test
 
 Current result at handoff:
 
-- `112` tests passed
+- `119` tests passed
 - `0` failed
 
 Additional verified release checks:
@@ -245,11 +249,11 @@ OpenCode packaging checks completed:
 Latest verification completed after the provider hardening pass:
 
 - local `npm test` passed with final result:
-  - `112` passed
+  - `119` passed
   - `0` failed
 - focused runtime regressions passed:
-  - `claude` / `copilot` / `opencode`
-  - `15` passed
+  - `claude` / `copilot` / `opencode` / `pi` / `registry`
+  - `27` passed
   - `0` failed
 - real bundled-companion smoke asks passed:
   - `claude`: returned `OK`
@@ -262,8 +266,10 @@ Latest verification completed after the provider hardening pass:
 Observed provider notes:
 
 - `claude` requires `--verbose` whenever `--output-format stream-json` is used
+- `claude` can emit terminal failures via `subtype: "error"` even when `is_error` is not the only signal; keep sync and streaming error handling aligned
 - `copilot` and `opencode` emit event shapes that differ from the earlier synthetic fixtures; keep tests anchored to real saved stdout when changing parsers
 - `qwen` review timings are functional and now semantically tighter around `tail`
+- `claude` / `copilot` / `opencode` / `pi` timing should ignore duplicate terminal summary text once a stream has already produced visible output
 - `kimi` can still show high TTFT variance in foreground runs, but both foreground and background review flows completed successfully within current timeout windows
 - `pi` integration is present, but upstream service reliability can still dominate live review outcomes; treat server-side failures as external unless local parsing evidence points otherwise
 

@@ -22,6 +22,27 @@ function collectTextFromContent(content) {
     .join("");
 }
 
+function isClaudeErrorResultEvent(event) {
+  return Boolean(
+    event
+    && event.type === "result"
+    && (event.is_error === true || event.subtype === "error")
+  );
+}
+
+function getClaudeErrorText(event) {
+  if (!event || typeof event !== "object") {
+    return "claude returned an error";
+  }
+  if (typeof event.error?.message === "string" && event.error.message.trim()) {
+    return event.error.message;
+  }
+  if (typeof event.result === "string" && event.result.trim()) {
+    return event.result;
+  }
+  return "claude returned an error";
+}
+
 export function buildClaudeInvocation({
   prompt,
   model = null,
@@ -75,8 +96,7 @@ export function extractClaudeText(event) {
 
   if (
     event.type === "result" &&
-    event.is_error !== true &&
-    event.subtype !== "error" &&
+    !isClaudeErrorResultEvent(event) &&
     typeof event.result === "string"
   ) {
     return event.result;
@@ -151,20 +171,19 @@ export function parseClaudeJsonResult(stdout, stderr, status) {
     const parsed = JSON.parse(text.slice(jsonStart));
     const response = typeof parsed.result === "string" ? parsed.result : "";
     const sessionId = parsed.session_id ?? parsed.sessionId ?? null;
-    const errorText = parsed.error?.message
-      || (parsed.is_error ? (typeof parsed.result === "string" ? parsed.result : "claude returned an error") : null);
+    const errorText = isClaudeErrorResultEvent(parsed) ? getClaudeErrorText(parsed) : null;
     const processError = status === 0
       ? null
       : (String(stderr ?? "").trim() || `claude exited with code ${status}`);
 
     return {
-      ok: status === 0 && !parsed.is_error,
+      ok: status === 0 && !isClaudeErrorResultEvent(parsed),
       response,
       sessionId,
       durationMs: parsed.duration_ms ?? null,
       totalCostUsd: parsed.total_cost_usd ?? null,
       status,
-      error: parsed.is_error ? errorText : processError,
+      error: isClaudeErrorResultEvent(parsed) ? errorText : processError,
     };
   } catch (error) {
     return { ok: false, error: `JSON parse failed: ${error.message}`, status };
@@ -274,8 +293,8 @@ export function runClaudePromptStreaming({
   }).then((result) => {
     const parsed = parseClaudeStreamText(result.stdout);
     const hasVisibleText = Boolean(parsed.response.trim());
-    const resultError = parsed.resultEvent?.is_error
-      ? (typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "claude returned an error")
+    const resultError = isClaudeErrorResultEvent(parsed.resultEvent)
+      ? getClaudeErrorText(parsed.resultEvent)
       : null;
 
     return {

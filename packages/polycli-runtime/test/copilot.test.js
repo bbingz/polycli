@@ -1,13 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildCopilotInvocation,
   extractCopilotText,
   parseCopilotStreamText,
+  runCopilotPrompt,
   runCopilotPromptStreaming,
 } from "../src/index.js";
+
+function withFakeCopilotBin(source, fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-copilot-sync-"));
+  const bin = path.join(root, "copilot");
+  fs.writeFileSync(bin, source, { mode: 0o755 });
+
+  try {
+    return fn({ root, bin });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
 
 test("buildCopilotInvocation enables programmatic json mode with permissions and resume", () => {
   const invocation = buildCopilotInvocation({
@@ -73,6 +89,29 @@ test("parseCopilotStreamText handles real assistant.message event shapes", () =>
   assert.equal(
     extractCopilotText({ type: "assistant.message", data: { content: "final body", phase: "final_answer" } }),
     "final body"
+  );
+});
+
+test("runCopilotPrompt returns parsed success payloads", () => {
+  withFakeCopilotBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "session_start", sessionId: "cop-sync-1", model: "copilot-test" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "assistant.message_delta", data: { messageId: "m-1", deltaContent: "hello " } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "assistant.message", data: { messageId: "m-1", content: "hello world", phase: "final_answer" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", sessionId: "cop-sync-1", exitCode: 0 }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runCopilotPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.response, "hello world");
+      assert.equal(result.sessionId, "cop-sync-1");
+      assert.equal(result.model, "copilot-test");
+    }
   );
 });
 

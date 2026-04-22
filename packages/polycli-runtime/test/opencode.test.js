@@ -1,14 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildOpenCodeInvocation,
   extractOpenCodeText,
   parseOpenCodeJsonResult,
   parseOpenCodeStreamText,
+  runOpenCodePrompt,
   runOpenCodePromptStreaming,
 } from "../src/index.js";
+
+function withFakeOpenCodeBin(source, fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-opencode-sync-"));
+  const bin = path.join(root, "opencode");
+  fs.writeFileSync(bin, source, { mode: 0o755 });
+
+  try {
+    return fn({ root, bin });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
 
 test("buildOpenCodeInvocation targets run json mode with session support", () => {
   const invocation = buildOpenCodeInvocation({
@@ -82,6 +98,28 @@ test("parseOpenCodeJsonResult extracts final response from raw event output", ()
   assert.equal(parsed.ok, true);
   assert.equal(parsed.response, "pong");
   assert.equal(parsed.sessionId, "open-2");
+});
+
+test("runOpenCodePrompt returns parsed success payloads", () => {
+  withFakeOpenCodeBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "session.start", session: { id: "open-sync-1", model: "open-test" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "text", sessionID: "open-sync-1", part: { sessionID: "open-sync-1", type: "text", text: "hello world" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", text: "hello world" }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runOpenCodePrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.response, "hello world");
+      assert.equal(result.sessionId, "open-sync-1");
+      assert.equal(result.model, "open-test");
+    }
+  );
 });
 
 test("runOpenCodePromptStreaming returns a structured failure on spawn error", async () => {

@@ -204,14 +204,27 @@ function trackQwenToolTiming(event, timestamp, state) {
   }
 }
 
+function isTerminalSummaryEvent(provider, event) {
+  if (!event || typeof event !== "object") {
+    return false;
+  }
+  if (provider === "qwen" || provider === "claude" || provider === "opencode") {
+    return event.type === "result";
+  }
+  if (provider === "copilot") {
+    return event.type === "assistant.message" || event.type === "result" || event.type === "final";
+  }
+  if (provider === "pi") {
+    return event.type === "agent_end";
+  }
+  return false;
+}
+
 function shouldCountEventTextForTiming(provider, event, firstTextAt) {
-  if (provider !== "qwen") {
+  if (firstTextAt == null) {
     return true;
   }
-  if (event?.type !== "result") {
-    return true;
-  }
-  return firstTextAt == null;
+  return !isTerminalSummaryEvent(provider, event);
 }
 
 export function getProviderRuntime(providerId) {

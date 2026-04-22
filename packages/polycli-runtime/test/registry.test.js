@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 
 import {
   PROVIDER_IDS,
   PROVIDER_OPERATION_NAMES,
   getProviderRuntime,
   listProviderRuntimes,
+  runProviderPromptStreaming,
 } from "../src/index.js";
 
 test("provider registry exposes the eight integrated runtimes", () => {
@@ -29,5 +31,96 @@ test("getProviderRuntime returns a stable runtime for each provider id", () => {
   for (const providerId of PROVIDER_IDS) {
     const runtime = getProviderRuntime(providerId);
     assert.equal(runtime.id, providerId);
+  }
+});
+
+test("runProviderPromptStreaming ignores duplicate terminal summary text for providers with prior visible output", async () => {
+  const cases = [
+    {
+      provider: "claude",
+      lines: [
+        '{"type":"system","subtype":"init","session_id":"claude-timing"}',
+        '{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello "}}',
+        '{"type":"content_block_delta","delta":{"type":"text_delta","text":"world"}}',
+        '{"type":"result","subtype":"success","is_error":false,"result":"hello world"}',
+      ],
+    },
+    {
+      provider: "copilot",
+      lines: [
+        '{"type":"session_start","sessionId":"copilot-timing","model":"copilot-test"}',
+        '{"type":"assistant.message_delta","data":{"messageId":"m-1","deltaContent":"hello "}}',
+        '{"type":"assistant.message_delta","data":{"messageId":"m-1","deltaContent":"world"}}',
+        '{"type":"assistant.message","data":{"messageId":"m-1","content":"hello world","phase":"final_answer"}}',
+        '{"type":"result","sessionId":"copilot-timing","exitCode":0}',
+      ],
+    },
+    {
+      provider: "opencode",
+      lines: [
+        '{"type":"step_start","sessionID":"open-timing","part":{"sessionID":"open-timing","type":"step-start"}}',
+        '{"type":"text","sessionID":"open-timing","part":{"sessionID":"open-timing","type":"text","text":"hello "}}',
+        '{"type":"text","sessionID":"open-timing","part":{"sessionID":"open-timing","type":"text","text":"world"}}',
+        '{"type":"result","text":"hello world"}',
+      ],
+    },
+    {
+      provider: "pi",
+      lines: [
+        '{"type":"session_header","sessionId":"pi-timing","model":"pi-test"}',
+        '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hello "}}',
+        '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"world"}}',
+        '{"type":"agent_end","result":{"text":"hello world"}}',
+      ],
+    },
+  ];
+
+  const realNow = Date.now;
+
+  try {
+    for (const { provider, lines } of cases) {
+      let now = 1_000;
+      Date.now = () => now;
+
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = { write() {}, end() {}, on() {} };
+      child.kill = () => {};
+      child.unref = () => {};
+
+      const result = await runProviderPromptStreaming({
+        provider,
+        prompt: "ping",
+        cwd: process.cwd(),
+        timeout: 5_000,
+        spawnImpl() {
+          queueMicrotask(() => {
+            now = 1_100;
+            child.stdout.emit("data", `${lines[0]}\n`);
+            now = 1_200;
+            child.stdout.emit("data", `${lines[1]}\n`);
+            now = 1_300;
+            child.stdout.emit("data", `${lines[2]}\n`);
+            now = 1_400;
+            child.stdout.emit("data", `${lines[3]}\n`);
+            if (lines[4]) {
+              now = 1_450;
+              child.stdout.emit("data", `${lines[4]}\n`);
+            }
+            now = 1_700;
+            child.emit("close", 0, null);
+          });
+          return child;
+        },
+      });
+
+      assert.equal(result.ok, true, provider);
+      assert.equal(result.response.trim(), "hello world", provider);
+      assert.equal(result.timing.metrics.ttft.ms, 200, provider);
+      assert.equal(result.timing.metrics.tail.ms, 400, provider);
+    }
+  } finally {
+    Date.now = realNow;
   }
 });

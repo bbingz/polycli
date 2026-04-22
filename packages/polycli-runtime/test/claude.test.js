@@ -1,14 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   buildClaudeInvocation,
   extractClaudeText,
   parseClaudeJsonResult,
   parseClaudeStreamText,
+  runClaudePrompt,
   runClaudePromptStreaming,
 } from "../src/index.js";
+
+function withFakeClaudeBin(source, fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-claude-sync-"));
+  const bin = path.join(root, "claude");
+  fs.writeFileSync(bin, source, { mode: 0o755 });
+
+  try {
+    return fn({ root, bin });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
 
 test("buildClaudeInvocation uses stdin for large prompts and preserves session options", () => {
   const prompt = "x".repeat(100_001);
@@ -115,6 +131,45 @@ test("parseClaudeJsonResult treats non-zero process status as failure", () => {
   assert.match(parsed.error, /claude exited with code 1/);
 });
 
+test("runClaudePrompt returns parsed success payloads", () => {
+  withFakeClaudeBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "pong", session_id: "claude-sync-1", duration_ms: 321 }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runClaudePrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.response, "pong");
+      assert.equal(result.sessionId, "claude-sync-1");
+      assert.equal(result.durationMs, 321);
+    }
+  );
+});
+
+test("runClaudePrompt treats subtype-only error results as failures", () => {
+  withFakeClaudeBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "result", subtype: "error", is_error: false, result: "permission denied", session_id: "claude-sync-err" }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runClaudePrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.response, "permission denied");
+      assert.equal(result.error, "permission denied");
+    }
+  );
+});
+
 test("runClaudePromptStreaming returns a structured failure on spawn error", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -136,4 +191,29 @@ test("runClaudePromptStreaming returns a structured failure on spawn error", asy
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+});
+
+test("runClaudePromptStreaming treats subtype-only error results as failures", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runClaudePromptStreaming({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"system","subtype":"init","session_id":"claude-stream-err"}\n');
+        child.stdout.emit("data", '{"type":"content_block_delta","delta":{"type":"text_delta","text":"partial answer"}}\n');
+        child.stdout.emit("data", '{"type":"result","subtype":"error","is_error":false,"result":"permission denied"}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response, "partial answer");
+  assert.equal(result.error, "permission denied");
 });

@@ -55,23 +55,26 @@ Latest hardening work fixed issues found by running real provider review / ask f
 - `claude`
   - `stream-json` mode now adds `--verbose`, matching the real CLI requirement
   - JSON-mode success now respects the process exit status and no longer reports `ok: true` on non-zero exits
+  - subtype-only terminal error results are now treated as failures in both sync and streaming paths
 - `copilot`
   - parser now accepts the real `assistant.message_delta` / `assistant.message` event schema
   - final answers emitted via `data.content` are preserved instead of being treated as empty output
 - `opencode`
   - parser now accepts the real `type: "text"` / `part.text` event schema
   - session IDs emitted as `sessionID` are now captured correctly
+- `timing`
+  - terminal summary events from `claude` / `copilot` / `opencode` / `pi` no longer extend the visible-text window after real streaming output has already started
 - integration fakes
   - fake provider binaries now model these real event shapes more closely, so regressions are caught in CI instead of only in live runs
 
 Verification status for the current post-release work:
 
 - `npm test`
-  - `112` passed
+  - `119` passed
   - `0` failed
 - focused runtime regression tests:
-  - `node --test packages/polycli-runtime/test/claude.test.js packages/polycli-runtime/test/copilot.test.js packages/polycli-runtime/test/opencode.test.js`
-  - `15` passed
+  - `node --test packages/polycli-runtime/test/claude.test.js packages/polycli-runtime/test/copilot.test.js packages/polycli-runtime/test/opencode.test.js packages/polycli-runtime/test/pi.test.js packages/polycli-runtime/test/registry.test.js`
+  - `27` passed
   - `0` failed
 - real bundled-companion smoke asks:
   - `claude`: passed, returned `OK`
