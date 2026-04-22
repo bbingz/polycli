@@ -7,7 +7,7 @@ This repository publishes in two different ways:
 
 ## Current Release State
 
-As of `2026-04-22`, the initial public release has been executed:
+As of `2026-04-22`, the latest published public release is still:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
 - GitHub release: `v0.3.0`
@@ -27,6 +27,12 @@ Note:
 ## Current Post-release Work
 
 The public release is still `v0.3.0`, but the local post-release work now extends beyond the original stabilization pass.
+
+Prepared next release line:
+
+- local release target: `v0.4.0`
+- release notes draft: [docs/release-notes-v0.4.0.md](/home/user/-Code-/polycli/docs/release-notes-v0.4.0.md)
+- external steps still pending: local tag, push, GitHub release, npm publish
 
 Current runtime scope in-repo:
 
@@ -66,20 +72,23 @@ Latest hardening work fixed issues found by running real provider review / ask f
   - terminal summary events from `claude` / `copilot` / `opencode` / `pi` no longer extend the visible-text window after real streaming output has already started
 - integration fakes
   - fake provider binaries now model these real event shapes more closely, so regressions are caught in CI instead of only in live runs
+- host plugin hygiene
+  - streamed preview dedupe now uses an in-memory tail cache instead of re-reading the full log file per event
+  - preview text slices by code point so emoji do not get split mid-surrogate pair
+  - auto-scope review now reports git fallback failures as warnings instead of flattening them into plain "no changes"
+- real fixture replay
+  - parser tests now replay saved real stdout for all eight providers
+  - mini-agent replay also includes the captured log body parsed by the runtime
 
 Verification status for the current post-release work:
 
 - `npm test`
-  - `119` passed
+  - `184` passed
   - `0` failed
-- focused runtime regression tests:
-  - `node --test packages/polycli-runtime/test/claude.test.js packages/polycli-runtime/test/copilot.test.js packages/polycli-runtime/test/opencode.test.js packages/polycli-runtime/test/pi.test.js packages/polycli-runtime/test/registry.test.js`
-  - `27` passed
+- focused runtime replay regression tests:
+  - `rtk node --test packages/polycli-runtime/test/*.test.js`
+  - `101` passed
   - `0` failed
-- real bundled-companion smoke asks:
-  - `claude`: passed, returned `OK`
-  - `copilot`: passed, returned `OK`
-  - `opencode`: passed, returned `OK`
 
 ## Pre-release
 
@@ -105,13 +114,13 @@ Create or update the public repository:
 gh repo create bbingz/polycli --public --source=. --remote=origin --push
 ```
 
-For subsequent releases:
+For the next release once external publishing is approved:
 
 ```bash
 git push origin main
-git tag v0.3.0
-git push origin v0.3.0
-gh release create v0.3.0 dist/bbingz-polycli-opencode-0.3.0.tgz --title "v0.3.0"
+git tag v0.4.0
+git push origin v0.4.0
+gh release create v0.4.0 dist/bbingz-polycli-opencode-0.4.0.tgz --title "v0.4.0"
 ```
 
 Consumers install from the repository:

@@ -10,7 +10,7 @@ Repo:
 - branch: `main`
 - remote: `https://github.com/bbingz/polycli.git`
 - release line: public artifacts are still on `v0.3.0`
-- local head state: includes provider expansion and post-review hardening beyond `v0.3.0`
+- local head state: includes provider expansion, post-review hardening, host-plugin hygiene, real-fixture replay coverage, and local `v0.4.0` release prep beyond `v0.3.0`
 - working tree expectation: clean immediately after the latest implementation + documentation commits
 
 Release state:
@@ -25,6 +25,10 @@ Release state:
 - local OpenCode tarball artifact exists at:
   - [dist/bbingz-polycli-opencode-0.3.0.tgz](/home/user/-Code-/polycli/dist/bbingz-polycli-opencode-0.3.0.tgz)
 - published release state is still `v0.3.0`; the latest provider expansion and parser hardening work is local and not yet tagged/released
+- next release prep exists locally:
+  - release-facing host artifacts are bumped to `0.4.0`
+  - release notes draft lives at [docs/release-notes-v0.4.0.md](/home/user/-Code-/polycli/docs/release-notes-v0.4.0.md)
+  - internal workspace packages intentionally remain at `1.0.0` to avoid a semver downgrade
 
 Important note:
 
@@ -205,6 +209,17 @@ This means foreground and background `review` behavior is now aligned for:
 - `qwen`
 - `kimi`
 
+Latest follow-up fixes completed after the original P0/P1 review batches:
+
+- host plugin hygiene
+  - `appendPreview` now deduplicates from an in-memory tail cache instead of re-reading the whole preview log
+  - `previewText` slices by code point, so emoji are not split mid-surrogate pair
+  - auto-scope review now returns `warnings` when branch fallback diff resolution fails, distinguishing shallow/single-commit repos from true "no changes"
+- real saved-stdout replay coverage
+  - added replay fixtures for `claude`, `copilot`, `gemini`, `kimi`, `opencode`, `pi`, `qwen`, and `minimax`
+  - added a shared `fixture-replay` helper for runtime tests
+  - kept the synthetic parser-shape tests; real fixtures are additive, not replacements
+
 ## Validation Status
 
 Primary verification command:
@@ -217,6 +232,16 @@ Current result at handoff:
 
 - `119` tests passed
 - `0` failed
+
+Latest verification completed after Group 4 / Group 5 and local release prep:
+
+- local `npm test` passed with final result:
+  - `184` passed
+  - `0` failed
+- focused runtime replay regressions passed:
+  - `rtk node --test packages/polycli-runtime/test/*.test.js`
+  - `101` passed
+  - `0` failed
 
 Additional verified release checks:
 
@@ -246,15 +271,8 @@ OpenCode packaging checks completed:
 - `npm publish ./plugins/polycli-opencode --dry-run --access public`
 - real `npm publish ./plugins/polycli-opencode --access public` was run successfully after interactive npm auth
 
-Latest verification completed after the provider hardening pass:
+Earlier live smoke checks still remain relevant:
 
-- local `npm test` passed with final result:
-  - `146` passed
-  - `0` failed
-- focused runtime regressions passed:
-  - `claude` / `copilot` / `opencode` / `pi` / `registry`
-  - `27` passed
-  - `0` failed
 - real bundled-companion smoke asks passed:
   - `claude`: returned `OK`
   - `copilot`: returned `OK`
