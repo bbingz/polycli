@@ -1,0 +1,16 @@
+{
+  "provider": "pi",
+  "name": "stream-success",
+  "capturedAt": "2026-04-22T12:41:25.622Z",
+  "version": "0.68.1",
+  "argv": [
+    "--print",
+    "--mode",
+    "json",
+    "Reply with exactly HELLO_PI_FIXTURE and nothing else."
+  ],
+  "expected": {
+    "response": "HELLO_PI_FIXTUREHELLO_PI_FIXTUREHELLO_PI_FIXTUREHELLO_PI_FIXTURE",
+    "sessionId": "019db537-563f-779e-beb0-0cf79e81e5c8"
+  }
+}

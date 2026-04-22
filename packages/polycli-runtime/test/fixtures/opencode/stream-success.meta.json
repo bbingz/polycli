@@ -1,0 +1,19 @@
+{
+  "provider": "opencode",
+  "name": "stream-success",
+  "capturedAt": "2026-04-22T12:41:25.622Z",
+  "version": "1.14.20",
+  "argv": [
+    "run",
+    "Reply with exactly HELLO_OPENCODE_FIXTURE and nothing else.",
+    "--format",
+    "json",
+    "--dir",
+    "/home/user/-Code-/polycli",
+    "--dangerously-skip-permissions"
+  ],
+  "expected": {
+    "response": "HELLO_OPENCODE_FIXTURE",
+    "sessionId": "ses_24ac8ef73ffezm1mhb0iuG7iHn"
+  }
+}

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildKimiInvocation,
   extractKimiText,
@@ -164,4 +165,12 @@ test("runKimiPromptStreaming returns an explicit error when no visible assistant
 
   assert.equal(result.ok, false);
   assert.equal(result.error, "kimi produced no visible text");
+});
+
+test("parseKimiStreamText replays a captured real cli fixture", () => {
+  const { stream, meta } = loadStreamFixture("kimi", "stream-success");
+  const parsed = parseKimiStreamText(stream);
+
+  assert.equal(parsed.response, meta.expected.response);
+  assert.equal(parsed.events.length > 0, true);
 });

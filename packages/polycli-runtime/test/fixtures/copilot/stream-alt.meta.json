@@ -1,0 +1,22 @@
+{
+  "provider": "copilot",
+  "name": "stream-alt",
+  "capturedAt": "2026-04-22T12:41:25.622Z",
+  "version": "GitHub Copilot CLI 1.0.34.\nRun 'copilot update' to check for updates.",
+  "argv": [
+    "-p",
+    "Reply with exactly HELLO_COPILOT_FIXTURE_ALT and nothing else.",
+    "--output-format",
+    "json",
+    "--stream",
+    "on",
+    "--allow-all-tools",
+    "--allow-all-paths",
+    "--allow-all-urls",
+    "--no-ask-user"
+  ],
+  "expected": {
+    "response": "HELLO_COPILOT_FIXTURE_ALT",
+    "sessionId": "f7d44e47-5aaf-4dcb-afa3-5f6c7f530afd"
+  }
+}

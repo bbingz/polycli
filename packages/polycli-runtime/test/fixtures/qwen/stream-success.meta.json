@@ -1,0 +1,19 @@
+{
+  "provider": "qwen",
+  "name": "stream-success",
+  "capturedAt": "2026-04-22T12:44:18.282Z",
+  "version": "0.14.5",
+  "argv": [
+    "--output-format",
+    "stream-json",
+    "--approval-mode",
+    "auto-edit",
+    "--max-session-turns",
+    "20",
+    "Reply with exactly HELLO_QWEN_FIXTURE and nothing else."
+  ],
+  "expected": {
+    "response": "HELLO_QWEN_FIXTURE",
+    "sessionId": "a96e0eb5-fc5a-44b9-87e0-cf95b1ebdb20"
+  }
+}

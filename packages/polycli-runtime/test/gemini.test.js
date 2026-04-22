@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildGeminiInvocation,
   extractGeminiText,
@@ -168,4 +169,12 @@ test("runGeminiPromptStreaming returns an explicit error when no visible assista
 
   assert.equal(result.ok, false);
   assert.equal(result.error, "gemini produced no visible text");
+});
+
+test("parseGeminiStreamText replays a captured real cli fixture", () => {
+  const { stream, meta } = loadStreamFixture("gemini", "stream-success");
+  const parsed = parseGeminiStreamText(stream);
+
+  assert.equal(parsed.response, meta.expected.response);
+  assert.equal(parsed.sessionId, meta.expected.sessionId);
 });

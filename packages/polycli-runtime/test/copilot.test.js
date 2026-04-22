@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildCopilotInvocation,
   extractCopilotText,
@@ -199,4 +200,12 @@ test("runCopilotPromptStreaming captures standalone error events as terminal fai
   assert.equal(result.ok, false);
   assert.equal(result.response, "partial");
   assert.equal(result.error, "permission denied");
+});
+
+test("parseCopilotStreamText replays a captured real cli fixture", () => {
+  const { stream, meta } = loadStreamFixture("copilot", "stream-success");
+  const parsed = parseCopilotStreamText(stream);
+
+  assert.equal(parsed.response, meta.expected.response);
+  assert.equal(parsed.sessionId, meta.expected.sessionId);
 });

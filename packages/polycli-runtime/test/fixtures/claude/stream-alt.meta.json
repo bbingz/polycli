@@ -1,0 +1,19 @@
+{
+  "provider": "claude",
+  "name": "stream-alt",
+  "capturedAt": "2026-04-22T12:41:25.622Z",
+  "version": "2.1.117 (Claude Code)",
+  "argv": [
+    "-p",
+    "Reply with exactly HELLO_CLAUDE_FIXTURE_ALT and nothing else.",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--max-turns",
+    "1"
+  ],
+  "expected": {
+    "response": "HELLO_CLAUDE_FIXTURE_ALT",
+    "sessionId": "8add90cd-4d96-43df-834b-1ab72f773326"
+  }
+}

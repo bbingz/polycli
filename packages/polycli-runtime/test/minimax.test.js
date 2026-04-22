@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 
+import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildMiniMaxInvocation,
   extractMiniMaxLogPath,
@@ -80,4 +81,11 @@ test("runMiniMaxPrompt returns a structured failure on spawn error", async () =>
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+});
+
+test("minimax helpers replay a captured real cli fixture", () => {
+  const { stream, logText, meta } = loadStreamFixture("minimax", "run-success");
+
+  assert.ok(extractMiniMaxLogPath(stream));
+  assert.deepEqual(extractMiniMaxResponseFromLogText(logText), meta.expected);
 });

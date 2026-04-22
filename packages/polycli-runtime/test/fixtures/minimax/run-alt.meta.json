@@ -1,0 +1,17 @@
+{
+  "provider": "minimax",
+  "name": "run-alt",
+  "capturedAt": "2026-04-22T12:44:18.282Z",
+  "version": "mini-agent 0.1.0",
+  "argv": [
+    "-t",
+    "Reply with exactly HELLO_MINIMAX_FIXTURE_ALT and nothing else.",
+    "-w",
+    "/home/user/-Code-/polycli"
+  ],
+  "expected": {
+    "response": "HELLO_MINIMAX_FIXTURE_ALT",
+    "finishReason": "end_turn",
+    "toolCalls": []
+  }
+}

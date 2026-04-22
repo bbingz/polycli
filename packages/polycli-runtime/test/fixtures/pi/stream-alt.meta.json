@@ -1,0 +1,17 @@
+{
+  "provider": "pi",
+  "name": "stream-alt",
+  "capturedAt": "2026-04-22T12:44:18.282Z",
+  "version": "0.68.1",
+  "argv": [
+    "--print",
+    "--mode",
+    "json",
+    "--no-tools",
+    "Reply with exactly HELLO_PI_FIXTURE_ALT and nothing else."
+  ],
+  "expected": {
+    "response": "HELHELLO_PI_FIXTURE_ALTHELLO_PI_FIXTURE_ALTHELLO_PI_FIXTURE_ALTHELLO_PI_FIXTURE_ALT",
+    "sessionId": "019db538-4beb-70ab-8078-8ab31ea03fb9"
+  }
+}

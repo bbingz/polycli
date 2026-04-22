@@ -1,0 +1,19 @@
+{
+  "provider": "kimi",
+  "name": "stream-alt",
+  "capturedAt": "2026-04-22T12:41:25.622Z",
+  "version": "kimi, version 1.37.0",
+  "argv": [
+    "-p",
+    "Reply with exactly HELLO_KIMI_FIXTURE_ALT and nothing else.",
+    "--print",
+    "--output-format",
+    "stream-json",
+    "--no-thinking",
+    "--max-steps-per-turn",
+    "1"
+  ],
+  "expected": {
+    "response": "HELLO_KIMI_FIXTURE_ALT"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "provider": "gemini",
+  "name": "stream-alt",
+  "capturedAt": "2026-04-22T12:41:25.622Z",
+  "version": "0.38.2",
+  "argv": [
+    "-p",
+    "Reply with exactly HELLO_GEMINI_FIXTURE_ALT and nothing else.",
+    "-o",
+    "stream-json",
+    "--approval-mode",
+    "plan"
+  ],
+  "expected": {
+    "response": "HELLO_GEMINI_FIXTURE_ALT",
+    "sessionId": "a4c5cdf2-7001-463d-9c2c-455015783172"
+  }
+}

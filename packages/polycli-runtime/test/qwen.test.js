@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildQwenEnv,
   buildQwenInvocation,
@@ -278,6 +279,14 @@ test("getQwenAuthStatus keeps loggedIn=true for transient probe failures", () =>
 
   assert.equal(auth.loggedIn, true);
   assert.match(auth.detail, /timed out after 30s/i);
+});
+
+test("parseQwenStreamText replays a captured real cli fixture", () => {
+  const { stream, meta } = loadStreamFixture("qwen", "stream-success");
+  const parsed = parseQwenStreamText(stream);
+
+  assert.equal(parsed.response, meta.expected.response);
+  assert.equal(parsed.sessionId, meta.expected.sessionId);
 });
 
 test("runQwenPromptStreaming returns a structured failure on spawn error", async () => {

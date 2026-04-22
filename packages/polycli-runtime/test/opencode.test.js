@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildOpenCodeInvocation,
   extractOpenCodeText,
@@ -259,4 +260,12 @@ test("runOpenCodePromptStreaming passes custom env through to the spawned proces
 
   assert.equal(result.ok, true);
   assert.equal(seenOptions.env.OPENCODE_CONFIG_CONTENT, '{"permission":"deny"}');
+});
+
+test("parseOpenCodeStreamText replays a captured real cli fixture", () => {
+  const { stream, meta } = loadStreamFixture("opencode", "stream-success");
+  const parsed = parseOpenCodeStreamText(stream);
+
+  assert.equal(parsed.response, meta.expected.response);
+  assert.equal(parsed.sessionId, meta.expected.sessionId);
 });

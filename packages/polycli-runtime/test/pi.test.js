@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildPiInvocation,
   extractPiText,
@@ -183,4 +184,12 @@ test("runPiPromptStreaming returns a structured failure on spawn error", async (
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+});
+
+test("parsePiStreamText replays a captured real cli fixture", () => {
+  const { stream, meta } = loadStreamFixture("pi", "stream-success");
+  const parsed = parsePiStreamText(stream);
+
+  assert.equal(parsed.response, meta.expected.response);
+  assert.equal(parsed.sessionId, meta.expected.sessionId);
 });

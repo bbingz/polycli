@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildClaudeInvocation,
   extractClaudeText,
@@ -254,4 +255,12 @@ test("runClaudePromptStreaming treats subtype-only error results as failures", a
   assert.equal(result.ok, false);
   assert.equal(result.response, "partial answer");
   assert.equal(result.error, "permission denied");
+});
+
+test("parseClaudeStreamText replays a captured real cli fixture", () => {
+  const { stream, meta } = loadStreamFixture("claude", "stream-success");
+  const parsed = parseClaudeStreamText(stream);
+
+  assert.equal(parsed.response, meta.expected.response);
+  assert.equal(parsed.sessionId, meta.expected.sessionId);
 });
