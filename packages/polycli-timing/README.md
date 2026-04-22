@@ -22,6 +22,28 @@
 - `readTimingSchema()`
 - `timing.schema.json`
 
+## Public Surface
+
+v1 稳定根导出包括：
+
+- `TIMING_SCHEMA_VERSION`
+- `TIMING_METRIC_NAMES`
+- `TIMING_METRIC_STATUSES`
+- `TIMING_RUNTIME_PERSISTENCE`
+- `TIMING_MEASUREMENT_SCOPES`
+- `TIMING_SCHEMA_URL`
+- `readTimingSchema()`
+- `validateTimingRecord()`
+- `calculatePercentiles()`
+- `aggregateTimingRecords()`
+
+其中 `aggregateTimingRecords()` 的输出除了 capability-aware metric summary，还会保留每个 provider 的：
+
+- `runtimePersistenceCounts`
+- `measurementScopeCounts`
+
+这样 request / turn / job 和 ephemeral / session / daemon 的数据不会被静默混成一个总体。
+
 ## Example
 
 ```js

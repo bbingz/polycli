@@ -9,6 +9,15 @@
 1. 把低语义风险的公共工具抽出来，避免 4 份近似拷贝。
 2. 把 timing 对比 contract 独立出来，避免把“没能力”“没数据”“贡献 0”混成一列。
 
+## Current Scope
+
+当前仓库只落地了两个包：
+
+- `@bbingz/polycli-utils`
+- `@bbingz/polycli-timing`
+
+虽然文档和示例会提到 `gemini` / `kimi` / `qwen` / `minimax`，但这 4 个 provider 并没有作为实现或 adapter 收进本仓。它们目前仍是外部 reference repo 语境，不是 `polycli v1` 的包面。
+
 ## Packages
 
 - `@bbingz/polycli-utils`
@@ -177,6 +186,7 @@ console.log(summary.byProvider.gemini.metrics.cold.p50);
 ## Files
 
 - 根说明：`README.md`
+- v1 public surface：`docs/polycli-v1-public-surface.md`
 - utils 包说明：`packages/polycli-utils/README.md`
 - timing 包说明：`packages/polycli-timing/README.md`
 - timing schema：`packages/polycli-timing/timing.schema.json`

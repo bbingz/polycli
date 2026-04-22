@@ -59,6 +59,26 @@ test("aggregateTimingRecords keeps unsupported, missing, and zero separate", () 
   assert.equal(summary.byProvider.gemini.metrics.cold.contributingCount, 1);
   assert.equal(summary.byProvider.gemini.metrics.cold.missingCount, 1);
   assert.equal(summary.byProvider.gemini.metrics.tool.zeroCount, 2);
+  assert.deepEqual(summary.byProvider.gemini.runtimePersistenceCounts, {
+    ephemeral: 2,
+    session: 0,
+    daemon: 0,
+  });
+  assert.deepEqual(summary.byProvider.gemini.measurementScopeCounts, {
+    request: 2,
+    turn: 0,
+    job: 0,
+  });
   assert.equal(summary.byProvider.minimax.metrics.cold.unsupportedCount, 1);
   assert.equal(summary.byProvider.minimax.metrics.tool.missingCount, 1);
+  assert.deepEqual(summary.byProvider.minimax.runtimePersistenceCounts, {
+    ephemeral: 0,
+    session: 1,
+    daemon: 0,
+  });
+  assert.deepEqual(summary.byProvider.minimax.measurementScopeCounts, {
+    request: 0,
+    turn: 0,
+    job: 1,
+  });
 });

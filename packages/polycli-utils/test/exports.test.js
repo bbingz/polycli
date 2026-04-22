@@ -4,10 +4,27 @@ import assert from "node:assert/strict";
 import * as utils from "../src/index.js";
 
 test("utils index exports expected surface", () => {
-  assert.equal(typeof utils.parseArgs, "function");
-  assert.equal(typeof utils.runCommand, "function");
-  assert.equal(typeof utils.createLineDecoder, "function");
-  assert.equal(typeof utils.appendNdjson, "function");
-  assert.equal(typeof utils.resolveSessionId, "function");
-  assert.equal(typeof utils.parseStreamJsonLine, "function");
+  assert.deepEqual(Object.keys(utils).sort(), [
+    "LockfileTimeoutError",
+    "UUID_SESSION_ID_REGEX",
+    "appendNdjson",
+    "binaryAvailable",
+    "createLineDecoder",
+    "ensureParentDir",
+    "formatCommandFailure",
+    "matchSessionId",
+    "parseArgs",
+    "parseStreamJsonLine",
+    "parseStreamJsonText",
+    "readNdjson",
+    "resolveSessionId",
+    "runCommand",
+    "runCommandChecked",
+    "splitRawArgumentString",
+    "tailNdjson",
+    "terminateProcessTree",
+    "withLockfile",
+    "writeFileAtomic",
+    "writeJsonAtomic",
+  ]);
 });

@@ -1,4 +1,8 @@
-import { TIMING_METRIC_NAMES } from "./constants.js";
+import {
+  TIMING_MEASUREMENT_SCOPES,
+  TIMING_METRIC_NAMES,
+  TIMING_RUNTIME_PERSISTENCE,
+} from "./constants.js";
 import { calculatePercentiles } from "./percentile.js";
 import { validateTimingRecord } from "./validate.js";
 
@@ -22,6 +26,8 @@ function createMetricSummary() {
 function createProviderSummary() {
   return {
     recordCount: 0,
+    runtimePersistenceCounts: Object.fromEntries(TIMING_RUNTIME_PERSISTENCE.map((name) => [name, 0])),
+    measurementScopeCounts: Object.fromEntries(TIMING_MEASUREMENT_SCOPES.map((name) => [name, 0])),
     metrics: Object.fromEntries(TIMING_METRIC_NAMES.map((name) => [name, createMetricSummary()])),
   };
 }
@@ -63,6 +69,8 @@ export function aggregateTimingRecords(records) {
     const provider = record.provider;
     const providerSummary = summary.byProvider[provider] ?? createProviderSummary();
     providerSummary.recordCount += 1;
+    providerSummary.runtimePersistenceCounts[record.runtimePersistence] += 1;
+    providerSummary.measurementScopeCounts[record.measurementScope] += 1;
     summary.byProvider[provider] = providerSummary;
 
     for (const metricName of TIMING_METRIC_NAMES) {
