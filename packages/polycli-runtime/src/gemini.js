@@ -38,12 +38,13 @@ export function buildGeminiInvocation({
 
 export function extractGeminiText(event) {
   if (!event || typeof event !== "object") return "";
+  if (event.type === "result" && typeof event.text === "string") return event.text;
   const role = event.role ?? event.message?.role ?? null;
-  if (role && role !== "assistant") return "";
-  if (typeof event.delta === "string") return event.delta;
-  if (typeof event.content === "string") return event.content;
-  if (typeof event.text === "string") return event.text;
-  if (typeof event.message?.content === "string") return event.message.content;
+  if (event.type === "message" && role !== "assistant") return "";
+  if (event.type === "message" && typeof event.delta === "string") return event.delta;
+  if (event.type === "message" && typeof event.content === "string") return event.content;
+  if (event.type === "message" && typeof event.text === "string") return event.text;
+  if (event.type === "message" && typeof event.message?.content === "string") return event.message.content;
   return "";
 }
 
@@ -52,6 +53,7 @@ export function parseGeminiStreamText(text) {
   let response = "";
   let sessionId = null;
   let stats = null;
+  let resultEvent = null;
 
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
     const parsed = parseStreamJsonLine(rawLine, { allowPrefix: true });
@@ -59,11 +61,18 @@ export function parseGeminiStreamText(text) {
     const event = parsed.event;
     events.push(event);
     if (!sessionId && event.session_id) sessionId = event.session_id;
-    if (event.type === "result" && event.stats) stats = event.stats;
+    if (event.type === "result") {
+      resultEvent = event;
+      if (event.stats) stats = event.stats;
+      if (!response.trim()) {
+        response += extractGeminiText(event);
+      }
+      continue;
+    }
     response += extractGeminiText(event);
   }
 
-  return { events, response, sessionId, stats };
+  return { events, response, sessionId, stats, resultEvent };
 }
 
 function parseGeminiJsonResult(stdout, stderr, status) {
@@ -217,11 +226,18 @@ export function runGeminiPromptStreaming({
       stderr: result.stderr,
       priority: ["stdout", "stderr", "file"],
     });
+    const resultError = typeof parsed.resultEvent?.error?.message === "string"
+      ? parsed.resultEvent.error.message
+      : (typeof parsed.resultEvent?.error === "string" ? parsed.resultEvent.error : null);
+    const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-      error: result.ok ? null : result.error,
+      ok: result.ok && !resultError && hasVisibleText,
+      error: result.ok
+        ? (resultError || (hasVisibleText ? null : "gemini produced no visible text"))
+        : result.error,
     };
   });
 }

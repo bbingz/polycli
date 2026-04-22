@@ -727,6 +727,39 @@ function collectCopilotContentText(content) {
   }
   return content.filter((block) => block && block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
 }
+function getCopilotResultError(event) {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  if (event.type === "error") {
+    if (typeof event.error?.message === "string" && event.error.message.trim()) {
+      return event.error.message;
+    }
+    if (typeof event.error === "string" && event.error.trim()) {
+      return event.error;
+    }
+    return "copilot returned an error";
+  }
+  if (event.type !== "result" && event.type !== "final") {
+    return null;
+  }
+  if (event.is_error) {
+    return typeof event.result === "string" ? event.result : "copilot returned an error";
+  }
+  if (typeof event.error?.message === "string" && event.error.message.trim()) {
+    return event.error.message;
+  }
+  if (typeof event.error === "string" && event.error.trim()) {
+    return event.error;
+  }
+  if (event.exitCode && event.exitCode !== 0) {
+    return `copilot exited with code ${event.exitCode}`;
+  }
+  if (event.status && event.status !== 0) {
+    return `copilot exited with code ${event.status}`;
+  }
+  return null;
+}
 function buildCopilotInvocation({
   prompt,
   model = null,
@@ -810,7 +843,7 @@ function parseCopilotStreamText(text) {
       response = event.data.content;
       continue;
     }
-    if (event.type === "result" || event.type === "final") {
+    if (event.type === "result" || event.type === "final" || event.type === "error") {
       resultEvent = event;
       if (!response.trim()) {
         response += extractCopilotText(event);
@@ -872,7 +905,7 @@ function runCopilotPrompt({
     stderr: result.stderr,
     priority: ["stdout", "stderr", "file"]
   });
-  const resultError = parsed.resultEvent?.is_error ? typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "copilot returned an error" : parsed.resultEvent?.exitCode && parsed.resultEvent.exitCode !== 0 ? `copilot exited with code ${parsed.resultEvent.exitCode}` : null;
+  const resultError = getCopilotResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
   return {
     ok: result.status === 0 && !resultError && hasVisibleText,
@@ -929,7 +962,7 @@ function runCopilotPromptStreaming({
       stderr: result.stderr,
       priority: ["stdout", "stderr", "file"]
     });
-    const resultError = parsed.resultEvent?.is_error ? typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "copilot returned an error" : parsed.resultEvent?.exitCode && parsed.resultEvent.exitCode !== 0 ? `copilot exited with code ${parsed.resultEvent.exitCode}` : null;
+    const resultError = getCopilotResultError(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
@@ -972,12 +1005,13 @@ function buildGeminiInvocation({
 }
 function extractGeminiText(event) {
   if (!event || typeof event !== "object") return "";
+  if (event.type === "result" && typeof event.text === "string") return event.text;
   const role = event.role ?? event.message?.role ?? null;
-  if (role && role !== "assistant") return "";
-  if (typeof event.delta === "string") return event.delta;
-  if (typeof event.content === "string") return event.content;
-  if (typeof event.text === "string") return event.text;
-  if (typeof event.message?.content === "string") return event.message.content;
+  if (event.type === "message" && role !== "assistant") return "";
+  if (event.type === "message" && typeof event.delta === "string") return event.delta;
+  if (event.type === "message" && typeof event.content === "string") return event.content;
+  if (event.type === "message" && typeof event.text === "string") return event.text;
+  if (event.type === "message" && typeof event.message?.content === "string") return event.message.content;
   return "";
 }
 function parseGeminiStreamText(text) {
@@ -985,16 +1019,24 @@ function parseGeminiStreamText(text) {
   let response = "";
   let sessionId = null;
   let stats = null;
+  let resultEvent = null;
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
     const parsed = parseStreamJsonLine(rawLine, { allowPrefix: true });
     if (!parsed.ok) continue;
     const event = parsed.event;
     events.push(event);
     if (!sessionId && event.session_id) sessionId = event.session_id;
-    if (event.type === "result" && event.stats) stats = event.stats;
+    if (event.type === "result") {
+      resultEvent = event;
+      if (event.stats) stats = event.stats;
+      if (!response.trim()) {
+        response += extractGeminiText(event);
+      }
+      continue;
+    }
     response += extractGeminiText(event);
   }
-  return { events, response, sessionId, stats };
+  return { events, response, sessionId, stats, resultEvent };
 }
 function parseGeminiJsonResult(stdout, stderr, status) {
   const text = String(stdout ?? "");
@@ -1138,11 +1180,14 @@ function runGeminiPromptStreaming({
       stderr: result.stderr,
       priority: ["stdout", "stderr", "file"]
     });
+    const resultError = typeof parsed.resultEvent?.error?.message === "string" ? parsed.resultEvent.error.message : typeof parsed.resultEvent?.error === "string" ? parsed.resultEvent.error : null;
+    const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-      error: result.ok ? null : result.error
+      ok: result.ok && !resultError && hasVisibleText,
+      error: result.ok ? resultError || (hasVisibleText ? null : "gemini produced no visible text") : result.error
     };
   });
 }
@@ -1959,6 +2004,36 @@ function collectOpenCodeContentText(content) {
   }
   return content.filter((block) => block && block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
 }
+function getOpenCodeResultError(event) {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  if (event.type === "error") {
+    if (typeof event.error?.message === "string" && event.error.message.trim()) {
+      return event.error.message;
+    }
+    if (typeof event.error === "string" && event.error.trim()) {
+      return event.error;
+    }
+    return "opencode returned an error";
+  }
+  if (event.type !== "result") {
+    return null;
+  }
+  if (typeof event.error?.message === "string" && event.error.message.trim()) {
+    return event.error.message;
+  }
+  if (typeof event.error === "string" && event.error.trim()) {
+    return event.error;
+  }
+  if (Number.isFinite(event.exitCode) && event.exitCode !== 0) {
+    return `opencode exited with code ${event.exitCode}`;
+  }
+  if (Number.isFinite(event.status) && event.status !== 0) {
+    return `opencode exited with code ${event.status}`;
+  }
+  return null;
+}
 function buildOpenCodeInvocation({
   prompt,
   model = null,
@@ -1997,9 +2072,7 @@ function extractOpenCodeText(event) {
   if (event.type === "text" && typeof event.part?.text === "string") {
     return event.part.text;
   }
-  if (typeof event.delta === "string") return event.delta;
-  if (typeof event.text === "string") return event.text;
-  if (typeof event.part?.text === "string") return event.part.text;
+  if (event.type === "message.delta" && typeof event.delta === "string") return event.delta;
   const role = event.role ?? event.message?.role ?? null;
   if (role && role !== "assistant") {
     return "";
@@ -2029,7 +2102,7 @@ function parseOpenCodeStreamText(text) {
     if (!model && typeof event.model === "string") model = event.model;
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (!model && typeof event.part?.model === "string") model = event.part.model;
-    if (event.type === "result") {
+    if (event.type === "result" || event.type === "error") {
       resultEvent = event;
       if (!response.trim()) {
         response += extractOpenCodeText(event);
@@ -2047,7 +2120,7 @@ function parseOpenCodeJsonResult(stdout, stderr, status) {
     stderr,
     priority: ["stdout", "stderr", "file"]
   });
-  const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
+  const resultError = getOpenCodeResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
   return {
     ok: status === 0 && !resultError && hasVisibleText,
@@ -2167,7 +2240,7 @@ function runOpenCodePromptStreaming({
       stderr: result.stderr,
       priority: ["stdout", "stderr", "file"]
     });
-    const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
+    const resultError = getOpenCodeResultError(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
@@ -2222,9 +2295,6 @@ function extractPiText(event) {
   }
   if (event.type === "agent_end" && typeof event.result?.text === "string") {
     return event.result.text;
-  }
-  if (typeof event.text === "string") {
-    return event.text;
   }
   const role = event.role ?? event.message?.role ?? null;
   if (role && role !== "assistant") {
@@ -2845,6 +2915,9 @@ function isTerminalSummaryEvent(provider, event) {
     return false;
   }
   if (provider === "qwen" || provider === "claude" || provider === "opencode") {
+    return event.type === "result";
+  }
+  if (provider === "gemini") {
     return event.type === "result";
   }
   if (provider === "copilot") {

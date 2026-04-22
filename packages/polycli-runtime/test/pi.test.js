@@ -77,6 +77,18 @@ test("parsePiStreamText captures top-level session envelope ids", () => {
   assert.equal(parsed.response, "OK");
 });
 
+test("parsePiStreamText ignores unrelated text fields", () => {
+  const parsed = parsePiStreamText(
+    [
+      '{"type":"tool_result","text":"ignore me"}',
+      '{"type":"agent_end","result":{"text":"done"}}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "done");
+  assert.equal(extractPiText({ type: "tool_result", text: "ignore me" }), "");
+});
+
 test("runPiPrompt returns parsed success payloads", () => {
   withFakePiBin(
     `#!/usr/bin/env node

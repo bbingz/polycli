@@ -66,6 +66,15 @@ test("runProviderPromptStreaming ignores duplicate terminal summary text for pro
       ],
     },
     {
+      provider: "gemini",
+      lines: [
+        '{"type":"init","session_id":"gemini-timing","model":"gemini-test"}',
+        '{"type":"message","role":"assistant","content":"hello "}',
+        '{"type":"message","role":"assistant","delta":"world"}',
+        '{"type":"result","text":"hello world","stats":{"turns":1}}',
+      ],
+    },
+    {
       provider: "pi",
       lines: [
         '{"type":"session_header","sessionId":"pi-timing","model":"pi-test"}',

@@ -86,6 +86,18 @@ test("parseOpenCodeStreamText handles step text events from the real cli", () =>
   );
 });
 
+test("parseOpenCodeStreamText ignores non-assistant text fields", () => {
+  const parsed = parseOpenCodeStreamText(
+    [
+      '{"type":"step_finish","text":"ignore me"}',
+      '{"type":"result","text":"done"}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "done");
+  assert.equal(extractOpenCodeText({ type: "step_finish", text: "ignore me" }), "");
+});
+
 test("parseOpenCodeJsonResult extracts final response from raw event output", () => {
   const parsed = parseOpenCodeJsonResult(
     [
@@ -186,4 +198,28 @@ test("runOpenCodePromptStreaming returns a structured failure on spawn error", a
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+});
+
+test("runOpenCodePromptStreaming captures standalone error events as terminal failures", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runOpenCodePromptStreaming({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"text","part":{"type":"text","text":"partial"}}\n');
+        child.stdout.emit("data", '{"type":"error","error":{"message":"permission denied"},"status":1}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response, "partial");
+  assert.equal(result.error, "permission denied");
 });

@@ -23,6 +23,37 @@ function collectOpenCodeContentText(content) {
     .join("");
 }
 
+function getOpenCodeResultError(event) {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  if (event.type === "error") {
+    if (typeof event.error?.message === "string" && event.error.message.trim()) {
+      return event.error.message;
+    }
+    if (typeof event.error === "string" && event.error.trim()) {
+      return event.error;
+    }
+    return "opencode returned an error";
+  }
+  if (event.type !== "result") {
+    return null;
+  }
+  if (typeof event.error?.message === "string" && event.error.message.trim()) {
+    return event.error.message;
+  }
+  if (typeof event.error === "string" && event.error.trim()) {
+    return event.error;
+  }
+  if (Number.isFinite(event.exitCode) && event.exitCode !== 0) {
+    return `opencode exited with code ${event.exitCode}`;
+  }
+  if (Number.isFinite(event.status) && event.status !== 0) {
+    return `opencode exited with code ${event.status}`;
+  }
+  return null;
+}
+
 export function buildOpenCodeInvocation({
   prompt,
   model = null,
@@ -65,9 +96,7 @@ export function extractOpenCodeText(event) {
   if (event.type === "text" && typeof event.part?.text === "string") {
     return event.part.text;
   }
-  if (typeof event.delta === "string") return event.delta;
-  if (typeof event.text === "string") return event.text;
-  if (typeof event.part?.text === "string") return event.part.text;
+  if (event.type === "message.delta" && typeof event.delta === "string") return event.delta;
 
   const role = event.role ?? event.message?.role ?? null;
   if (role && role !== "assistant") {
@@ -103,7 +132,7 @@ export function parseOpenCodeStreamText(text) {
     if (!model && typeof event.model === "string") model = event.model;
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (!model && typeof event.part?.model === "string") model = event.part.model;
-    if (event.type === "result") {
+    if (event.type === "result" || event.type === "error") {
       resultEvent = event;
       if (!response.trim()) {
         response += extractOpenCodeText(event);
@@ -124,9 +153,7 @@ export function parseOpenCodeJsonResult(stdout, stderr, status) {
     stderr,
     priority: ["stdout", "stderr", "file"],
   });
-  const resultError = parsed.resultEvent?.error
-    ? String(parsed.resultEvent.error)
-    : null;
+  const resultError = getOpenCodeResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
 
   return {
@@ -258,9 +285,7 @@ export function runOpenCodePromptStreaming({
       stderr: result.stderr,
       priority: ["stdout", "stderr", "file"],
     });
-    const resultError = parsed.resultEvent?.error
-      ? String(parsed.resultEvent.error)
-      : null;
+    const resultError = getOpenCodeResultError(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,

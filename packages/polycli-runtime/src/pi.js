@@ -56,9 +56,6 @@ export function extractPiText(event) {
   if (event.type === "agent_end" && typeof event.result?.text === "string") {
     return event.result.text;
   }
-  if (typeof event.text === "string") {
-    return event.text;
-  }
 
   const role = event.role ?? event.message?.role ?? null;
   if (role && role !== "assistant") {

@@ -21,6 +21,40 @@ function collectCopilotContentText(content) {
     .join("");
 }
 
+function getCopilotResultError(event) {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  if (event.type === "error") {
+    if (typeof event.error?.message === "string" && event.error.message.trim()) {
+      return event.error.message;
+    }
+    if (typeof event.error === "string" && event.error.trim()) {
+      return event.error;
+    }
+    return "copilot returned an error";
+  }
+  if (event.type !== "result" && event.type !== "final") {
+    return null;
+  }
+  if (event.is_error) {
+    return typeof event.result === "string" ? event.result : "copilot returned an error";
+  }
+  if (typeof event.error?.message === "string" && event.error.message.trim()) {
+    return event.error.message;
+  }
+  if (typeof event.error === "string" && event.error.trim()) {
+    return event.error;
+  }
+  if (event.exitCode && event.exitCode !== 0) {
+    return `copilot exited with code ${event.exitCode}`;
+  }
+  if (event.status && event.status !== 0) {
+    return `copilot exited with code ${event.status}`;
+  }
+  return null;
+}
+
 export function buildCopilotInvocation({
   prompt,
   model = null,
@@ -118,7 +152,7 @@ export function parseCopilotStreamText(text) {
       response = event.data.content;
       continue;
     }
-    if (event.type === "result" || event.type === "final") {
+    if (event.type === "result" || event.type === "final" || event.type === "error") {
       resultEvent = event;
       if (!response.trim()) {
         response += extractCopilotText(event);
@@ -191,11 +225,7 @@ export function runCopilotPrompt({
     stderr: result.stderr,
     priority: ["stdout", "stderr", "file"],
   });
-  const resultError = parsed.resultEvent?.is_error
-    ? (typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "copilot returned an error")
-    : (parsed.resultEvent?.exitCode && parsed.resultEvent.exitCode !== 0
-        ? `copilot exited with code ${parsed.resultEvent.exitCode}`
-        : null);
+  const resultError = getCopilotResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
 
   return {
@@ -255,11 +285,7 @@ export function runCopilotPromptStreaming({
       stderr: result.stderr,
       priority: ["stdout", "stderr", "file"],
     });
-    const resultError = parsed.resultEvent?.is_error
-      ? (typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "copilot returned an error")
-      : (parsed.resultEvent?.exitCode && parsed.resultEvent.exitCode !== 0
-          ? `copilot exited with code ${parsed.resultEvent.exitCode}`
-          : null);
+    const resultError = getCopilotResultError(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,

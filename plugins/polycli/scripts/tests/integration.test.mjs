@@ -99,7 +99,7 @@ const args = process.argv.slice(2);
   }
   process.stdout.write(JSON.stringify({ type: "init", session_id: "22222222-2222-2222-2222-222222222222", model: "gemini-test" }) + "\\n");
   if (delay > 0) await sleep(delay);
-  process.stdout.write(JSON.stringify({ type: "message", content: reply }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "message", role: "assistant", content: reply }) + "\\n");
   if (tailDelay > 0) await sleep(tailDelay);
   process.stdout.write(JSON.stringify({ type: "result", stats: { models: { "gemini-test": 1 } } }) + "\\n");
 })();

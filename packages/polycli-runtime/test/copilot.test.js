@@ -176,3 +176,27 @@ test("runCopilotPromptStreaming returns a structured failure on spawn error", as
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
 });
+
+test("runCopilotPromptStreaming captures standalone error events as terminal failures", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runCopilotPromptStreaming({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"assistant.message_delta","data":{"messageId":"m-1","deltaContent":"partial"}}\n');
+        child.stdout.emit("data", '{"type":"error","error":{"message":"permission denied"},"status":1}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response, "partial");
+  assert.equal(result.error, "permission denied");
+});

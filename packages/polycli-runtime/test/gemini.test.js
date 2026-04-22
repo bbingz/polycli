@@ -71,6 +71,18 @@ test("parseGeminiStreamText collects session id, stats, and assistant text", () 
   assert.equal(extractGeminiText({ type: "message", role: "user", content: "nope" }), "");
 });
 
+test("parseGeminiStreamText ignores non-assistant text fields", () => {
+  const parsed = parseGeminiStreamText(
+    [
+      '{"type":"system","text":"ignore me"}',
+      '{"type":"message","role":"assistant","content":"done"}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "done");
+  assert.equal(extractGeminiText({ type: "system", text: "ignore me" }), "");
+});
+
 test("runGeminiPromptStreaming returns a structured failure on spawn error", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -133,4 +145,27 @@ process.stdout.write(JSON.stringify({ response: "pong" }) + "\\n");
       assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
     }
   );
+});
+
+test("runGeminiPromptStreaming returns an explicit error when no visible assistant text is emitted", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runGeminiPromptStreaming({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"init","session_id":"gem-no-text"}\n');
+        child.stdout.emit("data", '{"type":"result","stats":{"turns":1}}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "gemini produced no visible text");
 });

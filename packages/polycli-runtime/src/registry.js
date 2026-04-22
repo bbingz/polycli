@@ -211,6 +211,9 @@ function isTerminalSummaryEvent(provider, event) {
   if (provider === "qwen" || provider === "claude" || provider === "opencode") {
     return event.type === "result";
   }
+  if (provider === "gemini") {
+    return event.type === "result";
+  }
   if (provider === "copilot") {
     return event.type === "assistant.message" || event.type === "result" || event.type === "final";
   }
