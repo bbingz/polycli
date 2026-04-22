@@ -1,0 +1,64 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { aggregateTimingRecords } from "../src/aggregate.js";
+
+test("aggregateTimingRecords keeps unsupported, missing, and zero separate", () => {
+  const summary = aggregateTimingRecords([
+    {
+      version: 1,
+      provider: "gemini",
+      runtimePersistence: "ephemeral",
+      measurementScope: "request",
+      completedAt: "2026-04-21T10:00:00.000Z",
+      metrics: {
+        cold: { status: "measured", ms: 1000 },
+        ttft: { status: "measured", ms: 500 },
+        gen: { status: "measured", ms: 2000 },
+        tool: { status: "zero", ms: 0 },
+        retry: { status: "zero", ms: 0 },
+        tail: { status: "measured", ms: 100 },
+        total: { status: "measured", ms: 3600 },
+      },
+    },
+    {
+      version: 1,
+      provider: "gemini",
+      runtimePersistence: "ephemeral",
+      measurementScope: "request",
+      completedAt: "2026-04-21T10:02:00.000Z",
+      metrics: {
+        cold: { status: "missing", ms: null },
+        ttft: { status: "measured", ms: 450 },
+        gen: { status: "measured", ms: 2100 },
+        tool: { status: "zero", ms: 0 },
+        retry: { status: "zero", ms: 0 },
+        tail: { status: "measured", ms: 120 },
+        total: { status: "measured", ms: 3670 },
+      },
+    },
+    {
+      version: 1,
+      provider: "minimax",
+      runtimePersistence: "session",
+      measurementScope: "job",
+      completedAt: "2026-04-21T10:03:00.000Z",
+      metrics: {
+        cold: { status: "unsupported", ms: null },
+        ttft: { status: "unsupported", ms: null },
+        gen: { status: "measured", ms: 9000 },
+        tool: { status: "missing", ms: null },
+        retry: { status: "unsupported", ms: null },
+        tail: { status: "measured", ms: 700 },
+        total: { status: "measured", ms: 9700 },
+      },
+    },
+  ]);
+
+  assert.equal(summary.recordCount, 3);
+  assert.equal(summary.byProvider.gemini.metrics.cold.contributingCount, 1);
+  assert.equal(summary.byProvider.gemini.metrics.cold.missingCount, 1);
+  assert.equal(summary.byProvider.gemini.metrics.tool.zeroCount, 2);
+  assert.equal(summary.byProvider.minimax.metrics.cold.unsupportedCount, 1);
+  assert.equal(summary.byProvider.minimax.metrics.tool.missingCount, 1);
+});

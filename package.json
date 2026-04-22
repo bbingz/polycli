@@ -1,0 +1,15 @@
+{
+  "name": "polycli",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test packages/polycli-utils/test/*.test.js packages/polycli-timing/test/*.test.js"
+  }
+}

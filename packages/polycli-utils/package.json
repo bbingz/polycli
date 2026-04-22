@@ -1,0 +1,15 @@
+{
+  "name": "@bbingz/polycli-utils",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./args": "./src/args.js",
+    "./process": "./src/process.js",
+    "./stream": "./src/stream.js",
+    "./atomic-save": "./src/atomic-save.js",
+    "./ndjson": "./src/ndjson.js",
+    "./session-id": "./src/session-id.js",
+    "./parse-stream-json": "./src/parse-stream-json.js"
+  }
+}

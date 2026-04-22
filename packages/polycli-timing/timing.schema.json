@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bbingz.dev/schemas/polycli/timing.schema.json",
+  "title": "Polycli Timing Record",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "version",
+    "provider",
+    "runtimePersistence",
+    "measurementScope",
+    "completedAt",
+    "metrics"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "providerVersion": {
+      "type": "string"
+    },
+    "runtimePersistence": {
+      "enum": ["ephemeral", "session", "daemon"]
+    },
+    "measurementScope": {
+      "enum": ["request", "turn", "job"]
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "meta": {
+      "type": "object"
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cold", "ttft", "gen", "tool", "retry", "tail", "total"],
+      "properties": {
+        "cold": { "$ref": "#/$defs/metric" },
+        "ttft": { "$ref": "#/$defs/metric" },
+        "gen": { "$ref": "#/$defs/metric" },
+        "tool": { "$ref": "#/$defs/metric" },
+        "retry": { "$ref": "#/$defs/metric" },
+        "tail": { "$ref": "#/$defs/metric" },
+        "total": { "$ref": "#/$defs/metric" }
+      }
+    }
+  },
+  "$defs": {
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "ms"],
+      "properties": {
+        "status": {
+          "enum": ["measured", "zero", "missing", "unsupported"]
+        },
+        "ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
