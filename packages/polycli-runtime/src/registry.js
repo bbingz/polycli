@@ -1,5 +1,17 @@
 import { PROVIDER_IDS, PROVIDER_OPERATION_NAMES } from "./constants.js";
 import {
+  getClaudeAvailability,
+  getClaudeAuthStatus,
+  runClaudePrompt,
+  runClaudePromptStreaming,
+} from "./claude.js";
+import {
+  getCopilotAvailability,
+  getCopilotAuthStatus,
+  runCopilotPrompt,
+  runCopilotPromptStreaming,
+} from "./copilot.js";
+import {
   getGeminiAvailability,
   getGeminiAuthStatus,
   runGeminiPrompt,
@@ -23,16 +35,58 @@ import {
   runMiniMaxPrompt,
   runMiniMaxPromptStreaming,
 } from "./minimax.js";
+import {
+  getOpenCodeAvailability,
+  getOpenCodeAuthStatus,
+  runOpenCodePrompt,
+  runOpenCodePromptStreaming,
+} from "./opencode.js";
+import {
+  getPiAvailability,
+  getPiAuthStatus,
+  runPiPrompt,
+  runPiPromptStreaming,
+} from "./pi.js";
 import { attachPromptTiming, extractProviderEventText } from "./timing.js";
 
 const TIMING_SUPPORT = {
+  claude: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
+  copilot: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   gemini: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   kimi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   qwen: { ttft: true, gen: true, tail: true, tool: true, runtimePersistence: "session" },
   minimax: { ttft: false, gen: false, tail: false, tool: false, runtimePersistence: "ephemeral" },
+  opencode: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
+  pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
 };
 
 const RUNTIMES = {
+  claude: {
+    id: "claude",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      operations: PROVIDER_OPERATION_NAMES,
+    },
+    getAvailability: getClaudeAvailability,
+    getAuthStatus: getClaudeAuthStatus,
+    runPrompt: runClaudePrompt,
+    runPromptStreaming: runClaudePromptStreaming,
+  },
+  copilot: {
+    id: "copilot",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      operations: PROVIDER_OPERATION_NAMES,
+    },
+    getAvailability: getCopilotAvailability,
+    getAuthStatus: getCopilotAuthStatus,
+    runPrompt: runCopilotPrompt,
+    runPromptStreaming: runCopilotPromptStreaming,
+  },
   gemini: {
     id: "gemini",
     capabilities: {
@@ -84,6 +138,32 @@ const RUNTIMES = {
     getAuthStatus: getMiniMaxAuthStatus,
     runPrompt: runMiniMaxPrompt,
     runPromptStreaming: runMiniMaxPromptStreaming,
+  },
+  opencode: {
+    id: "opencode",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      operations: PROVIDER_OPERATION_NAMES,
+    },
+    getAvailability: getOpenCodeAvailability,
+    getAuthStatus: getOpenCodeAuthStatus,
+    runPrompt: runOpenCodePrompt,
+    runPromptStreaming: runOpenCodePromptStreaming,
+  },
+  pi: {
+    id: "pi",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      operations: PROVIDER_OPERATION_NAMES,
+    },
+    getAvailability: getPiAvailability,
+    getAuthStatus: getPiAuthStatus,
+    runPrompt: runPiPrompt,
+    runPromptStreaming: runPiPromptStreaming,
   },
 };
 

@@ -2,8 +2,12 @@
 
 `@bbingz/polycli-runtime` 是 `polycli v2` 的 provider runtime 集成层。
 
-它提供四家 adapter：
+它提供八家 adapter：
 
+- `claude`
+- `copilot`
+- `opencode`
+- `pi`
 - `gemini`
 - `kimi`
 - `qwen`
@@ -25,7 +29,7 @@
 - 持久化 job state
 - background job orchestration
 - command markdown / prompt 模板
-- 把四家硬压成同一种协议
+- 把多家 provider 硬压成同一种协议
 
 ## Public Surface
 
@@ -49,27 +53,45 @@ Provider registry 常量：
 
 Provider-specific helpers：
 
+- `buildClaudeInvocation()`
+- `buildCopilotInvocation()`
 - `buildGeminiInvocation()`
 - `buildKimiInvocation()`
 - `buildQwenInvocation()`
 - `buildQwenEnv()`
 - `buildMiniMaxInvocation()`
+- `buildOpenCodeInvocation()`
+- `buildPiInvocation()`
+- `parseClaudeJsonResult()`
+- `parseClaudeStreamText()`
+- `parseCopilotStreamText()`
 - `parseGeminiStreamText()`
 - `parseKimiStreamText()`
 - `parseQwenStreamText()`
 - `parseMiniMaxResponseBlocks()`
+- `parseOpenCodeJsonResult()`
+- `parseOpenCodeStreamText()`
+- `parsePiStreamText()`
 - `extractMiniMaxResponseFromLogText()`
 - `extractMiniMaxLogPath()`
+- `extractClaudeText()`
+- `extractCopilotText()`
 - `extractGeminiText()`
 - `extractKimiText()`
+- `extractOpenCodeText()`
+- `extractPiText()`
 - `stripAnsiSgr()`
 
 Provider-specific runtime methods：
 
+- `getClaudeAvailability()` / `getClaudeAuthStatus()` / `runClaudePrompt()` / `runClaudePromptStreaming()`
+- `getCopilotAvailability()` / `getCopilotAuthStatus()` / `runCopilotPrompt()` / `runCopilotPromptStreaming()`
 - `getGeminiAvailability()` / `getGeminiAuthStatus()` / `runGeminiPrompt()` / `runGeminiPromptStreaming()`
 - `getKimiAvailability()` / `getKimiAuthStatus()` / `runKimiPrompt()` / `runKimiPromptStreaming()`
 - `getQwenAvailability()` / `getQwenAuthStatus()` / `runQwenPrompt()` / `runQwenPromptStreaming()`
 - `getMiniMaxAvailability()` / `getMiniMaxAuthStatus()` / `runMiniMaxPrompt()` / `runMiniMaxPromptStreaming()`
+- `getOpenCodeAvailability()` / `getOpenCodeAuthStatus()` / `runOpenCodePrompt()` / `runOpenCodePromptStreaming()`
+- `getPiAvailability()` / `getPiAuthStatus()` / `runPiPrompt()` / `runPiPromptStreaming()`
 
 ## Example
 

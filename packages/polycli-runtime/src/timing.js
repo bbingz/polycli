@@ -1,9 +1,13 @@
 import { TIMING_SCHEMA_VERSION, validateTimingRecord } from "@bbingz/polycli-timing";
 
+import { extractClaudeText } from "./claude.js";
+import { extractCopilotText } from "./copilot.js";
 import { extractGeminiText } from "./gemini.js";
 import { extractKimiText } from "./kimi.js";
 import { extractQwenText } from "./qwen.js";
 import { extractMiniMaxEventText } from "./minimax.js";
+import { extractOpenCodeText } from "./opencode.js";
+import { extractPiText } from "./pi.js";
 
 function measuredOrZero(ms) {
   if (!Number.isFinite(ms) || ms < 0) {
@@ -34,10 +38,14 @@ function capabilityMetric(ms, supported) {
 }
 
 export function extractProviderEventText(provider, event) {
+  if (provider === "claude") return extractClaudeText(event);
+  if (provider === "copilot") return extractCopilotText(event);
   if (provider === "gemini") return extractGeminiText(event);
   if (provider === "kimi") return extractKimiText(event);
   if (provider === "qwen") return extractQwenText(event);
   if (provider === "minimax") return extractMiniMaxEventText(event);
+  if (provider === "opencode") return extractOpenCodeText(event);
+  if (provider === "pi") return extractPiText(event);
   return "";
 }
 

@@ -8,8 +8,8 @@ import {
   listProviderRuntimes,
 } from "../src/index.js";
 
-test("provider registry exposes the four integrated runtimes", () => {
-  assert.deepEqual(PROVIDER_IDS, ["gemini", "kimi", "qwen", "minimax"]);
+test("provider registry exposes the eight integrated runtimes", () => {
+  assert.deepEqual(PROVIDER_IDS, ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi"]);
   assert.deepEqual(PROVIDER_OPERATION_NAMES, ["prompt"]);
 
   const runtimes = listProviderRuntimes();

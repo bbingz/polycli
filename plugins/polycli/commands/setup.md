@@ -1,6 +1,6 @@
 ---
 description: Check which polycli providers are installed and authenticated
-argument-hint: '[--provider <gemini|kimi|qwen|minimax>]'
+argument-hint: '[--provider <claude|copilot|opencode|pi|gemini|kimi|qwen|minimax>]'
 allowed-tools: Bash(node:*)
 ---
 

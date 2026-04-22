@@ -8,6 +8,22 @@ test("resolveProvider accepts explicit option", () => {
     resolveProvider({ provider: "qwen", positionals: ["hello"] }),
     { provider: "qwen", remainingPositionals: ["hello"] }
   );
+  assert.deepEqual(
+    resolveProvider({ provider: "claude", positionals: ["hello"] }),
+    { provider: "claude", remainingPositionals: ["hello"] }
+  );
+  assert.deepEqual(
+    resolveProvider({ provider: "copilot", positionals: ["hello"] }),
+    { provider: "copilot", remainingPositionals: ["hello"] }
+  );
+  assert.deepEqual(
+    resolveProvider({ provider: "opencode", positionals: ["hello"] }),
+    { provider: "opencode", remainingPositionals: ["hello"] }
+  );
+  assert.deepEqual(
+    resolveProvider({ provider: "pi", positionals: ["hello"] }),
+    { provider: "pi", remainingPositionals: ["hello"] }
+  );
 });
 
 test("resolveProvider accepts provider as first positional", () => {

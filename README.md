@@ -18,7 +18,7 @@
 - `@bbingz/polycli-runtime`
 - multi-host plugin adapters (`Claude` / `Codex` / `Copilot` / `OpenCode`)
 
-`v1` 阶段只有前两个包；从 `v2` 开始，`gemini` / `kimi` / `qwen` / `minimax` 的 runtime adapter 已经进入本仓，集中在 `@bbingz/polycli-runtime`。旧 4 个 plugin repo 仍然是 reference implementation，不再作为运行依赖。
+`v1` 阶段只有前两个包；从 `v2` 开始，`claude` / `copilot` / `opencode` / `pi` / `gemini` / `kimi` / `qwen` / `minimax` 的 runtime adapter 已经进入本仓，集中在 `@bbingz/polycli-runtime`。旧 4 个 plugin repo 仍然是 reference implementation，不再作为运行依赖。
 
 ## Packages
 
@@ -39,7 +39,7 @@
 
 - `@bbingz/polycli-runtime`
   - provider registry
-  - `gemini` / `kimi` / `qwen` / `minimax` runtime adapter
+  - `claude` / `copilot` / `opencode` / `pi` / `gemini` / `kimi` / `qwen` / `minimax` runtime adapter
   - availability / auth probes
   - prompt args builder
   - prompt-level foreground / streaming runtime execution

@@ -24,30 +24,59 @@ Note:
 
 - npm registry read-after-write may briefly lag immediately after the first publish of a new scoped package.
 
-## Current Post-release Head
+## Current Post-release Work
 
-Current repo head after stabilization work:
+The public release is still `v0.3.0`, but the local post-release work now extends beyond the original stabilization pass.
 
-- commit: `4d4c684`
-- message: `fix: harden qwen and kimi review flows`
+Current runtime scope in-repo:
 
-This commit is newer than the current public release artifacts and records post-release hardening work, mainly around:
+- `claude`
+- `copilot`
+- `opencode`
+- `pi`
+- `gemini`
+- `kimi`
+- `qwen`
+- `minimax`
 
-- `qwen` / `kimi` review parser edge cases
-- foreground/background review parity
-- background job preview behavior
-- timing correctness for `qwen result-only` flows
-- expanded runtime and integration coverage
+Current host scope:
 
-Verification status for this post-release head:
+- `Claude` marketplace plugin
+- `Codex` marketplace plugin
+- `Copilot` marketplace plugin
+- `OpenCode` npm package
+
+Model selection behavior remains intentionally simple:
+
+- every provider uses the underlying CLI default model unless `--model` is explicitly passed through runtime options
+
+Latest hardening work fixed issues found by running real provider review / ask flows against the new adapters:
+
+- `claude`
+  - `stream-json` mode now adds `--verbose`, matching the real CLI requirement
+  - JSON-mode success now respects the process exit status and no longer reports `ok: true` on non-zero exits
+- `copilot`
+  - parser now accepts the real `assistant.message_delta` / `assistant.message` event schema
+  - final answers emitted via `data.content` are preserved instead of being treated as empty output
+- `opencode`
+  - parser now accepts the real `type: "text"` / `part.text` event schema
+  - session IDs emitted as `sessionID` are now captured correctly
+- integration fakes
+  - fake provider binaries now model these real event shapes more closely, so regressions are caught in CI instead of only in live runs
+
+Verification status for the current post-release work:
 
 - `npm test`
-  - `90` passed
+  - `112` passed
   - `0` failed
-- final multi-way retest:
-  - static review: `No issues found.`
-  - real `qwen review` foreground/background: passed
-  - real `kimi review` foreground/background: passed
+- focused runtime regression tests:
+  - `node --test packages/polycli-runtime/test/claude.test.js packages/polycli-runtime/test/copilot.test.js packages/polycli-runtime/test/opencode.test.js`
+  - `15` passed
+  - `0` failed
+- real bundled-companion smoke asks:
+  - `claude`: passed, returned `OK`
+  - `copilot`: passed, returned `OK`
+  - `opencode`: passed, returned `OK`
 
 ## Pre-release
 

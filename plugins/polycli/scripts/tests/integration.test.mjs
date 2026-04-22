@@ -216,6 +216,166 @@ process.stdout.write("Log file: " + logPath + "\\n");
   };
 }
 
+function createFakeClaudeBin() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-fake-claude-"));
+  const bin = path.join(root, "claude");
+  fs.writeFileSync(
+    bin,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const args = process.argv.slice(2);
+if (args.includes("--version")) {
+  process.stdout.write("claude 0.0.0-test\\n");
+  process.exit(0);
+}
+const readArg = (name) => {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : null;
+};
+const outputFormat = readArg("--output-format") || "text";
+const hasVerbose = args.includes("--verbose");
+const promptIndex = args.indexOf("-p");
+const prompt = promptIndex >= 0 && args[promptIndex + 1] && !args[promptIndex + 1].startsWith("-")
+  ? args[promptIndex + 1]
+  : fs.readFileSync(0, "utf8");
+const delayMatch = prompt.match(/__delay=(\\d+)/);
+const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : 0;
+const tailDelayMatch = prompt.match(/__tail=(\\d+)/);
+const tailDelay = tailDelayMatch ? Number.parseInt(tailDelayMatch[1], 10) : 0;
+const replyMatch = prompt.match(/__reply=([^\\n]+)/);
+const reply = replyMatch ? replyMatch[1] : (prompt || "ping");
+if (outputFormat === "json") {
+  process.stdout.write(JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: reply,
+    session_id: "44444444-4444-4444-8444-444444444444",
+    duration_ms: 321
+  }) + "\\n");
+  process.exit(0);
+}
+if (outputFormat === "stream-json" && !hasVerbose) {
+  process.stderr.write("Error: When using --print, --output-format=stream-json requires --verbose\\n");
+  process.exit(1);
+}
+(async () => {
+  process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "44444444-4444-4444-8444-444444444444", model: "claude-test" }) + "\\n");
+  if (delay > 0) await sleep(delay);
+  process.stdout.write(JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: reply }] } }) + "\\n");
+  if (tailDelay > 0) await sleep(tailDelay);
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: reply, session_id: "44444444-4444-4444-8444-444444444444", duration_ms: 654 }) + "\\n");
+})();
+`,
+    { mode: 0o755 }
+  );
+  return {
+    root,
+    bin,
+    cleanup() {
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+function createFakeCopilotBin() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-fake-copilot-"));
+  const bin = path.join(root, "copilot");
+  fs.writeFileSync(
+    bin,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes("--version") || args.includes("-v")) {
+  process.stdout.write("copilot 0.0.0-test\\n");
+  process.exit(0);
+}
+const readArg = (name) => {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : null;
+};
+const prompt = readArg("-p") || readArg("--prompt") || "ping";
+const replyMatch = prompt.match(/__reply=([^\\n]+)/);
+const reply = replyMatch ? replyMatch[1] : prompt;
+const sessionId = "55555555-5555-4555-8555-555555555555";
+process.stdout.write(JSON.stringify({ type: "session_start", sessionId, model: "copilot-test" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "assistant.message_delta", data: { messageId: "copilot-msg-1", deltaContent: reply.slice(0, Math.max(1, Math.floor(reply.length / 2))) } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "assistant.message", data: { messageId: "copilot-msg-1", content: reply, phase: "final_answer" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", sessionId, exitCode: 0 }) + "\\n");
+`,
+    { mode: 0o755 }
+  );
+  return {
+    root,
+    bin,
+    cleanup() {
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+function createFakeOpenCodeBin() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-fake-opencode-"));
+  const bin = path.join(root, "opencode");
+  fs.writeFileSync(
+    bin,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes("--version") || args.includes("-v")) {
+  process.stdout.write("opencode 0.0.0-test\\n");
+  process.exit(0);
+}
+if (args[0] !== "run") {
+  process.stderr.write("expected run\\n");
+  process.exit(1);
+}
+const prompt = args[1] || "ping";
+const replyMatch = prompt.match(/__reply=([^\\n]+)/);
+const reply = replyMatch ? replyMatch[1] : prompt;
+process.stdout.write(JSON.stringify({ type: "step_start", sessionID: "open-555", part: { sessionID: "open-555", type: "step-start" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "text", sessionID: "open-555", part: { sessionID: "open-555", type: "text", text: reply } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "step_finish", sessionID: "open-555", part: { sessionID: "open-555", type: "step-finish", reason: "stop" } }) + "\\n");
+`,
+    { mode: 0o755 }
+  );
+  return {
+    root,
+    bin,
+    cleanup() {
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+function createFakePiBin() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-fake-pi-"));
+  const bin = path.join(root, "pi");
+  fs.writeFileSync(
+    bin,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes("--version") || args.includes("-v")) {
+  process.stdout.write("pi 0.0.0-test\\n");
+  process.exit(0);
+}
+const prompt = args.at(-1) || "ping";
+const replyMatch = prompt.match(/__reply=([^\\n]+)/);
+const reply = replyMatch ? replyMatch[1] : prompt;
+process.stdout.write(JSON.stringify({ type: "session_header", sessionId: "pi-555", model: "pi-test" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: reply } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: reply } }) + "\\n");
+`,
+    { mode: 0o755 }
+  );
+  return {
+    root,
+    bin,
+    cleanup() {
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
 function cleanEnv(extra = {}) {
   const env = {};
   for (const key of ["PATH", "HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"]) {
@@ -554,6 +714,70 @@ test("integration: setup and ask succeed for minimax via bundled companion", asy
     assert.equal(askPayload.timing.metrics.ttft.status, "unsupported");
     assert.equal(askPayload.timing.metrics.gen.status, "unsupported");
     assert.equal(askPayload.timing.metrics.tail.status, "unsupported");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: setup and ask succeed for claude via bundled companion", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeClaudeBin();
+  try {
+    const askPayload = await assertSetupAndAsk("claude", cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      CLAUDE_CLI_BIN: fake.bin,
+    }), "__delay=15 __tail=20 __reply=PONG");
+    assert.equal(askPayload.timing.runtimePersistence, "session");
+    assert.equal(askPayload.timing.metrics.ttft.status, "measured");
+    assert.equal(askPayload.timing.metrics.gen.status, "measured");
+    assert.equal(askPayload.timing.metrics.tail.status, "measured");
+    assert.equal(askPayload.timing.metrics.tool.status, "unsupported");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: setup and ask succeed for copilot via bundled companion", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeCopilotBin();
+  try {
+    const askPayload = await assertSetupAndAsk("copilot", cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      COPILOT_CLI_BIN: fake.bin,
+    }));
+    assert.equal(askPayload.timing.runtimePersistence, "session");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: setup and ask succeed for opencode via bundled companion", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeOpenCodeBin();
+  try {
+    const askPayload = await assertSetupAndAsk("opencode", cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      OPENCODE_CLI_BIN: fake.bin,
+    }));
+    assert.equal(askPayload.timing.runtimePersistence, "session");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: setup and ask succeed for pi via bundled companion", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakePiBin();
+  try {
+    const askPayload = await assertSetupAndAsk("pi", cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      PI_CLI_BIN: fake.bin,
+    }));
+    assert.equal(askPayload.timing.runtimePersistence, "session");
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });

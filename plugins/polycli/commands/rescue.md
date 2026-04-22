@@ -1,6 +1,6 @@
 ---
 description: Run a long provider-backed task through polycli, in foreground or background
-argument-hint: '--provider <gemini|kimi|qwen|minimax> [--model <model>] [--background] <prompt>'
+argument-hint: '--provider <claude|copilot|opencode|pi|gemini|kimi|qwen|minimax> [--model <model>] [--background] <prompt>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---

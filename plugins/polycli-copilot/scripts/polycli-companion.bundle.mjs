@@ -73,7 +73,7 @@ function parseArgs(argv, config = {}) {
 }
 
 // packages/polycli-runtime/src/constants.js
-var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax"];
+var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi"];
 var PROVIDER_OPERATION_NAMES = ["prompt"];
 
 // packages/polycli-utils/src/parse-stream-json.js
@@ -392,11 +392,469 @@ function spawnStreamingCommand({
   });
 }
 
-// packages/polycli-runtime/src/gemini.js
-var GEMINI_BIN = process.env.GEMINI_CLI_BIN || "gemini";
-var DEFAULT_TIMEOUT_MS = 3e5;
+// packages/polycli-runtime/src/claude.js
+var CLAUDE_BIN = process.env.CLAUDE_CLI_BIN || "claude";
+var DEFAULT_TIMEOUT_MS = 9e5;
 var AUTH_CHECK_TIMEOUT_MS = 3e4;
 var PROMPT_STDIN_THRESHOLD = 1e5;
+function collectTextFromContent(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content.filter((block) => block && block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+}
+function buildClaudeInvocation({
+  prompt,
+  model = null,
+  outputFormat = "json",
+  permissionMode = "acceptEdits",
+  maxTurns = 10,
+  resumeSessionId = null,
+  extraArgs = [],
+  bin = CLAUDE_BIN
+} = {}) {
+  const promptText = String(prompt ?? "");
+  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD;
+  const args = ["-p"];
+  if (!useStdin) {
+    args.push(promptText);
+  }
+  args.push("--output-format", outputFormat);
+  if (outputFormat === "stream-json") {
+    args.push("--verbose");
+  }
+  if (permissionMode) {
+    args.push("--permission-mode", permissionMode);
+  }
+  if (Number.isFinite(maxTurns) && maxTurns > 0) {
+    args.push("--max-turns", String(maxTurns));
+  }
+  if (model) {
+    args.push("--model", model);
+  }
+  if (resumeSessionId) {
+    args.push("--resume", resumeSessionId);
+  }
+  if (extraArgs.length > 0) {
+    args.push(...extraArgs);
+  }
+  return {
+    bin,
+    args,
+    input: useStdin ? promptText : void 0,
+    useStdin
+  };
+}
+function extractClaudeText(event) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+  if (event.type === "result" && event.is_error !== true && event.subtype !== "error" && typeof event.result === "string") {
+    return event.result;
+  }
+  if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+    return typeof event.delta.text === "string" ? event.delta.text : "";
+  }
+  const role = event.role ?? event.message?.role ?? null;
+  if (role && role !== "assistant") {
+    return "";
+  }
+  if (typeof event.text === "string") {
+    return event.text;
+  }
+  return collectTextFromContent(event.content ?? event.message?.content);
+}
+function parseClaudeStreamText(text) {
+  const events = [];
+  let response = "";
+  let sessionId = null;
+  let resultEvent = null;
+  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+    const parsed = parseStreamJsonLine(rawLine, { allowPrefix: true });
+    if (!parsed.ok) continue;
+    const event = parsed.event;
+    events.push(event);
+    if (!sessionId && typeof event.session_id === "string") {
+      sessionId = event.session_id;
+    }
+    if (!sessionId && typeof event.sessionId === "string") {
+      sessionId = event.sessionId;
+    }
+    if (event.type === "result") {
+      resultEvent = event;
+      if (!response.trim()) {
+        response += extractClaudeText(event);
+      }
+      continue;
+    }
+    response += extractClaudeText(event);
+  }
+  return {
+    events,
+    response,
+    sessionId,
+    resultEvent
+  };
+}
+function parseClaudeJsonResult(stdout, stderr, status) {
+  const text = String(stdout ?? "");
+  const jsonStart = text.indexOf("{");
+  if (jsonStart < 0) {
+    return {
+      ok: false,
+      error: String(stderr ?? "").trim() || `claude exited with code ${status}`,
+      status
+    };
+  }
+  try {
+    const parsed = JSON.parse(text.slice(jsonStart));
+    const response = typeof parsed.result === "string" ? parsed.result : "";
+    const sessionId = parsed.session_id ?? parsed.sessionId ?? null;
+    const errorText = parsed.error?.message || (parsed.is_error ? typeof parsed.result === "string" ? parsed.result : "claude returned an error" : null);
+    const processError = status === 0 ? null : String(stderr ?? "").trim() || `claude exited with code ${status}`;
+    return {
+      ok: status === 0 && !parsed.is_error,
+      response,
+      sessionId,
+      durationMs: parsed.duration_ms ?? null,
+      totalCostUsd: parsed.total_cost_usd ?? null,
+      status,
+      error: parsed.is_error ? errorText : processError
+    };
+  } catch (error) {
+    return { ok: false, error: `JSON parse failed: ${error.message}`, status };
+  }
+}
+function getClaudeAvailability(cwd) {
+  return binaryAvailable(CLAUDE_BIN, ["--version"], { cwd });
+}
+function getClaudeAuthStatus(cwd) {
+  const result = runClaudePrompt({
+    prompt: "ping",
+    cwd,
+    timeout: AUTH_CHECK_TIMEOUT_MS
+  });
+  if (!result.ok) {
+    return { loggedIn: false, detail: result.error };
+  }
+  return {
+    loggedIn: true,
+    detail: "authenticated",
+    model: null
+  };
+}
+function runClaudePrompt({
+  prompt,
+  model = null,
+  permissionMode = "acceptEdits",
+  maxTurns = 10,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS,
+  extraArgs = [],
+  resumeSessionId = null,
+  bin = CLAUDE_BIN
+} = {}) {
+  const invocation = buildClaudeInvocation({
+    prompt,
+    model,
+    outputFormat: "json",
+    permissionMode,
+    maxTurns,
+    resumeSessionId,
+    extraArgs,
+    bin
+  });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    input: invocation.input
+  });
+  if (result.error) {
+    return {
+      ok: false,
+      error: result.error.code === "ETIMEDOUT" ? `claude timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+    };
+  }
+  return parseClaudeJsonResult(result.stdout, result.stderr, result.status);
+}
+function runClaudePromptStreaming({
+  prompt,
+  model = null,
+  permissionMode = "acceptEdits",
+  maxTurns = 10,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS,
+  extraArgs = [],
+  resumeSessionId = null,
+  onEvent = () => {
+  },
+  bin = CLAUDE_BIN,
+  spawnImpl
+} = {}) {
+  const invocation = buildClaudeInvocation({
+    prompt,
+    model,
+    outputFormat: "stream-json",
+    permissionMode,
+    maxTurns,
+    resumeSessionId,
+    extraArgs,
+    bin
+  });
+  return spawnStreamingCommand({
+    bin: invocation.bin,
+    args: invocation.args,
+    cwd,
+    env: { ...process.env },
+    input: invocation.input,
+    timeout,
+    spawnImpl,
+    onStdoutLine(line) {
+      const parsed = parseStreamJsonLine(line, { allowPrefix: true });
+      if (parsed.ok) {
+        try {
+          onEvent(parsed.event);
+        } catch {
+        }
+      }
+    }
+  }).then((result) => {
+    const parsed = parseClaudeStreamText(result.stdout);
+    const hasVisibleText = Boolean(parsed.response.trim());
+    const resultError = parsed.resultEvent?.is_error ? typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "claude returned an error" : null;
+    return {
+      ...result,
+      ...parsed,
+      ok: result.ok && !resultError && hasVisibleText,
+      error: result.ok ? resultError || (hasVisibleText ? null : "claude produced no visible text") : result.error
+    };
+  });
+}
+
+// packages/polycli-runtime/src/copilot.js
+var COPILOT_BIN = process.env.COPILOT_CLI_BIN || "copilot";
+var DEFAULT_TIMEOUT_MS2 = 9e5;
+var AUTH_CHECK_TIMEOUT_MS2 = 3e4;
+function collectCopilotContentText(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content.filter((block) => block && block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+}
+function buildCopilotInvocation({
+  prompt,
+  model = null,
+  outputFormat = "json",
+  stream = "off",
+  resumeSessionId = null,
+  continueLast = false,
+  extraArgs = [],
+  bin = COPILOT_BIN
+} = {}) {
+  const args = [
+    "-p",
+    String(prompt ?? ""),
+    "--output-format",
+    outputFormat,
+    "--stream",
+    stream,
+    "--allow-all-tools",
+    "--allow-all-paths",
+    "--allow-all-urls",
+    "--no-ask-user"
+  ];
+  if (model) {
+    args.push("--model", model);
+  }
+  if (resumeSessionId) {
+    args.push("--resume", resumeSessionId);
+  } else if (continueLast) {
+    args.push("--continue");
+  }
+  if (extraArgs.length > 0) {
+    args.push(...extraArgs);
+  }
+  return { bin, args };
+}
+function extractCopilotText(event) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+  if (event.type === "assistant.message_delta" && typeof event.data?.deltaContent === "string") {
+    return event.data.deltaContent;
+  }
+  if (event.type === "assistant.message" && typeof event.data?.content === "string") {
+    return event.data.content;
+  }
+  if ((event.type === "result" || event.type === "final") && typeof event.result === "string") {
+    return event.result;
+  }
+  const role = event.role ?? event.message?.role ?? null;
+  if (role && role !== "assistant") {
+    return "";
+  }
+  if (typeof event.delta === "string") return event.delta;
+  if (typeof event.text === "string") return event.text;
+  return collectCopilotContentText(event.content ?? event.message?.content);
+}
+function parseCopilotStreamText(text) {
+  const events = [];
+  let response = "";
+  let sessionId = null;
+  let model = null;
+  let resultEvent = null;
+  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("{")) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    events.push(event);
+    if (!sessionId && typeof event.sessionId === "string") sessionId = event.sessionId;
+    if (!sessionId && typeof event.session_id === "string") sessionId = event.session_id;
+    if (!sessionId && typeof event.session?.id === "string") sessionId = event.session.id;
+    if (!sessionId && typeof event.data?.sessionId === "string") sessionId = event.data.sessionId;
+    if (!model && typeof event.model === "string") model = event.model;
+    if (!model && typeof event.session?.model === "string") model = event.session.model;
+    if (!model && typeof event.data?.model === "string") model = event.data.model;
+    if (event.type === "assistant.message" && typeof event.data?.content === "string") {
+      response = event.data.content;
+      continue;
+    }
+    if (event.type === "result" || event.type === "final") {
+      resultEvent = event;
+      if (!response.trim()) {
+        response += extractCopilotText(event);
+      }
+      continue;
+    }
+    response += extractCopilotText(event);
+  }
+  return { events, response, sessionId, model, resultEvent };
+}
+function getCopilotAvailability(cwd) {
+  return binaryAvailable(COPILOT_BIN, ["--version"], { cwd });
+}
+function getCopilotAuthStatus(cwd) {
+  const result = runCopilotPrompt({
+    prompt: "ping",
+    cwd,
+    timeout: AUTH_CHECK_TIMEOUT_MS2
+  });
+  if (!result.ok) {
+    return { loggedIn: false, detail: result.error };
+  }
+  return {
+    loggedIn: true,
+    detail: "authenticated",
+    model: result.model ?? null
+  };
+}
+function runCopilotPrompt({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS2,
+  extraArgs = [],
+  resumeSessionId = null,
+  continueLast = false,
+  bin = COPILOT_BIN
+} = {}) {
+  const invocation = buildCopilotInvocation({
+    prompt,
+    model,
+    outputFormat: "json",
+    stream: "off",
+    resumeSessionId,
+    continueLast,
+    extraArgs,
+    bin
+  });
+  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  if (result.error) {
+    return {
+      ok: false,
+      error: result.error.code === "ETIMEDOUT" ? `copilot timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+    };
+  }
+  const parsed = parseCopilotStreamText(result.stdout);
+  const resultError = parsed.resultEvent?.is_error ? typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "copilot returned an error" : parsed.resultEvent?.exitCode && parsed.resultEvent.exitCode !== 0 ? `copilot exited with code ${parsed.resultEvent.exitCode}` : null;
+  const hasVisibleText = Boolean(parsed.response.trim());
+  return {
+    ok: result.status === 0 && !resultError && hasVisibleText,
+    response: parsed.response,
+    events: parsed.events,
+    sessionId: parsed.sessionId,
+    model: parsed.model,
+    error: result.status === 0 ? resultError || (hasVisibleText ? null : "copilot produced no visible text") : result.stderr.trim() || result.stdout.trim() || `copilot exited with code ${result.status}`,
+    status: result.status
+  };
+}
+function runCopilotPromptStreaming({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS2,
+  extraArgs = [],
+  resumeSessionId = null,
+  continueLast = false,
+  onEvent = () => {
+  },
+  bin = COPILOT_BIN,
+  spawnImpl
+} = {}) {
+  const invocation = buildCopilotInvocation({
+    prompt,
+    model,
+    outputFormat: "json",
+    stream: "on",
+    resumeSessionId,
+    continueLast,
+    extraArgs,
+    bin
+  });
+  return spawnStreamingCommand({
+    bin: invocation.bin,
+    args: invocation.args,
+    cwd,
+    env: { ...process.env },
+    timeout,
+    spawnImpl,
+    onStdoutLine(line) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("{")) return;
+      try {
+        onEvent(JSON.parse(trimmed));
+      } catch {
+      }
+    }
+  }).then((result) => {
+    const parsed = parseCopilotStreamText(result.stdout);
+    const resultError = parsed.resultEvent?.is_error ? typeof parsed.resultEvent.result === "string" ? parsed.resultEvent.result : "copilot returned an error" : parsed.resultEvent?.exitCode && parsed.resultEvent.exitCode !== 0 ? `copilot exited with code ${parsed.resultEvent.exitCode}` : null;
+    const hasVisibleText = Boolean(parsed.response.trim());
+    return {
+      ...result,
+      ...parsed,
+      ok: result.ok && !resultError && hasVisibleText,
+      error: result.ok ? resultError || (hasVisibleText ? null : "copilot produced no visible text") : result.error
+    };
+  });
+}
+
+// packages/polycli-runtime/src/gemini.js
+var GEMINI_BIN = process.env.GEMINI_CLI_BIN || "gemini";
+var DEFAULT_TIMEOUT_MS3 = 3e5;
+var AUTH_CHECK_TIMEOUT_MS3 = 3e4;
+var PROMPT_STDIN_THRESHOLD2 = 1e5;
 function buildGeminiInvocation({
   prompt,
   model = null,
@@ -406,7 +864,7 @@ function buildGeminiInvocation({
   extraArgs = [],
   bin = GEMINI_BIN
 } = {}) {
-  const useStdin = String(prompt ?? "").length > PROMPT_STDIN_THRESHOLD;
+  const useStdin = String(prompt ?? "").length > PROMPT_STDIN_THRESHOLD2;
   const args = ["-p", useStdin ? "" : String(prompt ?? ""), "-o", outputFormat];
   if (model) args.push("-m", model);
   args.push("--approval-mode", approvalMode);
@@ -483,7 +941,7 @@ function getGeminiAuthStatus(cwd) {
   const test = runGeminiPrompt({
     prompt: "ping",
     cwd,
-    timeout: AUTH_CHECK_TIMEOUT_MS
+    timeout: AUTH_CHECK_TIMEOUT_MS3
   });
   if (!test.ok) {
     return { loggedIn: false, detail: test.error };
@@ -499,7 +957,7 @@ function runGeminiPrompt({
   model = null,
   approvalMode = "plan",
   cwd,
-  timeout = DEFAULT_TIMEOUT_MS,
+  timeout = DEFAULT_TIMEOUT_MS3,
   extraArgs = [],
   resumeSessionId = null,
   bin = GEMINI_BIN
@@ -531,7 +989,7 @@ function runGeminiPromptStreaming({
   model = null,
   approvalMode = "plan",
   cwd,
-  timeout = DEFAULT_TIMEOUT_MS,
+  timeout = DEFAULT_TIMEOUT_MS3,
   extraArgs = [],
   resumeSessionId = null,
   onEvent = () => {
@@ -614,8 +1072,8 @@ function resolveSessionId({
 
 // packages/polycli-runtime/src/kimi.js
 var KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
-var DEFAULT_TIMEOUT_MS2 = 9e5;
-var AUTH_CHECK_TIMEOUT_MS2 = 3e4;
+var DEFAULT_TIMEOUT_MS4 = 9e5;
+var AUTH_CHECK_TIMEOUT_MS4 = 3e4;
 var PROMPT_STDIN_THRESHOLD_BYTES = 1e5;
 function buildKimiInvocation({
   prompt,
@@ -683,7 +1141,7 @@ function getKimiAuthStatus(cwd) {
   const result = runKimiPrompt({
     prompt: "ping",
     cwd,
-    timeout: AUTH_CHECK_TIMEOUT_MS2,
+    timeout: AUTH_CHECK_TIMEOUT_MS4,
     extraArgs: ["--max-steps-per-turn", "1"]
   });
   if (!result.ok) {
@@ -699,7 +1157,7 @@ function runKimiPrompt({
   prompt,
   model = null,
   cwd,
-  timeout = DEFAULT_TIMEOUT_MS2,
+  timeout = DEFAULT_TIMEOUT_MS4,
   extraArgs = [],
   resumeSessionId = null,
   bin = KIMI_BIN
@@ -742,7 +1200,7 @@ function runKimiPromptStreaming({
   prompt,
   model = null,
   cwd,
-  timeout = DEFAULT_TIMEOUT_MS2,
+  timeout = DEFAULT_TIMEOUT_MS4,
   extraArgs = [],
   resumeSessionId = null,
   onEvent = () => {
@@ -790,8 +1248,8 @@ function runKimiPromptStreaming({
 
 // packages/polycli-runtime/src/qwen.js
 var QWEN_BIN = process.env.QWEN_CLI_BIN || "qwen";
-var DEFAULT_TIMEOUT_MS3 = 3e5;
-var AUTH_CHECK_TIMEOUT_MS3 = 3e4;
+var DEFAULT_TIMEOUT_MS5 = 3e5;
+var AUTH_CHECK_TIMEOUT_MS5 = 3e4;
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PROXY_KEYS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
 var NO_PROXY_DEFAULTS = ["localhost", "127.0.0.1"];
@@ -995,13 +1453,13 @@ function getQwenAuthStatus(cwd) {
   const authResult = runCommand(QWEN_BIN, ["auth", "status"], {
     cwd,
     env,
-    timeout: AUTH_CHECK_TIMEOUT_MS3
+    timeout: AUTH_CHECK_TIMEOUT_MS5
   });
   const pingResult = runQwenPrompt({
     prompt: "ping",
     cwd,
     env,
-    timeout: AUTH_CHECK_TIMEOUT_MS3,
+    timeout: AUTH_CHECK_TIMEOUT_MS5,
     maxSteps: 1
   });
   return {
@@ -1014,7 +1472,7 @@ function runQwenPrompt({
   prompt,
   cwd,
   env = buildQwenEnv(),
-  timeout = DEFAULT_TIMEOUT_MS3,
+  timeout = DEFAULT_TIMEOUT_MS5,
   sessionId,
   resumeLast = false,
   resumeId,
@@ -1061,7 +1519,7 @@ function runQwenPromptStreaming({
   prompt,
   cwd,
   env = buildQwenEnv(),
-  timeout = DEFAULT_TIMEOUT_MS3,
+  timeout = DEFAULT_TIMEOUT_MS5,
   sessionId,
   resumeLast = false,
   resumeId,
@@ -1126,8 +1584,8 @@ import path from "node:path";
 var MINI_AGENT_BIN = process.env.MINI_AGENT_BIN || "mini-agent";
 var MINI_AGENT_LOG_DIR = process.env.MINI_AGENT_LOG_DIR || path.join(os.homedir(), ".mini-agent", "log");
 var MINI_AGENT_CONFIG_PATH = process.env.MINI_AGENT_CONFIG_PATH || path.join(os.homedir(), ".mini-agent", "config", "config.yaml");
-var DEFAULT_TIMEOUT_MS4 = 12e4;
-var AUTH_CHECK_TIMEOUT_MS4 = 3e4;
+var DEFAULT_TIMEOUT_MS6 = 12e4;
+var AUTH_CHECK_TIMEOUT_MS6 = 3e4;
 function readMiniMaxConfig() {
   try {
     const text = fs.readFileSync(MINI_AGENT_CONFIG_PATH, "utf8");
@@ -1273,7 +1731,7 @@ async function getMiniMaxAuthStatus(cwd) {
   const result = await runMiniMaxPrompt({
     prompt: "ping",
     cwd,
-    timeout: AUTH_CHECK_TIMEOUT_MS4
+    timeout: AUTH_CHECK_TIMEOUT_MS6
   });
   return {
     loggedIn: result.ok,
@@ -1285,7 +1743,7 @@ async function getMiniMaxAuthStatus(cwd) {
 function runMiniMaxPrompt({
   prompt,
   cwd,
-  timeout = DEFAULT_TIMEOUT_MS4,
+  timeout = DEFAULT_TIMEOUT_MS6,
   extraArgs = [],
   env = process.env,
   onProgressLine,
@@ -1331,7 +1789,7 @@ function runMiniMaxPrompt({
 async function runMiniMaxPromptStreaming({
   prompt,
   cwd,
-  timeout = DEFAULT_TIMEOUT_MS4,
+  timeout = DEFAULT_TIMEOUT_MS6,
   extraArgs = [],
   env = process.env,
   onEvent = () => {
@@ -1364,6 +1822,411 @@ async function runMiniMaxPromptStreaming({
     } catch {
     }
     return result;
+  });
+}
+
+// packages/polycli-runtime/src/opencode.js
+var OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
+var DEFAULT_TIMEOUT_MS7 = 9e5;
+var AUTH_CHECK_TIMEOUT_MS7 = 3e4;
+function collectOpenCodeContentText(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content.filter((block) => block && block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+}
+function buildOpenCodeInvocation({
+  prompt,
+  model = null,
+  cwd,
+  resumeSessionId = null,
+  continueLast = false,
+  agent = null,
+  variant = null,
+  extraArgs = [],
+  bin = OPENCODE_BIN
+} = {}) {
+  const args = [
+    "run",
+    String(prompt ?? ""),
+    "--format",
+    "json",
+    "--dir",
+    cwd || process.cwd(),
+    "--dangerously-skip-permissions"
+  ];
+  if (model) args.push("--model", model);
+  if (agent) args.push("--agent", agent);
+  if (variant) args.push("--variant", variant);
+  if (resumeSessionId) args.push("--session", resumeSessionId);
+  else if (continueLast) args.push("--continue");
+  if (extraArgs.length > 0) args.push(...extraArgs);
+  return { bin, args };
+}
+function extractOpenCodeText(event) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+  if (event.type === "result" && typeof event.text === "string") {
+    return event.text;
+  }
+  if (event.type === "text" && typeof event.part?.text === "string") {
+    return event.part.text;
+  }
+  if (typeof event.delta === "string") return event.delta;
+  if (typeof event.text === "string") return event.text;
+  if (typeof event.part?.text === "string") return event.part.text;
+  const role = event.role ?? event.message?.role ?? null;
+  if (role && role !== "assistant") {
+    return "";
+  }
+  return collectOpenCodeContentText(event.content ?? event.message?.content);
+}
+function parseOpenCodeStreamText(text) {
+  const events = [];
+  let response = "";
+  let sessionId = null;
+  let model = null;
+  let resultEvent = null;
+  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("{")) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    events.push(event);
+    if (!sessionId && typeof event.sessionId === "string") sessionId = event.sessionId;
+    if (!sessionId && typeof event.sessionID === "string") sessionId = event.sessionID;
+    if (!sessionId && typeof event.session?.id === "string") sessionId = event.session.id;
+    if (!sessionId && typeof event.part?.sessionID === "string") sessionId = event.part.sessionID;
+    if (!model && typeof event.model === "string") model = event.model;
+    if (!model && typeof event.session?.model === "string") model = event.session.model;
+    if (!model && typeof event.part?.model === "string") model = event.part.model;
+    if (event.type === "result") {
+      resultEvent = event;
+      if (!response.trim()) {
+        response += extractOpenCodeText(event);
+      }
+      continue;
+    }
+    response += extractOpenCodeText(event);
+  }
+  return { events, response, sessionId, model, resultEvent };
+}
+function parseOpenCodeJsonResult(stdout, stderr, status) {
+  const parsed = parseOpenCodeStreamText(stdout);
+  const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
+  const hasVisibleText = Boolean(parsed.response.trim());
+  return {
+    ok: status === 0 && !resultError && hasVisibleText,
+    response: parsed.response,
+    events: parsed.events,
+    sessionId: parsed.sessionId,
+    model: parsed.model,
+    status,
+    error: status === 0 ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : String(stderr ?? "").trim() || `opencode exited with code ${status}`
+  };
+}
+function getOpenCodeAvailability(cwd) {
+  return binaryAvailable(OPENCODE_BIN, ["--version"], { cwd });
+}
+function getOpenCodeAuthStatus(cwd) {
+  const result = runOpenCodePrompt({
+    prompt: "ping",
+    cwd,
+    timeout: AUTH_CHECK_TIMEOUT_MS7
+  });
+  if (!result.ok) {
+    return { loggedIn: false, detail: result.error };
+  }
+  return {
+    loggedIn: true,
+    detail: "authenticated",
+    model: result.model ?? null
+  };
+}
+function runOpenCodePrompt({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS7,
+  extraArgs = [],
+  resumeSessionId = null,
+  continueLast = false,
+  agent = null,
+  variant = null,
+  bin = OPENCODE_BIN
+} = {}) {
+  const invocation = buildOpenCodeInvocation({
+    prompt,
+    model,
+    cwd,
+    resumeSessionId,
+    continueLast,
+    agent,
+    variant,
+    extraArgs,
+    bin
+  });
+  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  if (result.error) {
+    return {
+      ok: false,
+      error: result.error.code === "ETIMEDOUT" ? `opencode timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+    };
+  }
+  return parseOpenCodeJsonResult(result.stdout, result.stderr, result.status);
+}
+function runOpenCodePromptStreaming({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS7,
+  extraArgs = [],
+  resumeSessionId = null,
+  continueLast = false,
+  agent = null,
+  variant = null,
+  onEvent = () => {
+  },
+  bin = OPENCODE_BIN,
+  spawnImpl
+} = {}) {
+  const invocation = buildOpenCodeInvocation({
+    prompt,
+    model,
+    cwd,
+    resumeSessionId,
+    continueLast,
+    agent,
+    variant,
+    extraArgs,
+    bin
+  });
+  return spawnStreamingCommand({
+    bin: invocation.bin,
+    args: invocation.args,
+    cwd,
+    env: { ...process.env },
+    timeout,
+    spawnImpl,
+    onStdoutLine(line) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("{")) return;
+      try {
+        onEvent(JSON.parse(trimmed));
+      } catch {
+      }
+    }
+  }).then((result) => {
+    const parsed = parseOpenCodeStreamText(result.stdout);
+    const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
+    const hasVisibleText = Boolean(parsed.response.trim());
+    return {
+      ...result,
+      ...parsed,
+      ok: result.ok && !resultError && hasVisibleText,
+      error: result.ok ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : result.error
+    };
+  });
+}
+
+// packages/polycli-runtime/src/pi.js
+var PI_BIN = process.env.PI_CLI_BIN || "pi";
+var DEFAULT_TIMEOUT_MS8 = 9e5;
+var AUTH_CHECK_TIMEOUT_MS8 = 3e4;
+function collectPiContentText(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content.filter((block) => block && block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+}
+function buildPiInvocation({
+  prompt,
+  model = null,
+  mode = "json",
+  resumeSessionId = null,
+  continueLast = false,
+  noSession = false,
+  extraArgs = [],
+  bin = PI_BIN
+} = {}) {
+  const args = ["--print", "--mode", mode];
+  if (model) args.push("--model", model);
+  if (resumeSessionId) args.push("--session", resumeSessionId);
+  else if (continueLast) args.push("--continue");
+  if (noSession) args.push("--no-session");
+  if (extraArgs.length > 0) args.push(...extraArgs);
+  args.push(String(prompt ?? ""));
+  return { bin, args };
+}
+function extractPiText(event) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+  if (event.assistantMessageEvent?.type === "text_delta" && typeof event.assistantMessageEvent.delta === "string") {
+    return event.assistantMessageEvent.delta;
+  }
+  if (event.type === "agent_end" && typeof event.result?.text === "string") {
+    return event.result.text;
+  }
+  if (typeof event.text === "string") {
+    return event.text;
+  }
+  const role = event.role ?? event.message?.role ?? null;
+  if (role && role !== "assistant") {
+    return "";
+  }
+  return collectPiContentText(event.content ?? event.message?.content);
+}
+function parsePiStreamText(text) {
+  const events = [];
+  let response = "";
+  let sessionId = null;
+  let model = null;
+  let resultEvent = null;
+  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("{")) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    events.push(event);
+    if (!sessionId && typeof event.sessionId === "string") sessionId = event.sessionId;
+    if (!sessionId && typeof event.session?.id === "string") sessionId = event.session.id;
+    if (!model && typeof event.model === "string") model = event.model;
+    if (!model && typeof event.session?.model === "string") model = event.session.model;
+    if (event.type === "agent_end") {
+      resultEvent = event;
+      if (!response.trim()) {
+        response += extractPiText(event);
+      }
+      continue;
+    }
+    response += extractPiText(event);
+  }
+  return { events, response, sessionId, model, resultEvent };
+}
+function getPiAvailability(cwd) {
+  return binaryAvailable(PI_BIN, ["--version"], { cwd });
+}
+function getPiAuthStatus(cwd) {
+  const result = runPiPrompt({
+    prompt: "ping",
+    cwd,
+    timeout: AUTH_CHECK_TIMEOUT_MS8
+  });
+  if (!result.ok) {
+    return { loggedIn: false, detail: result.error };
+  }
+  return {
+    loggedIn: true,
+    detail: "authenticated",
+    model: result.model ?? null
+  };
+}
+function runPiPrompt({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS8,
+  extraArgs = [],
+  resumeSessionId = null,
+  continueLast = false,
+  noSession = false,
+  bin = PI_BIN
+} = {}) {
+  const invocation = buildPiInvocation({
+    prompt,
+    model,
+    mode: "json",
+    resumeSessionId,
+    continueLast,
+    noSession,
+    extraArgs,
+    bin
+  });
+  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  if (result.error) {
+    return {
+      ok: false,
+      error: result.error.code === "ETIMEDOUT" ? `pi timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+    };
+  }
+  const parsed = parsePiStreamText(result.stdout);
+  const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
+  const hasVisibleText = Boolean(parsed.response.trim());
+  return {
+    ok: result.status === 0 && !resultError && hasVisibleText,
+    response: parsed.response,
+    events: parsed.events,
+    sessionId: parsed.sessionId,
+    model: parsed.model,
+    error: result.status === 0 ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.stderr.trim() || result.stdout.trim() || `pi exited with code ${result.status}`,
+    status: result.status
+  };
+}
+function runPiPromptStreaming({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS8,
+  extraArgs = [],
+  resumeSessionId = null,
+  continueLast = false,
+  noSession = false,
+  onEvent = () => {
+  },
+  bin = PI_BIN,
+  spawnImpl
+} = {}) {
+  const invocation = buildPiInvocation({
+    prompt,
+    model,
+    mode: "json",
+    resumeSessionId,
+    continueLast,
+    noSession,
+    extraArgs,
+    bin
+  });
+  return spawnStreamingCommand({
+    bin: invocation.bin,
+    args: invocation.args,
+    cwd,
+    env: { ...process.env },
+    timeout,
+    spawnImpl,
+    onStdoutLine(line) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("{")) return;
+      try {
+        onEvent(JSON.parse(trimmed));
+      } catch {
+      }
+    }
+  }).then((result) => {
+    const parsed = parsePiStreamText(result.stdout);
+    const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
+    const hasVisibleText = Boolean(parsed.response.trim());
+    return {
+      ...result,
+      ...parsed,
+      ok: result.ok && !resultError && hasVisibleText,
+      error: result.ok ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.error
+    };
   });
 }
 
@@ -1572,10 +2435,14 @@ function capabilityMetric(ms, supported) {
   return measuredOrZero(ms);
 }
 function extractProviderEventText(provider, event) {
+  if (provider === "claude") return extractClaudeText(event);
+  if (provider === "copilot") return extractCopilotText(event);
   if (provider === "gemini") return extractGeminiText(event);
   if (provider === "kimi") return extractKimiText(event);
   if (provider === "qwen") return extractQwenText(event);
   if (provider === "minimax") return extractMiniMaxEventText(event);
+  if (provider === "opencode") return extractOpenCodeText(event);
+  if (provider === "pi") return extractPiText(event);
   return "";
 }
 function buildPromptTimingRecord({
@@ -1653,12 +2520,42 @@ function attachPromptTiming(result, {
 
 // packages/polycli-runtime/src/registry.js
 var TIMING_SUPPORT = {
+  claude: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
+  copilot: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   gemini: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   kimi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   qwen: { ttft: true, gen: true, tail: true, tool: true, runtimePersistence: "session" },
-  minimax: { ttft: false, gen: false, tail: false, tool: false, runtimePersistence: "ephemeral" }
+  minimax: { ttft: false, gen: false, tail: false, tool: false, runtimePersistence: "ephemeral" },
+  opencode: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
+  pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" }
 };
 var RUNTIMES = {
+  claude: {
+    id: "claude",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      operations: PROVIDER_OPERATION_NAMES
+    },
+    getAvailability: getClaudeAvailability,
+    getAuthStatus: getClaudeAuthStatus,
+    runPrompt: runClaudePrompt,
+    runPromptStreaming: runClaudePromptStreaming
+  },
+  copilot: {
+    id: "copilot",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      operations: PROVIDER_OPERATION_NAMES
+    },
+    getAvailability: getCopilotAvailability,
+    getAuthStatus: getCopilotAuthStatus,
+    runPrompt: runCopilotPrompt,
+    runPromptStreaming: runCopilotPromptStreaming
+  },
   gemini: {
     id: "gemini",
     capabilities: {
@@ -1710,6 +2607,32 @@ var RUNTIMES = {
     getAuthStatus: getMiniMaxAuthStatus,
     runPrompt: runMiniMaxPrompt,
     runPromptStreaming: runMiniMaxPromptStreaming
+  },
+  opencode: {
+    id: "opencode",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      operations: PROVIDER_OPERATION_NAMES
+    },
+    getAvailability: getOpenCodeAvailability,
+    getAuthStatus: getOpenCodeAuthStatus,
+    runPrompt: runOpenCodePrompt,
+    runPromptStreaming: runOpenCodePromptStreaming
+  },
+  pi: {
+    id: "pi",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      operations: PROVIDER_OPERATION_NAMES
+    },
+    getAvailability: getPiAvailability,
+    getAuthStatus: getPiAuthStatus,
+    runPrompt: runPiPrompt,
+    runPromptStreaming: runPiPromptStreaming
   }
 };
 function getTimingSupport(provider) {
@@ -2473,6 +3396,30 @@ function parseExecutionMode(options) {
 }
 function summarizeEventText(provider, event) {
   if (!event || typeof event !== "object") return "";
+  if (provider === "claude") {
+    if (event.type === "result" && event.is_error !== true && event.subtype !== "error" && typeof event.result === "string") {
+      return event.result;
+    }
+    if (typeof event.text === "string") return event.text;
+    if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && typeof event.delta.text === "string") {
+      return event.delta.text;
+    }
+    const content = event.content ?? event.message?.content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+  }
+  if (provider === "copilot") {
+    if ((event.type === "result" || event.type === "final") && typeof event.result === "string") return event.result;
+    if (event.type === "assistant.message_delta" && typeof event.data?.deltaContent === "string") return event.data.deltaContent;
+    if (event.type === "assistant.message" && typeof event.data?.content === "string") return event.data.content;
+    if (typeof event.delta === "string") return event.delta;
+    if (typeof event.text === "string") return event.text;
+    const content = event.content ?? event.message?.content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+  }
   if (provider === "gemini") {
     if (typeof event.delta === "string") return event.delta;
     if (typeof event.content === "string") return event.content;
@@ -2496,6 +3443,24 @@ function summarizeEventText(provider, event) {
   if (provider === "minimax") {
     if (event.type === "progress" && typeof event.text === "string") return event.text;
     if (event.type === "result" && typeof event.response === "string") return event.response;
+  }
+  if (provider === "opencode") {
+    if (event.type === "result" && typeof event.text === "string") return event.text;
+    if (event.type === "text" && typeof event.part?.text === "string") return event.part.text;
+    if (typeof event.delta === "string") return event.delta;
+    if (typeof event.text === "string") return event.text;
+    if (typeof event.part?.text === "string") return event.part.text;
+    const content = event.content ?? event.message?.content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
+  }
+  if (provider === "pi") {
+    if (event.assistantMessageEvent?.type === "text_delta" && typeof event.assistantMessageEvent.delta === "string") {
+      return event.assistantMessageEvent.delta;
+    }
+    if (event.type === "agent_end" && typeof event.result?.text === "string") return event.result.text;
+    if (typeof event.text === "string") return event.text;
   }
   return "";
 }

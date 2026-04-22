@@ -108,6 +108,38 @@ function parseExecutionMode(options) {
 function summarizeEventText(provider, event) {
   if (!event || typeof event !== "object") return "";
 
+  if (provider === "claude") {
+    if (event.type === "result" && event.is_error !== true && event.subtype !== "error" && typeof event.result === "string") {
+      return event.result;
+    }
+    if (typeof event.text === "string") return event.text;
+    if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && typeof event.delta.text === "string") {
+      return event.delta.text;
+    }
+    const content = event.content ?? event.message?.content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content
+      .filter((block) => block?.type === "text" && typeof block.text === "string")
+      .map((block) => block.text)
+      .join("");
+  }
+
+  if (provider === "copilot") {
+    if ((event.type === "result" || event.type === "final") && typeof event.result === "string") return event.result;
+    if (event.type === "assistant.message_delta" && typeof event.data?.deltaContent === "string") return event.data.deltaContent;
+    if (event.type === "assistant.message" && typeof event.data?.content === "string") return event.data.content;
+    if (typeof event.delta === "string") return event.delta;
+    if (typeof event.text === "string") return event.text;
+    const content = event.content ?? event.message?.content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content
+      .filter((block) => block?.type === "text" && typeof block.text === "string")
+      .map((block) => block.text)
+      .join("");
+  }
+
   if (provider === "gemini") {
     if (typeof event.delta === "string") return event.delta;
     if (typeof event.content === "string") return event.content;
@@ -140,6 +172,29 @@ function summarizeEventText(provider, event) {
   if (provider === "minimax") {
     if (event.type === "progress" && typeof event.text === "string") return event.text;
     if (event.type === "result" && typeof event.response === "string") return event.response;
+  }
+
+  if (provider === "opencode") {
+    if (event.type === "result" && typeof event.text === "string") return event.text;
+    if (event.type === "text" && typeof event.part?.text === "string") return event.part.text;
+    if (typeof event.delta === "string") return event.delta;
+    if (typeof event.text === "string") return event.text;
+    if (typeof event.part?.text === "string") return event.part.text;
+    const content = event.content ?? event.message?.content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content
+      .filter((block) => block?.type === "text" && typeof block.text === "string")
+      .map((block) => block.text)
+      .join("");
+  }
+
+  if (provider === "pi") {
+    if (event.assistantMessageEvent?.type === "text_delta" && typeof event.assistantMessageEvent.delta === "string") {
+      return event.assistantMessageEvent.delta;
+    }
+    if (event.type === "agent_end" && typeof event.result?.text === "string") return event.result.text;
+    if (typeof event.text === "string") return event.text;
   }
 
   return "";

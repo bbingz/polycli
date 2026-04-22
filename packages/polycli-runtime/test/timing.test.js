@@ -75,7 +75,7 @@ test("buildPromptTimingRecord keeps supported-but-missing metrics separate from 
   assert.equal(record.metrics.retry.status, "unsupported");
 });
 
-test("extractProviderEventText handles qwen result-only and kimi string content events", () => {
+test("extractProviderEventText handles provider-specific assistant/result payloads", () => {
   assert.equal(
     extractProviderEventText("qwen", { type: "result", result: "No issues found." }),
     "No issues found."
@@ -83,6 +83,42 @@ test("extractProviderEventText handles qwen result-only and kimi string content 
   assert.equal(
     extractProviderEventText("kimi", { role: "assistant", content: "final review body" }),
     "final review body"
+  );
+  assert.equal(
+    extractProviderEventText("claude", {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "claude " },
+          { type: "tool_use", name: "Read", input: { file: "README.md" } },
+          { type: "text", text: "reply" },
+        ],
+      },
+    }),
+    "claude reply"
+  );
+  assert.equal(
+    extractProviderEventText("copilot", {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "copilot ok" }] },
+    }),
+    "copilot ok"
+  );
+  assert.equal(
+    extractProviderEventText("opencode", {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "opencode ok" }],
+    }),
+    "opencode ok"
+  );
+  assert.equal(
+    extractProviderEventText("pi", {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "pi ok" },
+    }),
+    "pi ok"
   );
 });
 
