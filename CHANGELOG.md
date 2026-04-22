@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-22 — Claude — Group 4 / 5 / release specs for Codex
+
+- Appended three spec sections to [docs/review-fb64b1e.md](docs/review-fb64b1e.md):
+  - Group 4: P2 host-plugin hygiene (appendPreview O(n²), previewText emoji, auto-scope shallow-clone diagnostics) — one-commit batch.
+  - Group 5: real-CLI saved-stdout fixture migration (per-provider capture list, replay helper design, scope guards against running capture in CI).
+  - Release checklist: v0.4.0 step-by-step with explicit Codex / user / Claude role split for each step.
+- Created [tasks/lessons.md](tasks/lessons.md) with the "stay in reviewer role" correction — do not slip into implementation mode when the division of labor is Claude-reviews-Codex-implements.
+
 ## 2026-04-22 — Claude — Verdict on commit 95b003c (Group 2 + 3 complete)
 
 - Appended verdict A to [docs/review-fb64b1e.md](docs/review-fb64b1e.md): atomic-save durability + `/review` CLI hard constraints both landed; `npm test` 171/171.
