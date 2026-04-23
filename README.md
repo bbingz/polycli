@@ -1,13 +1,142 @@
 # polycli
 
-`polycli` 是一个刻意收窄到 Path B 的 monorepo：只提供可复用工具层和独立 timing contract，不提供公共 runtime、继承树或 hook framework。
+`polycli` 是一个面向多 AI CLI 的 monorepo，提供两层东西：
 
-## What it is
+1. 给最终用户安装的宿主插件和 OpenCode 包
+2. 给仓库维护者复用的 runtime / utils / timing 包
 
-这个仓库面向多 provider companion / wrapper 项目，目标有两个：
+它的边界保持收窄：
 
-1. 把低语义风险的公共工具抽出来，避免 4 份近似拷贝。
-2. 把 timing 对比 contract 独立出来，避免把“没能力”“没数据”“贡献 0”混成一列。
+- 做多 provider CLI 的 companion / wrapper
+- 做独立 timing contract
+- 不做公共 runtime 基类
+- 不做 provider 差异被抹平的伪统一框架
+
+## Who This Is For
+
+### 1. 终端用户 / AI CLI 使用者
+
+如果你的目标是“装上插件，然后尽快开始用”，先看这一节，不需要先理解 monorepo 内部结构。
+
+当前支持的宿主：
+
+- Claude Code
+- Codex
+- GitHub Copilot CLI
+- OpenCode
+
+当前接入的 provider runtime：
+
+- `claude`
+- `copilot`
+- `opencode`
+- `pi`
+- `gemini`
+- `kimi`
+- `qwen`
+- `minimax`
+
+### 2. 仓库维护者 / 发布者
+
+如果你的目标是“在这个仓库里改实现、跑测试、发版”，看后面的 `Packages`、`Development` 和 `Release` 章节。
+
+## Install And First Run
+
+### Claude Code
+
+安装：
+
+```bash
+claude plugin marketplace add bbingz/polycli
+claude plugin install polycli@polycli-hosts
+```
+
+第一次验证：
+
+```text
+/polycli:setup --provider qwen
+/polycli:ask --provider qwen Reply with OK only.
+/polycli:timing --provider qwen
+```
+
+### Codex
+
+安装：
+
+```bash
+codex plugin marketplace add bbingz/polycli
+```
+
+第一次验证：
+
+```text
+/polycli-codex:polycli setup --provider qwen
+/polycli-codex:polycli ask --provider qwen "Reply with OK only."
+/polycli-codex:polycli timing --provider qwen --json
+```
+
+### GitHub Copilot CLI
+
+安装：
+
+```bash
+copilot plugin marketplace add bbingz/polycli
+copilot plugin install polycli-copilot@polycli-hosts
+```
+
+第一次验证：
+
+```text
+polycli setup --provider qwen
+polycli ask --provider qwen Reply with OK only.
+polycli timing --provider qwen --json
+```
+
+### OpenCode
+
+安装：
+
+```bash
+opencode plugin @bbingz/polycli-opencode
+```
+
+第一次验证思路：
+
+- 运行 `polycli_run`，参数传 `["setup","--provider","qwen","--json"]`
+- 再运行 `polycli_run`，参数传 `["ask","--provider","qwen","Reply with OK only.","--json"]`
+- 或直接运行 `polycli_timing` 读取 timing 记录
+
+## User Mental Model
+
+无论宿主是什么，`polycli` 都是同一套命令面：
+
+- `setup`: 检查 provider CLI 是否安装、是否已登录
+- `ask`: 单次提问
+- `rescue`: 长一点的排障/分析任务
+- `review`: 基于当前 git diff 做代码审查
+- `adversarial-review`: 更偏攻击面的审查
+- `status`: 查看后台 job
+- `result`: 读取后台 job 结果
+- `cancel`: 取消后台 job
+- `timing`: 查看 timing 历史和聚合
+
+第一次上手时，推荐顺序固定为：
+
+1. `setup --provider <provider>`
+2. `ask --provider <provider> ...`
+3. 需要长任务时再用 `--background` 配合 `status/result`
+4. 最后用 `timing` 看记录是否已经落库
+
+## Background Jobs
+
+`ask` / `rescue` / `review` / `adversarial-review` 支持 `--background`。
+
+通用流程：
+
+1. 启动：`... --background`
+2. 轮询：`status <jobId>` 或 `status <jobId> --wait`
+3. 取结果：`result <jobId>`
+4. 必要时取消：`cancel <jobId>`
 
 ## Current Scope
 
@@ -18,159 +147,18 @@
 - `@bbingz/polycli-runtime`
 - multi-host plugin adapters (`Claude` / `Codex` / `Copilot` / `OpenCode`)
 
-`v1` 阶段只有前两个包；从 `v2` 开始，`claude` / `copilot` / `opencode` / `pi` / `gemini` / `kimi` / `qwen` / `minimax` 的 runtime adapter 已经进入本仓，集中在 `@bbingz/polycli-runtime`。旧 4 个 plugin repo 仍然是 reference implementation，不再作为运行依赖。
+`v1` 阶段只有前两个包；从 `v2` 开始，`claude` / `copilot` / `opencode` / `pi` / `gemini` / `kimi` / `qwen` / `minimax` 的 runtime adapter 已经进入本仓。旧 provider plugin repo 只作为 reference implementation，不再作为运行依赖。
 
 ## Packages
 
 - `@bbingz/polycli-utils`
-  - `args`: 命令行参数解析与原始字符串切词
-  - `process`: 命令执行、可用性探测、进程树终止
-  - `stream`: UTF-8 安全的按行解码
-  - `atomic-save`: 原子写与锁文件
-  - `ndjson`: 追加 / 读取 / tail NDJSON
-  - `session-id`: 从 stdout / stderr / 文件值中提取 session id
-  - `parse-stream-json`: 消化前缀噪声并解析 JSON 行
-
+  - 参数解析、进程执行、stream 解码、NDJSON、atomic save、session id、stream JSON parsing
 - `@bbingz/polycli-timing`
-  - `timing.schema.json`: timing record 契约
-  - `validateTimingRecord()`: 运行时校验
-  - `calculatePercentiles()`: p50 / p95 / p99
-  - `aggregateTimingRecords()`: capability-aware 聚合
-
+  - timing schema、运行时校验、percentiles、capability-aware aggregation
 - `@bbingz/polycli-runtime`
-  - provider registry
-  - `claude` / `copilot` / `opencode` / `pi` / `gemini` / `kimi` / `qwen` / `minimax` runtime adapter
-  - availability / auth probes
-  - prompt args builder
-  - prompt-level foreground / streaming runtime execution
-  - stream / log parsing
+  - provider registry、availability/auth probes、prompt args builder、foreground / streaming execution、stream / log parsing
 
-- `plugins/polycli`
-  - repo-local Claude plugin entry
-  - `/polycli:setup` / `ask` / `rescue` / `review` / `adversarial-review`
-  - background job lifecycle with `/polycli:status` / `result` / `cancel`
-  - persisted per-workspace plugin state for background runs
-  - timing history with `/polycli:timing`
-
-- host adapters
-  - `plugins/polycli` for Claude Code
-  - `plugins/polycli-codex` for Codex
-  - `plugins/polycli-copilot` for GitHub Copilot CLI
-  - `plugins/polycli-opencode` plus `.opencode/plugins/polycli.mjs` for OpenCode
-  - repo marketplaces:
-    - `.claude-plugin/marketplace.json`
-    - `.agents/plugins/marketplace.json`
-    - `.github/plugin/marketplace.json`
-
-## Quick Start
-
-仓库当前是 monorepo 本地开发形态，先进入根目录：
-
-```bash
-cd /home/user/-Code-/polycli
-npm test
-```
-
-## Published Install Targets
-
-发布态安装入口已经固定为：
-
-- Claude Code: `claude plugin marketplace add bbingz/polycli` 然后 `claude plugin install polycli@polycli-hosts`
-- Codex: `codex plugin marketplace add bbingz/polycli`
-- GitHub Copilot CLI: `copilot plugin marketplace add bbingz/polycli` 然后 `copilot plugin install polycli-copilot@polycli-hosts`
-- OpenCode: `opencode plugin @bbingz/polycli-opencode`
-
-仓库内可重复执行的发布前校验：
-
-```bash
-npm run release:check
-npm run pack:opencode
-```
-
-在本仓内直接从源码引用：
-
-```js
-import { parseArgs, createLineDecoder, appendNdjson } from "./packages/polycli-utils/src/index.js";
-import { validateTimingRecord, aggregateTimingRecords } from "./packages/polycli-timing/src/index.js";
-```
-
-未来发布到 npm 后，调用方式会是：
-
-```js
-import { parseArgs } from "@bbingz/polycli-utils";
-import { validateTimingRecord } from "@bbingz/polycli-timing";
-```
-
-## Usage
-
-### 1. `@bbingz/polycli-utils`
-
-参数解析：
-
-```js
-import { parseArgs } from "./packages/polycli-utils/src/index.js";
-
-const parsed = parseArgs(
-  ["--json", "-t", "5000", "ask", "--", "--literal"],
-  {
-    booleanOptions: ["json"],
-    valueOptions: ["timeout"],
-    aliasMap: { t: "timeout" }
-  }
-);
-
-// parsed.options => { json: true, timeout: "5000" }
-// parsed.positionals => ["ask", "--literal"]
-```
-
-流式按行解码：
-
-```js
-import { createLineDecoder } from "./packages/polycli-utils/src/index.js";
-
-const decoder = createLineDecoder();
-decoder.push(Buffer.from("hello\nwor"));
-decoder.push(Buffer.from("ld\n"));
-decoder.end();
-```
-
-带噪声前缀的 JSON 行解析：
-
-```js
-import { parseStreamJsonLine } from "./packages/polycli-utils/src/index.js";
-
-const parsed = parseStreamJsonLine('MCP issues detected... {"type":"init","session_id":"abc"}');
-if (parsed.ok) {
-  console.log(parsed.event.type); // "init"
-}
-```
-
-NDJSON 历史写入：
-
-```js
-import { appendNdjson, readNdjson, tailNdjson } from "./packages/polycli-utils/src/index.js";
-
-appendNdjson("/tmp/polycli-history.ndjson", { id: 1, ok: true });
-appendNdjson("/tmp/polycli-history.ndjson", { id: 2, ok: true });
-
-const all = readNdjson("/tmp/polycli-history.ndjson");
-const last = tailNdjson("/tmp/polycli-history.ndjson", 1);
-```
-
-session id 解析：
-
-```js
-import { resolveSessionId } from "./packages/polycli-utils/src/index.js";
-
-const result = resolveSessionId({
-  stdout: "",
-  stderr: "To resume: kimi -r 123e4567-e89b-12d3-a456-426614174000",
-  fileValue: null,
-  priority: ["stderr", "stdout", "file"]
-});
-```
-
-### 2. `@bbingz/polycli-timing`
+## Timing Contract
 
 `polycli-timing` 的核心不是“统一 6 段数值”，而是**统一状态表达**。每个 metric 都必须明确标记为：
 
@@ -181,64 +169,69 @@ const result = resolveSessionId({
 
 这保证跨 AI 能力对比时不会把“没能力”“没数据”“贡献 0”混成一列。
 
-此外，record 里保留了两个强约束字段：
+此外，record 里保留两个关键字段：
 
 - `runtimePersistence`: `ephemeral | session | daemon`
 - `measurementScope`: `request | turn | job`
 
-这样就不会把 daemon 型 provider 的“常驻预热”误算成一次请求的冷启动。
+## Repository Map
 
-最小 record 示例：
-
-```js
-const record = {
-  version: 1,
-  provider: "gemini",
-  runtimePersistence: "ephemeral",
-  measurementScope: "request",
-  completedAt: "2026-04-22T00:00:00.000Z",
-  metrics: {
-    cold:  { status: "measured", ms: 1200 },
-    ttft:  { status: "measured", ms: 800 },
-    gen:   { status: "measured", ms: 2400 },
-    tool:  { status: "zero", ms: 0 },
-    retry: { status: "missing", ms: null },
-    tail:  { status: "measured", ms: 100 },
-    total: { status: "measured", ms: 4500 }
-  }
-};
-```
-
-校验与聚合：
-
-```js
-import {
-  validateTimingRecord,
-  aggregateTimingRecords
-} from "./packages/polycli-timing/src/index.js";
-
-const validation = validateTimingRecord(record);
-if (!validation.ok) {
-  console.error(validation.errors);
-}
-
-const summary = aggregateTimingRecords([record]);
-console.log(summary.byProvider.gemini.metrics.cold.p50);
-```
-
-## Files
-
-- 根说明：`README.md`
-- v1 public surface：`docs/polycli-v1-public-surface.md`
-- utils 包说明：`packages/polycli-utils/README.md`
-- timing 包说明：`packages/polycli-timing/README.md`
-- runtime 包说明：`packages/polycli-runtime/README.md`
-- plugin 说明：`plugins/polycli/README.md`
-- timing schema：`packages/polycli-timing/timing.schema.json`
+- `packages/polycli-utils`
+- `packages/polycli-timing`
+- `packages/polycli-runtime`
+- `plugins/polycli`
+- `plugins/polycli-codex`
+- `plugins/polycli-copilot`
+- `plugins/polycli-opencode`
+- `docs/`
 
 ## Development
 
+要求：
+
+- Node.js `>=20`
+- 在仓库根目录安装依赖：`npm install`
+
+常用验证：
+
+```bash
+npm test
+node --test packages/polycli-utils/test/*.test.js
+node --test packages/polycli-timing/test/*.test.js
+node --test packages/polycli-runtime/test/*.test.js
+```
+
+插件打包：
+
 ```bash
 npm run build:plugins
-npm test
 ```
+
+发布前检查：
+
+```bash
+npm run release:check
+npm run pack:opencode
+```
+
+## Maintainer Notes
+
+维护时优先看这些文件：
+
+- [packages/polycli-runtime/README.md](/home/user/-Code-/polycli/packages/polycli-runtime/README.md)
+- [plugins/polycli/README.md](/home/user/-Code-/polycli/plugins/polycli/README.md)
+- [docs/release.md](/home/user/-Code-/polycli/docs/release.md)
+- [docs/session-memory-2026-04-22.md](/home/user/-Code-/polycli/docs/session-memory-2026-04-22.md)
+
+与宿主插件发布相关的 marketplace 文件：
+
+- [.claude-plugin/marketplace.json](/home/user/-Code-/polycli/.claude-plugin/marketplace.json)
+- [.agents/plugins/marketplace.json](/home/user/-Code-/polycli/.agents/plugins/marketplace.json)
+- [.github/plugin/marketplace.json](/home/user/-Code-/polycli/.github/plugin/marketplace.json)
+
+## Release
+
+当前发布流说明见：
+
+- [docs/release.md](/home/user/-Code-/polycli/docs/release.md)
+- [docs/release-notes-v0.4.0.md](/home/user/-Code-/polycli/docs/release-notes-v0.4.0.md)
