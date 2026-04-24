@@ -35,6 +35,17 @@ const COPILOT_REVIEW_EXCLUDED_TOOLS = [
   "skill",
   "ask_user",
 ].join(",");
+const reviewTempDirs = new Set();
+
+process.once("exit", () => {
+  for (const dir of reviewTempDirs) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best effort only; the process is already exiting.
+    }
+  }
+});
 
 export function normalizeReviewScope(scope) {
   const effective = scope || "auto";
@@ -50,6 +61,7 @@ function git(cwd, args) {
 
 function writeReviewTempFile(prefix, extension, text) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `polycli-review-${prefix}-`));
+  reviewTempDirs.add(root);
   const filePath = path.join(root, `${prefix}-${randomUUID()}${extension}`);
   fs.writeFileSync(filePath, text, "utf8");
   return filePath;
@@ -59,9 +71,103 @@ function makeReviewTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `polycli-review-${prefix}-`));
 }
 
+function findSingleQuotedScalarEnd(raw) {
+  for (let index = 1; index < raw.length; index += 1) {
+    if (raw[index] !== "'") continue;
+    if (raw[index + 1] === "'") {
+      index += 1;
+      continue;
+    }
+    return index;
+  }
+  return -1;
+}
+
+function findDoubleQuotedScalarEnd(raw) {
+  let escaped = false;
+  for (let index = 1; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') return index;
+  }
+  return -1;
+}
+
+function assertOnlyCommentTail(raw, endIndex, key) {
+  const tail = raw.slice(endIndex + 1).trim();
+  if (tail && !tail.startsWith("#")) {
+    throw new Error(`Unexpected content after YAML scalar '${key}'.`);
+  }
+}
+
+function parseYamlScalarValue(raw, key) {
+  if (/^[|>][+-]?$/.test(raw)) {
+    throw new Error(`Unsupported YAML block scalar for '${key}'.`);
+  }
+  if (raw === "") {
+    return null;
+  }
+  if (raw.startsWith('"')) {
+    const endIndex = findDoubleQuotedScalarEnd(raw);
+    if (endIndex < 0) throw new Error(`Unterminated double-quoted YAML scalar for '${key}'.`);
+    assertOnlyCommentTail(raw, endIndex, key);
+    try {
+      return JSON.parse(raw.slice(0, endIndex + 1));
+    } catch {
+      throw new Error(`Invalid double-quoted YAML scalar for '${key}'.`);
+    }
+  }
+  if (raw.startsWith("'")) {
+    const endIndex = findSingleQuotedScalarEnd(raw);
+    if (endIndex < 0) throw new Error(`Unterminated single-quoted YAML scalar for '${key}'.`);
+    assertOnlyCommentTail(raw, endIndex, key);
+    return raw.slice(1, endIndex).replace(/''/g, "'");
+  }
+  return raw.split("#", 1)[0].trim();
+}
+
+function assertNoIndentedScalarContinuation(lines, index, key) {
+  for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
+    const nextLine = lines[nextIndex];
+    const trimmed = nextLine.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (/^\s/.test(nextLine)) {
+      throw new Error(`Multi-line YAML scalar for '${key}' is not supported.`);
+    }
+    return;
+  }
+}
+
 function readYamlScalar(text, key) {
-  const match = String(text ?? "").match(new RegExp(`^${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^#\\n]+))`, "m"));
-  return match ? (match[1] ?? match[2] ?? match[3]?.trim() ?? null) : null;
+  const lines = String(text ?? "").split(/\r?\n/);
+  let value = null;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || /^\s/.test(line)) continue;
+
+    const colonIndex = line.indexOf(":");
+    if (colonIndex < 0) {
+      throw new Error(`Malformed YAML line ${index + 1}: expected key: value.`);
+    }
+
+    const currentKey = line.slice(0, colonIndex).trim();
+    if (currentKey !== key) continue;
+
+    const rawValue = line.slice(colonIndex + 1).trim();
+    value = parseYamlScalarValue(rawValue, key);
+    assertNoIndentedScalarContinuation(lines, index, key);
+  }
+
+  return value;
 }
 
 function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {

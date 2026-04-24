@@ -214,6 +214,9 @@ if (process.env.MINI_AGENT_ENV_LOG) {
     MINI_AGENT_CONFIG_PATH: process.env.MINI_AGENT_CONFIG_PATH || null,
   }) + "\\n");
 }
+if (process.env.MINI_AGENT_CONFIG_SNAPSHOT && process.env.MINI_AGENT_CONFIG_PATH) {
+  fs.copyFileSync(process.env.MINI_AGENT_CONFIG_PATH, process.env.MINI_AGENT_CONFIG_SNAPSHOT);
+}
 const prompt = args[args.indexOf("-t") + 1] || "ping";
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
 const reply = process.env.MINI_AGENT_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
@@ -1356,6 +1359,7 @@ test("integration: review constrains pi with no-tools", async () => {
 test("integration: review constrains minimax with a tool-disabled config override", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   const envLog = path.join(pluginData, "minimax-review-env.jsonl");
+  const configSnapshot = path.join(pluginData, "minimax-review-config.yaml");
   const fake = createFakeMiniMaxFixture();
   try {
     const env = cleanEnv({
@@ -1364,6 +1368,7 @@ test("integration: review constrains minimax with a tool-disabled config overrid
       MINI_AGENT_LOG_DIR: fake.logDir,
       MINI_AGENT_CONFIG_PATH: fake.configPath,
       MINI_AGENT_ENV_LOG: envLog,
+      MINI_AGENT_CONFIG_SNAPSHOT: configSnapshot,
       MINI_AGENT_FIXED_REPLY: "MINIMAX_REVIEW_OK",
     });
     const review = await runCompanion(
@@ -1375,7 +1380,8 @@ test("integration: review constrains minimax with a tool-disabled config overrid
     assert.equal(payload.response, "MINIMAX_REVIEW_OK");
 
     const loggedEnv = readJsonLine(envLog);
-    const configText = fs.readFileSync(loggedEnv.MINI_AGENT_CONFIG_PATH, "utf8");
+    assert.match(loggedEnv.MINI_AGENT_CONFIG_PATH, /polycli-review-minimax-config-/);
+    const configText = fs.readFileSync(configSnapshot, "utf8");
     assert.match(configText, /enable_file_tools: false/);
     assert.match(configText, /enable_bash: false/);
     assert.match(configText, /enable_note: false/);
