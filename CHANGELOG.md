@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Codex — v0.5.1 shipped
+
+- Pushed `main` and tag `v0.5.1` (tag at `0b79c86`).
+- GitHub release live at https://github.com/bbingz/polycli/releases/tag/v0.5.1 with notes from `docs/release-notes-v0.5.1.md`; no tarball asset attached because OpenCode users install from npm.
+- Published `@bbingz/polycli-opencode@0.5.1` to npm and confirmed it appears in `npm view @bbingz/polycli-opencode versions`.
+
+---
+
 ## 2026-04-24 — Codex — prepare v0.5.1 release
 
 - Bumped the four host plugin manifests and Claude/Copilot marketplace metadata from `0.5.0` to `0.5.1`.
