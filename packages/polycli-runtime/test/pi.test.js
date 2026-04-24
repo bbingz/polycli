@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
+import { TRANSIENT_PROBE_ERROR_PATTERNS as PI_TRANSIENT_PROBE_ERROR_PATTERNS } from "../src/pi.js";
 import {
   buildPiInvocation,
   extractPiText,
@@ -265,6 +266,30 @@ test("getPiAuthStatus keeps loggedIn=true for transient probe failures", () => {
 
   assert.equal(auth.loggedIn, true);
   assert.match(auth.detail, /timed out after 30s/i);
+});
+
+test("getPiAuthStatus routes named transient probe patterns to inconclusive auth", () => {
+  assert.ok(PI_TRANSIENT_PROBE_ERROR_PATTERNS.length > 0);
+
+  for (const pattern of PI_TRANSIENT_PROBE_ERROR_PATTERNS) {
+    const error = "synthetic probe timed out";
+    assert.match(error, pattern);
+    const auth = getPiAuthStatus(process.cwd(), {
+      promptRunner() {
+        return { ok: false, error };
+      },
+    });
+
+    assert.equal(auth.loggedIn, true);
+    assert.match(auth.detail, /inconclusive/i);
+  }
+
+  const auth = getPiAuthStatus(process.cwd(), {
+    promptRunner() {
+      return { ok: false, error: "401 Unauthorized: bad token" };
+    },
+  });
+  assert.equal(auth.loggedIn, false);
 });
 
 test("runPiPromptStreaming returns a structured failure on spawn error", async () => {

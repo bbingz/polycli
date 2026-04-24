@@ -9,7 +9,9 @@ const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const SESSION_EXPORT_TIMEOUT_MS = 30_000;
 const OPENCODE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-const OPENCODE_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
+export const TRANSIENT_PROBE_ERROR_PATTERNS = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
+];
 
 function collectOpenCodeContentText(content) {
   if (typeof content === "string") {
@@ -245,7 +247,7 @@ function buildOpenCodeAuthStatus(result) {
   if (OPENCODE_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (OPENCODE_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
   }
   return { loggedIn: false, detail };

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
+import { TRANSIENT_PROBE_ERROR_PATTERNS as QWEN_TRANSIENT_PROBE_ERROR_PATTERNS } from "../src/qwen.js";
 import {
   buildQwenEnv,
   buildQwenInvocation,
@@ -319,6 +320,36 @@ test("getQwenAuthStatus keeps loggedIn=true for transient probe failures", () =>
 
   assert.equal(auth.loggedIn, true);
   assert.match(auth.detail, /timed out after 30s/i);
+});
+
+test("getQwenAuthStatus routes named transient probe patterns to inconclusive auth", () => {
+  assert.ok(QWEN_TRANSIENT_PROBE_ERROR_PATTERNS.length > 0);
+
+  for (const pattern of QWEN_TRANSIENT_PROBE_ERROR_PATTERNS) {
+    const error = "synthetic probe timed out";
+    assert.match(error, pattern);
+    const auth = getQwenAuthStatus(process.cwd(), {
+      envBuilder() {
+        return {};
+      },
+      promptRunner() {
+        return { ok: false, error, model: null };
+      },
+    });
+
+    assert.equal(auth.loggedIn, true);
+    assert.match(auth.detail, /inconclusive/i);
+  }
+
+  const auth = getQwenAuthStatus(process.cwd(), {
+    envBuilder() {
+      return {};
+    },
+    promptRunner() {
+      return { ok: false, error: "401 Unauthorized: bad token" };
+    },
+  });
+  assert.equal(auth.loggedIn, false);
 });
 
 test("parseQwenStreamText replays a captured real cli fixture", () => {

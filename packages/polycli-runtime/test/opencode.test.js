@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
+import { TRANSIENT_PROBE_ERROR_PATTERNS as OPENCODE_TRANSIENT_PROBE_ERROR_PATTERNS } from "../src/opencode.js";
 import {
   buildOpenCodeInvocation,
   extractOpenCodeText,
@@ -233,6 +234,30 @@ test("getOpenCodeAuthStatus keeps loggedIn=true for transient probe failures", (
 
   assert.equal(auth.loggedIn, true);
   assert.match(auth.detail, /timed out after 30s/i);
+});
+
+test("getOpenCodeAuthStatus routes named transient probe patterns to inconclusive auth", () => {
+  assert.ok(OPENCODE_TRANSIENT_PROBE_ERROR_PATTERNS.length > 0);
+
+  for (const pattern of OPENCODE_TRANSIENT_PROBE_ERROR_PATTERNS) {
+    const error = "synthetic probe timed out";
+    assert.match(error, pattern);
+    const auth = getOpenCodeAuthStatus(process.cwd(), {
+      promptRunner() {
+        return { ok: false, error };
+      },
+    });
+
+    assert.equal(auth.loggedIn, true);
+    assert.match(auth.detail, /inconclusive/i);
+  }
+
+  const auth = getOpenCodeAuthStatus(process.cwd(), {
+    promptRunner() {
+      return { ok: false, error: "401 Unauthorized: bad token" };
+    },
+  });
+  assert.equal(auth.loggedIn, false);
 });
 
 test("runOpenCodePromptStreaming returns a structured failure on spawn error", async () => {

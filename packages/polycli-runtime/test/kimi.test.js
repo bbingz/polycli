@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
+import { TRANSIENT_PROBE_ERROR_PATTERNS as KIMI_TRANSIENT_PROBE_ERROR_PATTERNS } from "../src/kimi.js";
 import {
   buildKimiInvocation,
   extractKimiText,
@@ -122,6 +123,30 @@ test("getKimiAuthStatus keeps loggedIn=true for transient probe failures", () =>
 
   assert.equal(auth.loggedIn, true);
   assert.match(auth.detail, /timed out after 30s/i);
+});
+
+test("getKimiAuthStatus routes named transient probe patterns to inconclusive auth", () => {
+  assert.ok(KIMI_TRANSIENT_PROBE_ERROR_PATTERNS.length > 0);
+
+  for (const pattern of KIMI_TRANSIENT_PROBE_ERROR_PATTERNS) {
+    const error = "synthetic probe timed out";
+    assert.match(error, pattern);
+    const auth = getKimiAuthStatus(process.cwd(), {
+      promptRunner() {
+        return { ok: false, error };
+      },
+    });
+
+    assert.equal(auth.loggedIn, true);
+    assert.match(auth.detail, /inconclusive/i);
+  }
+
+  const auth = getKimiAuthStatus(process.cwd(), {
+    promptRunner() {
+      return { ok: false, error: "401 Unauthorized: bad token" };
+    },
+  });
+  assert.equal(auth.loggedIn, false);
 });
 
 test("runKimiPromptStreaming returns a structured failure on spawn error", async () => {

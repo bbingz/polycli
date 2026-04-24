@@ -6,6 +6,13 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Codex — name auth-probe transient-error regex contracts
+
+- Extracted the transient auth-probe regexes in gemini / qwen / kimi / opencode / pi into provider-local `TRANSIENT_PROBE_ERROR_PATTERNS` exports without changing the existing match behavior.
+- Added provider tests that assert the named patterns keep timeout-like probe failures in the `loggedIn=true` / inconclusive path while still treating explicit `401 Unauthorized` errors as genuine auth failures.
+
+---
+
 ## 2026-04-24 — Claude — decide Q1 (publish utils/timing); annotate Q2/Q3 as observing
 
 - User directive on 2026-04-24: publish `@bbingz/polycli-utils` and `@bbingz/polycli-timing` to npm ("能用就应该发"). Extended `docs/review-2026-04-24-v0.5.0-spec.md` with a P1 (Q1) section covering manifest fields, README refresh, v1-public-surface rewrite, `pack:utils` / `pack:timing` scripts, and `release:check` extension with dry-run publishes.
