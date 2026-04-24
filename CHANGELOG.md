@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Claude — draft v0.6.0 release notes for R8 convergence
+
+- Added `docs/release-notes-v0.6.0.md` covering R8a-R8e deliverables with a full legacy → polycli migration table (slash commands, kimi session flags, gemini approval/effort flags, subagent types, guidance skills, hooks).
+- Flagged R8f as done; R8g (legacy repo archival + CLAUDE.md relaxation) still pending.
+- Status: draft. Release date and version-bump execution held until user kicks off release prep.
+
+---
+
 ## 2026-04-24 — Codex — port stop-time review gate hooks
 
 - Added Claude Code SessionStart / SessionEnd / Stop hook registration for the polycli host plugin, with lifecycle state cleanup and the optional stop-review gate.
