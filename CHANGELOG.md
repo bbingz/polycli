@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Codex — pilot claude host integration fixture replay
+
+- Added captured real Claude CLI stream fixtures for host-level `/ask` and `/health` success coverage.
+- Added a host integration replay helper that surfaces missing fixture files explicitly and replays captured stream output through the bundled companion without changing other provider tests.
+- Converted the Claude `/ask` success path to fixture replay and added a Claude `/health` success integration test that records timing from the replayed stream.
+
+---
+
 ## 2026-04-24 — Codex — prepare utils and timing for first npm publish
 
 - Made `@bbingz/polycli-utils` and `@bbingz/polycli-timing` publishable by removing `private: true` and adding npm metadata, package file lists, and public publish config while leaving `@bbingz/polycli-runtime` private.

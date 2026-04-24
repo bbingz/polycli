@@ -1,0 +1,25 @@
+{
+  "provider": "claude",
+  "name": "health-ok",
+  "capturedAt": "2026-04-24T07:12:54.255Z",
+  "version": "2.1.119 (Claude Code)",
+  "argv": [
+    "-p",
+    "Reply with POLYCLI_HEALTH_OK only.",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-mode",
+    "acceptEdits",
+    "--max-turns",
+    "1",
+    "--tools",
+    "",
+    "--no-session-persistence"
+  ],
+  "expected": {
+    "response": "POLYCLI_HEALTH_OK",
+    "sessionId": "2c9a0574-cc2e-4812-aebc-44cb66d54885",
+    "model": "claude-opus-4-7[1m]"
+  }
+}

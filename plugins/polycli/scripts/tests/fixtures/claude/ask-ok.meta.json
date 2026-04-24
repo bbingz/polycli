@@ -1,0 +1,25 @@
+{
+  "provider": "claude",
+  "name": "ask-ok",
+  "capturedAt": "2026-04-24T07:12:54.254Z",
+  "version": "2.1.119 (Claude Code)",
+  "argv": [
+    "-p",
+    "Reply with only: PONG",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-mode",
+    "acceptEdits",
+    "--max-turns",
+    "1",
+    "--tools",
+    "",
+    "--no-session-persistence"
+  ],
+  "expected": {
+    "response": "PONG",
+    "sessionId": "d2389418-cee0-456e-8511-80ab3c2c1987",
+    "model": "claude-opus-4-7[1m]"
+  }
+}

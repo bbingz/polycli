@@ -6,6 +6,8 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { createClaudeFixtureReplay } from "./helpers/fixture-replay.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const companionPath = path.resolve(__dirname, "..", "polycli-companion.bundle.mjs");
 
@@ -695,6 +697,51 @@ test("integration: health verifies qwen with an end-to-end probe and records tim
     assert.equal(timingPayload.records[0].kind, "health");
   } finally {
     fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: health verifies claude with a captured cli fixture replay", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const replay = createClaudeFixtureReplay("health-ok");
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      CLAUDE_CLI_BIN: replay.bin,
+    });
+    const health = await runCompanion(["health", "--json", "--provider", "claude"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(health.code, 0, health.stderr);
+    const payload = JSON.parse(health.stdout);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.anyHealthy, true);
+    assert.equal(payload.allHealthy, true);
+    assert.deepEqual(payload.healthyProviders, ["claude"]);
+    assert.deepEqual(payload.unhealthyProviders, []);
+    assert.equal(payload.results.length, 1);
+    const report = payload.results[0];
+    assert.equal(report.provider, "claude");
+    assert.equal(report.available, true);
+    assert.equal(report.loggedIn, null);
+    assert.equal(report.authDetail, "not checked by health");
+    assert.equal(report.model, replay.meta.expected.model);
+    assert.equal(report.probe.ok, true);
+    assert.equal(report.probe.responseMatched, true);
+    assert.equal(report.probe.responsePreview, replay.meta.expected.response);
+    assert.ok(report.probe.timing, "health result should include timing");
+
+    const timing = await runCompanion(["timing", "--json", "--provider", "claude", "--history", "1"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(timing.code, 0, timing.stderr);
+    const timingPayload = JSON.parse(timing.stdout);
+    assert.equal(timingPayload.records.length, 1);
+    assert.equal(timingPayload.records[0].kind, "health");
+  } finally {
+    replay.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
@@ -1460,19 +1507,22 @@ test("integration: setup and ask succeed for minimax via bundled companion", asy
 
 test("integration: setup and ask succeed for claude via bundled companion", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
-  const fake = createFakeClaudeBin();
+  const replay = createClaudeFixtureReplay("ask-ok");
   try {
     const askPayload = await assertSetupAndAsk("claude", cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
-      CLAUDE_CLI_BIN: fake.bin,
-    }), "__delay=15 __tail=20 __reply=PONG");
+      CLAUDE_CLI_BIN: replay.bin,
+    }), "Reply with only: PONG");
+    assert.equal(askPayload.response, replay.meta.expected.response);
+    assert.equal(askPayload.sessionId, replay.meta.expected.sessionId);
+    assert.equal(askPayload.model, replay.meta.expected.model);
     assert.equal(askPayload.timing.runtimePersistence, "session");
     assert.equal(askPayload.timing.metrics.ttft.status, "measured");
     assert.equal(askPayload.timing.metrics.gen.status, "measured");
     assert.equal(askPayload.timing.metrics.tail.status, "measured");
     assert.equal(askPayload.timing.metrics.tool.status, "unsupported");
   } finally {
-    fake.cleanup();
+    replay.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
