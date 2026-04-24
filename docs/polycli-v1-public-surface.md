@@ -1,32 +1,10 @@
 # polycli v1 Public Surface
 
-> **Superseded — v0.3 snapshot.** This document describes the v1 scope as it stood in the `@bbingz/polycli-utils` + `@bbingz/polycli-timing` utility-only era. From v0.4.x onward the repo also ships `@bbingz/polycli-runtime` with eight provider adapters (claude / copilot / gemini / kimi / qwen / minimax / opencode / pi). The "v1 does not ship provider adapters" language below is accurate for v0.3 and historical for everything after it.
->
-> For the current surface see:
-> - `README.md` — provider capability matrix + usage
-> - `packages/polycli-runtime/src/registry.js` — the live `RUNTIMES` table
-> - `packages/polycli-runtime/src/timing.js` — per-provider timing capability
-> - `CHANGELOG.md` — 0.3.0 → 0.4.1 delta and beyond
-> - `docs/roadmap.md` R3 — when and how this doc will be rewritten vs. retired
->
-> Kept here because `AGENTS.md` and earlier review docs still cite it as the frozen reference point for what the utility packages promised at v1.
+## Status
 
-## Status (v0.3 snapshot)
+`@bbingz/polycli-utils` and `@bbingz/polycli-timing` are the v1 public surface, published to npm from v0.5.0 onward. `@bbingz/polycli-runtime` and provider adapters live in this repo but remain internal (`private: true`): they are bundled into host plugins and are not part of the v1 npm contract.
 
-`polycli` v1 is a package-and-contract repo, not a provider implementation repo.
-
-What exists today:
-
-- `@bbingz/polycli-utils`
-- `@bbingz/polycli-timing`
-
-What does not exist in this repo today:
-
-- `gemini` / `kimi` / `qwen` / `minimax` provider adapters
-- a shared provider runtime
-- a unified session framework
-
-The four providers appear in proposal docs, examples, and test fixtures because `polycli` is designed for cross-provider companion ecosystems. They are not implemented inside this repository.
+The repo now contains provider runtime code for host plugin builds, but that code is outside the v1 public package surface. The public contract is intentionally limited to utility helpers and timing semantics.
 
 ## v1 Package Surface
 
@@ -56,6 +34,16 @@ Stable root exports in v1:
 - `parseStreamJsonLine()`
 - `parseStreamJsonText()`
 
+Stable subpath exports in v1:
+
+- `@bbingz/polycli-utils/args`
+- `@bbingz/polycli-utils/process`
+- `@bbingz/polycli-utils/stream`
+- `@bbingz/polycli-utils/atomic-save`
+- `@bbingz/polycli-utils/ndjson`
+- `@bbingz/polycli-utils/session-id`
+- `@bbingz/polycli-utils/parse-stream-json`
+
 Non-goals for this package:
 
 - provider-specific protocol adapters
@@ -78,6 +66,10 @@ Stable root exports in v1:
 - `calculatePercentiles()`
 - `aggregateTimingRecords()`
 
+Stable subpath exports in v1:
+
+- `@bbingz/polycli-timing/schema`
+
 Stable semantics in v1:
 
 - `unsupported`, `missing`, `zero`, and `measured` are distinct states and must not be collapsed.
@@ -85,12 +77,8 @@ Stable semantics in v1:
 - Aggregation is capability-aware and must preserve state distinctions.
 - Aggregation also reports per-provider `runtimePersistenceCounts` and `measurementScopeCounts` so mixed request/session/daemon or request/turn/job data is visible instead of silently blended.
 
-## Provider Decision For v1
+## Runtime And Provider Split
 
-The provider-adapter answer for `v1` is explicit:
+`@bbingz/polycli-runtime` is an internal bundler input, not a public npm contract. Provider adapters may change as host plugin needs evolve; do not import them as stable API unless they are explicitly promoted in a future major-version surface document.
 
-- `v1` does not ship provider adapters in this repository.
-- The old provider repos remain external references, not subdirectories to import or rewrite.
-- If provider adapters are added later, they should land as separate packages with explicit contracts, instead of being smuggled into `utils` or `timing`.
-
-This keeps `v1` small, testable, and publishable without pretending the provider model is already settled.
+This keeps v1 small, testable, and publishable without pretending the provider model is a public framework.

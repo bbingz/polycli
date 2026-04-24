@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Codex — prepare utils and timing for first npm publish
+
+- Made `@bbingz/polycli-utils` and `@bbingz/polycli-timing` publishable by removing `private: true` and adding npm metadata, package file lists, and public publish config while leaving `@bbingz/polycli-runtime` private.
+- Refreshed both package READMEs and rewrote `docs/polycli-v1-public-surface.md` as the live v1 contract for utils + timing only.
+- Added `pack:utils` / `pack:timing` scripts, updated manifest validation to require only runtime to stay private, and made `release:check` validate publishable packages repeatably: unpublished versions use `npm publish --dry-run`, already-published versions fall back to `npm pack --dry-run`.
+
+---
+
 ## 2026-04-24 — Codex — name auth-probe transient-error regex contracts
 
 - Extracted the transient auth-probe regexes in gemini / qwen / kimi / opencode / pi into provider-local `TRANSIENT_PROBE_ERROR_PATTERNS` exports without changing the existing match behavior.

@@ -16,7 +16,9 @@
     "check:review-drift": "node scripts/check-review-cli-drift.mjs",
     "pack:codex": "VERSION=$(node -p \"require('./plugins/polycli-codex/.codex-plugin/plugin.json').version\") && mkdir -p dist && tar -czf dist/polycli-codex-$VERSION.tgz -C plugins polycli-codex",
     "pack:opencode": "mkdir -p dist && npm pack ./plugins/polycli-opencode --pack-destination dist",
-    "release:check": "npm test && npm run validate:manifests && claude plugin validate .claude-plugin/marketplace.json && claude plugin validate plugins/polycli/.claude-plugin/plugin.json && npm publish ./plugins/polycli-opencode --dry-run --access public"
+    "pack:utils": "mkdir -p dist && npm pack ./packages/polycli-utils --pack-destination dist",
+    "pack:timing": "mkdir -p dist && npm pack ./packages/polycli-timing --pack-destination dist",
+    "release:check": "npm test && npm run validate:manifests && claude plugin validate .claude-plugin/marketplace.json && claude plugin validate plugins/polycli/.claude-plugin/plugin.json && { check_publishable() { pkg_dir=\"$1\"; pkg_spec=$(node -e \"const p = require(process.argv[1] + '/package.json'); process.stdout.write(p.name + '@' + p.version);\" \"$pkg_dir\"); if npm view \"$pkg_spec\" version >/dev/null 2>&1; then npm pack \"$pkg_dir\" --dry-run >/dev/null; else npm publish \"$pkg_dir\" --dry-run --access public; fi; }; check_publishable ./plugins/polycli-opencode && check_publishable ./packages/polycli-utils && check_publishable ./packages/polycli-timing; }"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.14.20",

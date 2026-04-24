@@ -1,38 +1,16 @@
 # @bbingz/polycli-utils
 
-`@bbingz/polycli-utils` 只收低语义风险、跨 provider 可复用的工具模块。
+Low-semantic-risk utilities shared by polycli provider runtimes: argument parsing, child-process helpers, stream decoding, atomic JSON/file writes, NDJSON history, session-id matching, and stream JSON parsing. This package is not a provider framework: it does not define provider protocols, canonical event schemas, auth logic, retry policy, or session/runtime inheritance.
 
-## Exports
+## Install
 
-- `args`
-- `process`
-- `stream`
-- `atomic-save`
-- `ndjson`
-- `session-id`
-- `parse-stream-json`
-
-## Example
-
-```js
-import {
-  parseArgs,
-  createLineDecoder,
-  parseStreamJsonLine,
-  appendNdjson,
-  resolveSessionId
-} from "./src/index.js";
+```sh
+npm install @bbingz/polycli-utils
 ```
 
-## Notes
+## Root Exports
 
-- `terminateProcessTree()` 在 POSIX 上优先尝试按 process-group 终止；调用方最好传入 pgid/leader pid，而不是任意子进程 pid。
-- `parseStreamJsonLine()` 只负责单行噪声前缀剥离和 JSON 解析，不负责 provider-specific canonical event 映射。
-- `appendNdjson()` 会在同目录创建 `*.lock` 锁文件，并在超限时按比例裁剪历史。
-
-## Public Surface
-
-v1 稳定根导出以 `src/index.js` 和导出测试为准：
+The root export mirrors `src/index.js`:
 
 - `parseArgs`
 - `splitRawArgumentString`
@@ -55,3 +33,31 @@ v1 稳定根导出以 `src/index.js` 和导出测试为准：
 - `resolveSessionId`
 - `parseStreamJsonLine`
 - `parseStreamJsonText`
+
+## Subpath Exports
+
+- `@bbingz/polycli-utils/args`
+- `@bbingz/polycli-utils/process`
+- `@bbingz/polycli-utils/stream`
+- `@bbingz/polycli-utils/atomic-save`
+- `@bbingz/polycli-utils/ndjson`
+- `@bbingz/polycli-utils/session-id`
+- `@bbingz/polycli-utils/parse-stream-json`
+
+## Example
+
+```js
+import {
+  parseArgs,
+  createLineDecoder,
+  parseStreamJsonLine,
+  appendNdjson,
+  resolveSessionId,
+} from "@bbingz/polycli-utils";
+```
+
+## Semver Policy
+
+v1.x is the first stable line. Additive exports and backward-compatible behavior are minor releases. Removing exports, changing documented return shapes, or collapsing existing error/status semantics requires a major version.
+
+The authoritative v1 surface reference is [docs/polycli-v1-public-surface.md](../../docs/polycli-v1-public-surface.md).

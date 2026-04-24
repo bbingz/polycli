@@ -1,8 +1,30 @@
 {
   "name": "@bbingz/polycli-timing",
-  "private": true,
   "version": "1.0.0",
+  "description": "Capability-aware timing schema, percentile aggregation, and four-state (measured / zero / missing / unsupported) validation for cross-provider AI CLI comparison.",
+  "license": "MIT",
+  "homepage": "https://github.com/bbingz/polycli/tree/main/packages/polycli-timing",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bbingz/polycli.git",
+    "directory": "packages/polycli-timing"
+  },
+  "keywords": [
+    "polycli",
+    "timing",
+    "schema",
+    "percentiles",
+    "aggregation",
+    "capability-aware"
+  ],
   "type": "module",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": "./src/index.js",
     "./schema": "./timing.schema.json"
