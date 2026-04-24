@@ -6,6 +6,15 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Claude — v0.5.0 shipped
+
+- Pushed `main` + tag `v0.5.0` (tag at 306c703 — R5 fixture replay pilot commit).
+- GitHub release live at https://github.com/bbingz/polycli/releases/tag/v0.5.0 (notes from `docs/release-notes-v0.5.0.md`).
+- npm: **first public publishes** of `@bbingz/polycli-utils@1.0.0` and `@bbingz/polycli-timing@1.0.0`; `@bbingz/polycli-opencode@0.5.0` also published. All three confirmed via `npm search '@bbingz/'`.
+- Closes roadmap R5 (Claude host fixture pilot), R6 (auth-probe transient-error regex named contracts), and Q1 (utils + timing published). Q2 and Q3 remain in "observing" state. Runtime stays private. 256/256 tests pass at release tag.
+
+---
+
 ## 2026-04-24 — Claude — prepare v0.5.0 release
 
 - Bumped the four host plugin release manifests and both host marketplace metadata entries from `0.4.2` to `0.5.0`.
