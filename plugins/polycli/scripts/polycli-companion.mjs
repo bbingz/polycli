@@ -190,6 +190,73 @@ function parseExecutionMode(options) {
   };
 }
 
+function emitNote(line) {
+  if (!line) return;
+  process.stderr.write(`${line}\n`);
+}
+
+function emitRuntimeWarnings(result = {}) {
+  if (!Array.isArray(result.warnings)) return;
+  for (const warning of result.warnings) {
+    if (typeof warning === "string" && warning.trim()) {
+      process.stderr.write(`${warning.trim()}\n`);
+    }
+  }
+}
+
+function validateEffort(effort) {
+  if (effort == null) return;
+  if (!["low", "medium", "high"].includes(effort)) {
+    throw new Error("--effort must be one of: low, medium, high.");
+  }
+}
+
+function buildProviderFlagRuntimeOptions(provider, options) {
+  const runtimeOptions = {};
+  const notes = [];
+  const resumeFlags = [
+    options["resume-last"] ? "--resume-last" : null,
+    options.resume ? "--resume" : null,
+    options.fresh ? "--fresh" : null,
+  ].filter(Boolean);
+
+  if (provider === "kimi") {
+    if (resumeFlags.length > 1) {
+      throw new Error("Choose only one of --resume-last, --resume, or --fresh.");
+    }
+    if (options["resume-last"]) runtimeOptions.resumeLast = true;
+    if (options.resume) runtimeOptions.resumeSessionId = options.resume;
+    if (options.fresh) runtimeOptions.fresh = true;
+    if (options.write) {
+      notes.push("Kimi doesn't distinguish plan-mode from write-mode; it will act on what the prompt asks.");
+    }
+    if (options.effort) {
+      notes.push(`--effort is gemini-specific; ${provider} will proceed without it.`);
+    }
+    return { runtimeOptions, notes };
+  }
+
+  if (provider === "gemini") {
+    if (options.write) runtimeOptions.write = true;
+    if (options.effort) runtimeOptions.effort = options.effort;
+    if (resumeFlags.length > 0) {
+      notes.push(`${resumeFlags.join(", ")} ${resumeFlags.length === 1 ? "is" : "are"} kimi-specific; ${provider} will proceed without ${resumeFlags.length === 1 ? "it" : "them"}.`);
+    }
+    return { runtimeOptions, notes };
+  }
+
+  if (options.write) {
+    notes.push(`--write is gemini-specific; ${provider} will proceed without it.`);
+  }
+  if (options.effort) {
+    notes.push(`--effort is gemini-specific; ${provider} will proceed without it.`);
+  }
+  if (resumeFlags.length > 0) {
+    notes.push(`${resumeFlags.join(", ")} ${resumeFlags.length === 1 ? "is" : "are"} kimi-specific; ${provider} will proceed without ${resumeFlags.length === 1 ? "it" : "them"}.`);
+  }
+  return { runtimeOptions, notes };
+}
+
 function buildExecutionEnvelope(execution, result) {
   return {
     provider: execution.provider,
@@ -250,6 +317,7 @@ async function runForegroundExecution(execution, asJson) {
   } finally {
     cleanupRuntimeOptions(execution.runtimeOptions);
   }
+  emitRuntimeWarnings(result);
   if (result.timing) {
     appendTimingRecord(workspaceRoot, result.timing);
   }
@@ -610,19 +678,22 @@ async function runHealth(rawArgs) {
 
 function parsePromptExecution(rawArgs, kind) {
   const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json", "background", "wait"],
-    valueOptions: ["provider", "model"],
+    booleanOptions: ["json", "background", "wait", "resume-last", "fresh", "write"],
+    valueOptions: ["provider", "model", "resume", "effort"],
     aliasMap: { m: "model" },
   });
   const { provider, remainingPositionals } = resolveProvider({
     provider: options.provider,
     positionals,
   });
+  validateEffort(options.effort);
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
   const userPrompt = remainingPositionals.join(" ").trim();
   if (!userPrompt) {
     throw new Error(`Missing prompt text for ${kind}.`);
   }
+  const providerFlags = buildProviderFlagRuntimeOptions(provider, options);
+  for (const note of providerFlags.notes) emitNote(note);
   return {
     options,
     execution: {
@@ -640,6 +711,7 @@ function parsePromptExecution(rawArgs, kind) {
       runtimeOptions: buildPromptRuntimeOptions({
         provider,
         kind,
+        runtimeOptions: providerFlags.runtimeOptions,
       }),
     },
   };

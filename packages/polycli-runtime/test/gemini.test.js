@@ -8,6 +8,7 @@ import path from "node:path";
 import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import { TRANSIENT_PROBE_ERROR_PATTERNS as GEMINI_TRANSIENT_PROBE_ERROR_PATTERNS } from "../src/gemini.js";
 import {
+  applyGeminiEffort,
   buildGeminiInvocation,
   extractGeminiText,
   getGeminiAuthStatus,
@@ -52,6 +53,31 @@ test("buildGeminiInvocation uses stdin for large prompts and preserves approval 
     "--resume",
     "session-123",
   ]);
+});
+
+test("buildGeminiInvocation maps write and effort to approval mode and prompt budget", () => {
+  const invocation = buildGeminiInvocation({
+    prompt: "fix the bug",
+    write: true,
+    effort: "high",
+    outputFormat: "stream-json",
+  });
+
+  assert.deepEqual(invocation.args.slice(0, 6), [
+    "-p",
+    "Think step by step. Be thorough and consider edge cases.\n\nfix the bug",
+    "-o",
+    "stream-json",
+    "--approval-mode",
+    "auto_edit",
+  ]);
+
+  assert.equal(
+    applyGeminiEffort("summarize", "low"),
+    "Be concise. Give the most direct answer.\n\nsummarize"
+  );
+  assert.equal(applyGeminiEffort("summarize", "medium"), "summarize");
+  assert.equal(applyGeminiEffort("summarize", "invalid"), "summarize");
 });
 
 test("buildGeminiInvocation switches to stdin by UTF-8 byte length", () => {

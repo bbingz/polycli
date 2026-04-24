@@ -7,6 +7,7 @@ test("runtime index exports expected surface", () => {
   assert.deepEqual(Object.keys(runtime).sort(), [
     "PROVIDER_IDS",
     "PROVIDER_OPERATION_NAMES",
+    "applyGeminiEffort",
     "buildClaudeInvocation",
     "buildCopilotInvocation",
     "buildGeminiInvocation",
@@ -54,6 +55,7 @@ test("runtime index exports expected surface", () => {
     "parseOpenCodeStreamText",
     "parsePiStreamText",
     "parseQwenStreamText",
+    "resolveKimiResumeSession",
     "runClaudePrompt",
     "runClaudePromptStreaming",
     "runCopilotPrompt",

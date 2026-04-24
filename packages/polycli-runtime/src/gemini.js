@@ -10,25 +10,41 @@ const DEFAULT_TIMEOUT_MS = 300_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const PROMPT_STDIN_THRESHOLD = 100_000;
 const GEMINI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+const VALID_GEMINI_EFFORTS = new Set(["low", "medium", "high"]);
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
 ];
+
+export function applyGeminiEffort(prompt, effort) {
+  const promptText = String(prompt ?? "");
+  if (!VALID_GEMINI_EFFORTS.has(effort)) return promptText;
+  if (effort === "high") {
+    return `Think step by step. Be thorough and consider edge cases.\n\n${promptText}`;
+  }
+  if (effort === "low") {
+    return `Be concise. Give the most direct answer.\n\n${promptText}`;
+  }
+  return promptText;
+}
 
 export function buildGeminiInvocation({
   prompt,
   model = null,
   approvalMode = "plan",
+  write = false,
+  effort = null,
   outputFormat = "json",
   resumeSessionId = null,
   extraArgs = [],
   bin = GEMINI_BIN,
 } = {}) {
-  const promptText = String(prompt ?? "");
+  const promptText = applyGeminiEffort(prompt, effort);
   const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD;
   const args = ["-p", useStdin ? "" : promptText, "-o", outputFormat];
+  const resolvedApprovalMode = write ? "auto_edit" : approvalMode;
 
   if (model) args.push("-m", model);
-  args.push("--approval-mode", approvalMode);
+  args.push("--approval-mode", resolvedApprovalMode);
   if (resumeSessionId) args.push("--resume", resumeSessionId);
   if (extraArgs.length > 0) args.push(...extraArgs);
 
@@ -160,6 +176,8 @@ export function runGeminiPrompt({
   prompt,
   model = null,
   approvalMode = "plan",
+  write = false,
+  effort = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
@@ -171,6 +189,8 @@ export function runGeminiPrompt({
     prompt,
     model,
     approvalMode,
+    write,
+    effort,
     outputFormat: "json",
     resumeSessionId,
     extraArgs,
@@ -201,6 +221,8 @@ export function runGeminiPromptStreaming({
   prompt,
   model = null,
   approvalMode = "plan",
+  write = false,
+  effort = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
@@ -214,6 +236,8 @@ export function runGeminiPromptStreaming({
     prompt,
     model,
     approvalMode,
+    write,
+    effort,
     outputFormat: "stream-json",
     resumeSessionId,
     extraArgs,

@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Codex — add R8a/R8d unified flags
+
+- Added Kimi-only `--resume-last` / `--resume <uuid>` / `--fresh` handling on `/polycli:ask` and `/polycli:rescue`, including wrapper-side session validation and resume-mismatch warnings.
+- Added Gemini-only `--write` and `--effort low|medium|high` handling on the unified ask/rescue surface.
+- Documented and tested unsupported-provider silent-drop notes for the new provider-specific flags.
+
+---
+
 ## 2026-04-24 — Codex — v0.5.1 shipped
 
 - Pushed `main` and tag `v0.5.1` (tag at `0b79c86`).
