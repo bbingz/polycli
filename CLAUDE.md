@@ -15,7 +15,7 @@ Claude Code 专属补丁。基础规则见 [AGENTS.md](AGENTS.md)，此处只列
 - 不要把 provider-specific 协议解析挪进 `polycli-utils`
 - `polycli-timing` 的四态（`measured` / `zero` / `missing` / `unsupported`）不可折叠或合并
 - `cold` / `retry` 指标**故意未实现**（上游 CLI 无稳定信号）；禁止 fake、禁止静默降级成 `missing`
-- legacy 仓库（`gemini-plugin-cc` / `qwen-plugin-cc` / `kimi-plugin-cc` / `minimax-plugin-cc`）不要编辑。R8 convergence（见 roadmap）期间允许 grep-for-port；R8g 归档后恢复只读引用状态
+- legacy 仓库（`gemini-plugin-cc` / `qwen-plugin-cc` / `kimi-plugin-cc` / `minimax-plugin-cc`）作为永久 reference 保留——允许 grep 对比，不要编辑。v0.6.0 已把它们的能力合并进 polycli（见 `docs/release-notes-v0.6.0.md` 的 migration table），但 legacy 仓库本身不归档、不删
 
 ## 运行命令的优先级
 

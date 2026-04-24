@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Claude — close R8 bookkeeping post-ship
+
+- Relaxed the CLAUDE.md legacy-repo constraint to a permanent "allow grep, no edits" form (dropped the "R8 期间" conditional now that R8 is complete and R8g was cancelled).
+- Updated `project_legacy_repos_reference.md` memory from "R8 convergence targets" to "permanent references; v0.6.0 absorbed their functionality".
+- Added two new feedback memory entries: codex-rescue operational quirks (fire-and-forget wrapper, sandbox git-commit block, branch-name misreport) and release-ops gotchas (claude plugin validate Node 25 crash, npm 2FA TTY requirement).
+
+---
+
 ## 2026-04-24 — Claude — v0.6.0 shipped
 
 - Pushed `main` and tag `v0.6.0` (tag at `a95e3d8`).
