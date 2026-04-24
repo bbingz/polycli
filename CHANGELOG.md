@@ -6,6 +6,15 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Claude — open R8 legacy plugin convergence
+
+- Reversed the prior non-goal "No migration of legacy sibling repos into this monorepo" after a capability gap audit against `gemini-plugin-cc` / `kimi-plugin-cc` / `qwen-plugin-cc` / `minimax-plugin-cc`.
+- Added R8 to `docs/roadmap.md` with sub-items R8a–R8g: kimi session continuation; session-lifecycle + stop-time review gate hooks; per-provider guidance skills; rescue flag semantics; per-provider subagent types; namespace UX; legacy repo retirement.
+- Updated `project_legacy_repos_reference.md` memory to flip the stance from "reference-only, never migrate" to "convergence targets under R8; grep-for-port OK, no edits."
+- Narrowed the CLAUDE.md architecture-boundary constraint on legacy repos from "不要 grep、不要编辑" to "不要编辑; R8 期间允许 grep-for-port" (user-confirmed in same session).
+
+---
+
 ## 2026-04-24 — Codex — v0.5.1 shipped
 
 - Pushed `main` and tag `v0.5.1` (tag at `0b79c86`).
