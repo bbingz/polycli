@@ -1,6 +1,7 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
+import { formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
@@ -47,10 +48,10 @@ function getOpenCodeResultError(event) {
     return event.error;
   }
   if (Number.isFinite(event.exitCode) && event.exitCode !== 0) {
-    return `opencode exited with code ${event.exitCode}`;
+    return formatProviderExitError("opencode", event.exitCode);
   }
   if (Number.isFinite(event.status) && event.status !== 0) {
-    return `opencode exited with code ${event.status}`;
+    return formatProviderExitError("opencode", event.status);
   }
   return null;
 }
@@ -223,7 +224,7 @@ export function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel =
     status,
     error: status === 0
       ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
-      : (String(stderr ?? "").trim() || `opencode exited with code ${status}`),
+      : (String(stderr ?? "").trim() || formatProviderExitError("opencode", status)),
   };
 }
 

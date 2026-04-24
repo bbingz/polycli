@@ -2,6 +2,7 @@ import { parseStreamJsonLine } from "@bbingz/polycli-utils/parse-stream-json";
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
+import { formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const CLAUDE_BIN = process.env.CLAUDE_CLI_BIN || "claude";
@@ -174,7 +175,7 @@ export function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = n
   if (jsonStart < 0) {
     return {
       ok: false,
-      error: String(stderr ?? "").trim() || `claude exited with code ${status}`,
+      error: String(stderr ?? "").trim() || formatProviderExitError("claude", status),
       status,
     };
   }
@@ -191,7 +192,7 @@ export function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = n
     const errorText = isClaudeErrorResultEvent(parsed) ? getClaudeErrorText(parsed) : null;
     const processError = status === 0
       ? null
-      : (String(stderr ?? "").trim() || `claude exited with code ${status}`);
+      : (String(stderr ?? "").trim() || formatProviderExitError("claude", status));
 
     return {
       ok: status === 0 && !isClaudeErrorResultEvent(parsed),

@@ -14,7 +14,14 @@ export function readNdjson(filePath) {
   let text;
   try {
     text = fs.readFileSync(filePath, "utf8");
-  } catch {
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+
+  if (text.length === 0) {
     return [];
   }
 
@@ -60,8 +67,10 @@ export function appendNdjson(
         }
         needsLeadingNewline = lastByte[0] !== 0x0a;
       }
-    } catch {
-      // new file
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
     }
 
     const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}\n`;

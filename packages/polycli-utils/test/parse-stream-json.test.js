@@ -16,3 +16,23 @@ test("parseStreamJsonLine surfaces malformed JSON as parse_error", () => {
   assert.equal(parsed.kind, "parse_error");
   assert.match(parsed.error, /Unexpected end|Expected/);
 });
+
+test("parseStreamJsonLine accepts prefixed JSON arrays", () => {
+  const parsed = parseStreamJsonLine('noise before [1, {"ok":true}]');
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.event, [1, { ok: true }]);
+  assert.equal(parsed.prefix, "noise before ");
+});
+
+test("parseStreamJsonLine accepts prefixed bare JSON values", () => {
+  const parsed = parseStreamJsonLine('noise before true');
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.event, true);
+  assert.equal(parsed.prefix, "noise before ");
+});
+
+test("parseStreamJsonLine distinguishes non-json prose from blank lines", () => {
+  const parsed = parseStreamJsonLine("this line has no json payload");
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.kind, "non_json");
+});

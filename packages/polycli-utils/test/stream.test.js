@@ -16,3 +16,12 @@ test("createLineDecoder preserves UTF-8 characters split across chunks", () => {
   assert.deepEqual(secondPass, ["你好"]);
   assert.deepEqual(finalPass, ["second"]);
 });
+
+test("createLineDecoder rejects an overlong line buffer", () => {
+  const decoder = createLineDecoder({ maxBufferBytes: 4 });
+
+  assert.throws(
+    () => decoder.push(Buffer.from("hello")),
+    /Line buffer exceeded maxBufferBytes/
+  );
+});

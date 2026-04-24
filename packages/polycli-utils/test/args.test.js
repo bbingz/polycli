@@ -25,3 +25,34 @@ test("splitRawArgumentString respects quotes and escapes", () => {
   const tokens = splitRawArgumentString(String.raw`ask "hello world" 'two words' plain\ value`);
   assert.deepEqual(tokens, ["ask", "hello world", "two words", "plain value"]);
 });
+
+test("parseArgs supports short value options concatenated to the flag", () => {
+  const parsed = parseArgs(["-r123e4567-e89b-12d3-a456-426614174000"], {
+    valueOptions: ["resume"],
+    aliasMap: { r: "resume" },
+  });
+
+  assert.deepEqual(parsed.options, {
+    resume: "123e4567-e89b-12d3-a456-426614174000",
+  });
+  assert.deepEqual(parsed.positionals, []);
+});
+
+test("parseArgs rejects empty inline boolean values", () => {
+  assert.throws(
+    () => parseArgs(["--json="], { booleanOptions: ["json"] }),
+    /Invalid boolean value for --json/
+  );
+});
+
+test("splitRawArgumentString keeps escaped double quotes inside double-quoted regions", () => {
+  const tokens = splitRawArgumentString(String.raw`ask "he said \"hi\"" plain`);
+  assert.deepEqual(tokens, ["ask", 'he said "hi"', "plain"]);
+});
+
+test("splitRawArgumentString rejects a trailing escape", () => {
+  assert.throws(
+    () => splitRawArgumentString("ask trailing\\"),
+    /Trailing escape/
+  );
+});

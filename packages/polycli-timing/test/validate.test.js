@@ -46,3 +46,49 @@ test("validateTimingRecord rejects impossible status/ms combinations", () => {
   assert.equal(result.ok, false);
   assert.match(result.errors.join("\n"), /cold/);
 });
+
+test("validateTimingRecord rejects extra metric keys and invalid total status", () => {
+  const result = validateTimingRecord({
+    version: 1,
+    provider: "claude",
+    runtimePersistence: "session",
+    measurementScope: "request",
+    completedAt: "2026-04-21T10:00:00.000Z",
+    metrics: {
+      cold: { status: "unsupported", ms: null },
+      ttft: { status: "measured", ms: 20 },
+      gen: { status: "measured", ms: 30 },
+      tool: { status: "missing", ms: null },
+      retry: { status: "unsupported", ms: null },
+      tail: { status: "measured", ms: 5 },
+      total: { status: "missing", ms: null },
+      extra: { status: "measured", ms: 1 },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /metrics\.extra is not allowed/);
+  assert.match(result.errors.join("\n"), /metrics\.total\.status must be measured or zero/);
+});
+
+test("validateTimingRecord rejects negative metric milliseconds", () => {
+  const result = validateTimingRecord({
+    version: 1,
+    provider: "claude",
+    runtimePersistence: "session",
+    measurementScope: "request",
+    completedAt: "2026-04-21T10:00:00.000Z",
+    metrics: {
+      cold: { status: "unsupported", ms: null },
+      ttft: { status: "measured", ms: -1 },
+      gen: { status: "measured", ms: 30 },
+      tool: { status: "missing", ms: null },
+      retry: { status: "unsupported", ms: null },
+      tail: { status: "measured", ms: 5 },
+      total: { status: "measured", ms: 66 },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /metrics\.ttft\.ms must be > 0/);
+});

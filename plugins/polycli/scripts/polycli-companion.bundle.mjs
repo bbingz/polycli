@@ -36,6 +36,9 @@ function parseArgs(argv, config = {}) {
       const inlineValue = eqIdx >= 0 ? token.slice(eqIdx + 1) : void 0;
       const key2 = aliasMap[rawKey] ?? rawKey;
       if (booleanOptions.has(key2)) {
+        if (inlineValue === "") {
+          throw new Error(`Invalid boolean value for --${rawKey}`);
+        }
         options[key2] = inlineValue === void 0 ? true : inlineValue !== "false";
         continue;
       }
@@ -53,19 +56,27 @@ function parseArgs(argv, config = {}) {
       positionals.push(token);
       continue;
     }
-    const shortKey = token.slice(1);
+    const shortToken = token.slice(1);
+    const shortKey = shortToken[0];
+    const inlineShortValue = shortToken.length > 1 ? shortToken.slice(1) : void 0;
     const key = aliasMap[shortKey] ?? shortKey;
     if (booleanOptions.has(key)) {
+      if (inlineShortValue !== void 0) {
+        positionals.push(token);
+        continue;
+      }
       options[key] = true;
       continue;
     }
     if (valueOptions.has(key)) {
-      const nextValue = argv[index + 1];
+      const nextValue = inlineShortValue ?? argv[index + 1];
       if (nextValue === void 0) {
         throw new Error(`Missing value for -${shortKey}`);
       }
       options[key] = nextValue;
-      index += 1;
+      if (inlineShortValue === void 0) {
+        index += 1;
+      }
       continue;
     }
     positionals.push(token);
@@ -78,6 +89,19 @@ var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "o
 var PROVIDER_OPERATION_NAMES = ["prompt"];
 
 // packages/polycli-utils/src/parse-stream-json.js
+function findJsonStart(text) {
+  for (let index = 0; index < text.length; index += 1) {
+    const slice = text.slice(index);
+    const character = text[index];
+    if (character === "{" || character === "[" || character === '"' || character === "-" || /\d/.test(character)) {
+      return index;
+    }
+    if (slice.startsWith("true") || slice.startsWith("false") || slice.startsWith("null")) {
+      return index;
+    }
+  }
+  return -1;
+}
 function parseStreamJsonLine(raw, { allowPrefix = true } = {}) {
   const text = String(raw ?? "");
   const trimmed = text.trim();
@@ -87,14 +111,14 @@ function parseStreamJsonLine(raw, { allowPrefix = true } = {}) {
   let jsonCandidate = trimmed;
   let prefix = "";
   if (allowPrefix) {
-    const jsonStart = text.indexOf("{");
+    const jsonStart = findJsonStart(text);
     if (jsonStart < 0) {
-      return { ok: false, kind: "blank", raw: text };
+      return { ok: false, kind: "non_json", raw: text };
     }
     prefix = text.slice(0, jsonStart);
     jsonCandidate = text.slice(jsonStart).trim();
-  } else if (!trimmed.startsWith("{")) {
-    return { ok: false, kind: "blank", raw: text };
+  } else if (!trimmed.startsWith("{") && !trimmed.startsWith("[") && !trimmed.startsWith('"') && !trimmed.startsWith("-") && !/^\d/.test(trimmed) && !trimmed.startsWith("true") && !trimmed.startsWith("false") && !trimmed.startsWith("null")) {
+    return { ok: false, kind: "non_json", raw: text };
   }
   try {
     return {
@@ -270,14 +294,33 @@ function resolveSessionId({
   return { sessionId: null, source: null };
 }
 
+// packages/polycli-runtime/src/errors.js
+function formatProviderExitError(provider, status) {
+  if (status === 124) {
+    return `${provider} timed out`;
+  }
+  if (status === 130) {
+    return `${provider} interrupted`;
+  }
+  if (status === 143) {
+    return `${provider} terminated`;
+  }
+  return `${provider} exited with code ${status}`;
+}
+
 // packages/polycli-runtime/src/spawn.js
 import { spawn } from "node:child_process";
 
 // packages/polycli-utils/src/stream.js
 import { StringDecoder } from "node:string_decoder";
-function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true } = {}) {
+function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true, maxBufferBytes = 1048576 } = {}) {
   const decoder = new StringDecoder(encoding);
   let buffer = "";
+  const assertBufferLimit = () => {
+    if (maxBufferBytes != null && Buffer.byteLength(buffer, encoding) > maxBufferBytes) {
+      throw new Error(`Line buffer exceeded maxBufferBytes (${maxBufferBytes})`);
+    }
+  };
   const normalize = (line) => {
     if (stripCarriageReturn && line.endsWith("\r")) {
       return line.slice(0, -1);
@@ -298,10 +341,12 @@ function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true } = {
     push(chunk) {
       if (chunk == null) return [];
       buffer += decoder.write(chunk);
+      assertBufferLimit();
       return drain();
     },
     end() {
       buffer += decoder.end();
+      assertBufferLimit();
       const lines = drain();
       if (buffer.length > 0) {
         lines.push(normalize(buffer));
@@ -313,6 +358,21 @@ function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true } = {
 }
 
 // packages/polycli-runtime/src/spawn.js
+function formatExitError(status, signal, { timedOut = false, aborted = false } = {}) {
+  if (aborted) {
+    return "process aborted";
+  }
+  if (timedOut || status === 124) {
+    return "process timed out";
+  }
+  if (signal === "SIGINT" || status === 130) {
+    return "process interrupted";
+  }
+  if (signal === "SIGTERM" || status === 143) {
+    return "process terminated";
+  }
+  return `process exited with code ${status}`;
+}
 function spawnStreamingCommand({
   bin,
   args = [],
@@ -321,6 +381,8 @@ function spawnStreamingCommand({
   input,
   timeout,
   killGraceMs = 2e3,
+  signal = null,
+  maxBufferBytes = 1048576,
   stdio = ["pipe", "pipe", "pipe"],
   detached = false,
   unref = false,
@@ -349,29 +411,62 @@ function spawnStreamingCommand({
     if (unref && typeof child.unref === "function") {
       child.unref();
     }
-    const decoder = createLineDecoder();
+    const decoder = createLineDecoder({ maxBufferBytes });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let aborted = false;
     let settled = false;
     let timer = null;
     let forceTimer = null;
-    const signalChild = (signal) => {
+    const signalChild = (signal2) => {
       try {
         if (detached && Number.isInteger(child.pid) && child.pid > 0 && process.platform !== "win32") {
-          process.kill(-child.pid, signal);
+          process.kill(-child.pid, signal2);
           return;
         }
-        child.kill(signal);
+        child.kill(signal2);
       } catch {
       }
+    };
+    const cleanup = () => {
+      if (signal && typeof signal.removeEventListener === "function") {
+        signal.removeEventListener("abort", abortHandler);
+      }
+      child.stdout?.off?.("data", handleStdoutData);
+      child.stderr?.off?.("data", handleStderrData);
+      child.stdin?.off?.("error", handleStdinError);
+      child.off?.("error", handleChildError);
+      child.off?.("close", handleChildClose);
     };
     const finish = (result) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
       if (forceTimer) clearTimeout(forceTimer);
+      cleanup();
       resolve(result);
+    };
+    const finishDecoderError = (error) => {
+      finish({
+        ok: false,
+        status: null,
+        signal: null,
+        timedOut,
+        stdout,
+        stderr,
+        error: error.message
+      });
+    };
+    const abortHandler = () => {
+      if (settled || aborted) return;
+      aborted = true;
+      signalChild("SIGTERM");
+      if (killGraceMs > 0 && !forceTimer) {
+        forceTimer = setTimeout(() => {
+          signalChild("SIGKILL");
+        }, killGraceMs);
+      }
     };
     if (timeout != null) {
       timer = setTimeout(() => {
@@ -384,7 +479,7 @@ function spawnStreamingCommand({
         }
       }, timeout);
     }
-    child.on("error", (error) => {
+    const handleChildError = (error) => {
       finish({
         ok: false,
         status: null,
@@ -394,40 +489,50 @@ function spawnStreamingCommand({
         stderr,
         error: error.message
       });
-    });
-    if (child.stdin?.on) {
-      child.stdin.on("error", (error) => {
-        if (error?.code === "EPIPE" || error?.code === "ERR_STREAM_DESTROYED") {
-          return;
-        }
-        stderr += `${error.message}
+    };
+    const handleStdinError = (error) => {
+      if (error?.code === "EPIPE" || error?.code === "ERR_STREAM_DESTROYED") {
+        return;
+      }
+      stderr += `${error.message}
 `;
-      });
-    }
-    if (child.stdout?.on) {
-      child.stdout.on("data", (chunk) => {
-        for (const line of decoder.push(chunk)) {
-          stdout += `${line}
+    };
+    const handleStdoutData = (chunk) => {
+      if (settled) return;
+      let lines;
+      try {
+        lines = decoder.push(chunk);
+      } catch (error) {
+        finishDecoderError(error);
+        return;
+      }
+      for (const line of lines) {
+        stdout += `${line}
 `;
-          try {
-            onStdoutLine(line);
-          } catch {
-          }
-        }
-      });
-    }
-    if (child.stderr?.on) {
-      child.stderr.on("data", (chunk) => {
-        const text = chunk.toString("utf8");
-        stderr += text;
         try {
-          onStderrChunk(text);
+          onStdoutLine(line);
         } catch {
         }
-      });
-    }
-    child.on("close", (status, signal) => {
-      for (const line of decoder.end()) {
+      }
+    };
+    const handleStderrData = (chunk) => {
+      if (settled) return;
+      const text = chunk.toString("utf8");
+      stderr += text;
+      try {
+        onStderrChunk(text);
+      } catch {
+      }
+    };
+    const handleChildClose = (status, signalName) => {
+      let lines;
+      try {
+        lines = decoder.end();
+      } catch (error) {
+        finishDecoderError(error);
+        return;
+      }
+      for (const line of lines) {
         stdout += `${line}
 `;
         try {
@@ -436,18 +541,42 @@ function spawnStreamingCommand({
         }
       }
       finish({
-        ok: status === 0 && !timedOut,
+        ok: status === 0 && !timedOut && !aborted,
         status,
-        signal,
+        signal: signalName,
         timedOut,
         stdout,
         stderr,
-        error: status === 0 && !timedOut ? null : stderr.trim() || `process exited with code ${status}`
+        error: status === 0 && !timedOut && !aborted ? null : stderr.trim() || formatExitError(status, signalName, { timedOut, aborted })
       });
-    });
+    };
+    child.on("error", handleChildError);
+    child.stdin?.on?.("error", handleStdinError);
+    child.stdout?.on?.("data", handleStdoutData);
+    child.stderr?.on?.("data", handleStderrData);
+    child.on("close", handleChildClose);
+    if (signal && typeof signal.addEventListener === "function") {
+      if (signal.aborted) {
+        abortHandler();
+      } else {
+        signal.addEventListener("abort", abortHandler, { once: true });
+      }
+    }
     if (child.stdin) {
-      if (input != null) child.stdin.write(input);
-      child.stdin.end();
+      if (input != null) {
+        const wroteAll = child.stdin.write(input);
+        if (wroteAll === false && child.stdin.once) {
+          child.stdin.once("drain", () => {
+            if (!settled) {
+              child.stdin.end();
+            }
+          });
+        } else {
+          child.stdin.end();
+        }
+      } else {
+        child.stdin.end();
+      }
     }
   });
 }
@@ -593,7 +722,7 @@ function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = null } =
   if (jsonStart < 0) {
     return {
       ok: false,
-      error: String(stderr ?? "").trim() || `claude exited with code ${status}`,
+      error: String(stderr ?? "").trim() || formatProviderExitError("claude", status),
       status
     };
   }
@@ -607,7 +736,7 @@ function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = null } =
     const response = typeof parsed.result === "string" ? parsed.result : "";
     const sessionId = parsed.session_id ?? parsed.sessionId ?? resolvedSession.sessionId ?? null;
     const errorText = isClaudeErrorResultEvent(parsed) ? getClaudeErrorText(parsed) : null;
-    const processError = status === 0 ? null : String(stderr ?? "").trim() || `claude exited with code ${status}`;
+    const processError = status === 0 ? null : String(stderr ?? "").trim() || formatProviderExitError("claude", status);
     return {
       ok: status === 0 && !isClaudeErrorResultEvent(parsed),
       response,
@@ -783,10 +912,10 @@ function getCopilotResultError(event) {
     return event.error;
   }
   if (event.exitCode && event.exitCode !== 0) {
-    return `copilot exited with code ${event.exitCode}`;
+    return formatProviderExitError("copilot", event.exitCode);
   }
   if (event.status && event.status !== 0) {
-    return `copilot exited with code ${event.status}`;
+    return formatProviderExitError("copilot", event.status);
   }
   return null;
 }
@@ -870,7 +999,12 @@ function parseCopilotStreamText(text) {
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (!model && typeof event.data?.model === "string") model = event.data.model;
     if (event.type === "assistant.message" && typeof event.data?.content === "string") {
-      response = event.data.content;
+      if (!response.trim() || event.data.content.startsWith(response)) {
+        response = event.data.content;
+      } else {
+        response = `${response}
+${event.data.content}`;
+      }
       continue;
     }
     if (event.type === "result" || event.type === "final" || event.type === "error") {
@@ -943,7 +1077,7 @@ function runCopilotPrompt({
     events: parsed.events,
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model,
-    error: result.status === 0 ? resultError || (hasVisibleText ? null : "copilot produced no visible text") : result.stderr.trim() || `copilot exited with code ${result.status}`,
+    error: result.status === 0 ? resultError || (hasVisibleText ? null : "copilot produced no visible text") : result.stderr.trim() || formatProviderExitError("copilot", result.status),
     status: result.status
   };
 }
@@ -1081,7 +1215,7 @@ function parseGeminiJsonResult(stdout, stderr, status, { defaultModel = null } =
   if (jsonStart < 0) {
     return {
       ok: false,
-      error: String(stderr ?? "").trim() || `gemini exited with code ${status}`,
+      error: String(stderr ?? "").trim() || formatProviderExitError("gemini", status),
       status
     };
   }
@@ -1375,7 +1509,7 @@ function runKimiPrompt({
   if (result.status !== 0) {
     return {
       ok: false,
-      error: result.stderr.trim() || `kimi exited with code ${result.status}`,
+      error: result.stderr.trim() || formatProviderExitError("kimi", result.status),
       status: result.status
     };
   }
@@ -1733,7 +1867,7 @@ function runQwenPrompt({
     stderr: result.stderr,
     ...parsed,
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-    error: result.status === 0 && !resultEventError && parsed.response.trim() ? null : result.stderr.trim() || resultEventError || `qwen exited with code ${result.status}`
+    error: result.status === 0 && !resultEventError && parsed.response.trim() ? null : result.stderr.trim() || resultEventError || formatProviderExitError("qwen", result.status)
   };
 }
 function runQwenPromptStreaming({
@@ -2004,15 +2138,45 @@ function runMiniMaxPrompt({
       spawnImpl,
       onStdoutLine: handleStdoutLine
     }).then((result) => {
-      const effectiveLogPath = logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR);
-      const parsed = effectiveLogPath && fs2.existsSync(effectiveLogPath) ? extractMiniMaxResponseFromLogText(fs2.readFileSync(effectiveLogPath, "utf8")) : { response: "", finishReason: null, toolCalls: [] };
+      try {
+        const effectiveLogPath = logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR);
+        const parsed = effectiveLogPath && fs2.existsSync(effectiveLogPath) ? extractMiniMaxResponseFromLogText(fs2.readFileSync(effectiveLogPath, "utf8")) : { response: "", finishReason: null, toolCalls: [] };
+        resolve({
+          ...result,
+          logPath: effectiveLogPath,
+          ...parsed,
+          model: parsed.model ?? defaultModel,
+          ok: result.ok && Boolean(parsed.response.trim()),
+          error: result.ok && parsed.response.trim() ? null : result.error
+        });
+      } catch (error) {
+        resolve({
+          ok: false,
+          status: null,
+          signal: null,
+          timedOut: false,
+          stdout: "",
+          stderr: "",
+          response: "",
+          finishReason: null,
+          toolCalls: [],
+          logPath: logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR),
+          error: error.message
+        });
+      }
+    }, (error) => {
       resolve({
-        ...result,
-        logPath: effectiveLogPath,
-        ...parsed,
-        model: parsed.model ?? defaultModel,
-        ok: result.ok && Boolean(parsed.response.trim()),
-        error: result.ok && parsed.response.trim() ? null : result.error
+        ok: false,
+        status: null,
+        signal: null,
+        timedOut: false,
+        stdout: "",
+        stderr: "",
+        response: "",
+        finishReason: null,
+        toolCalls: [],
+        logPath: logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR),
+        error: error.message
       });
     });
   });
@@ -2098,10 +2262,10 @@ function getOpenCodeResultError(event) {
     return event.error;
   }
   if (Number.isFinite(event.exitCode) && event.exitCode !== 0) {
-    return `opencode exited with code ${event.exitCode}`;
+    return formatProviderExitError("opencode", event.exitCode);
   }
   if (Number.isFinite(event.status) && event.status !== 0) {
-    return `opencode exited with code ${event.status}`;
+    return formatProviderExitError("opencode", event.status);
   }
   return null;
 }
@@ -2249,7 +2413,7 @@ function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel = null }
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model ?? defaultModel,
     status,
-    error: status === 0 ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : String(stderr ?? "").trim() || `opencode exited with code ${status}`
+    error: status === 0 ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : String(stderr ?? "").trim() || formatProviderExitError("opencode", status)
   };
 }
 function getOpenCodeAvailability(cwd) {
@@ -2583,7 +2747,7 @@ function runPiPrompt({
     events: parsed.events,
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
-    error: result.status === 0 ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.stderr.trim() || `pi exited with code ${result.status}`,
+    error: result.status === 0 ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.stderr.trim() || formatProviderExitError("pi", result.status),
     status: result.status
   };
 }
@@ -2647,6 +2811,9 @@ function runPiPromptStreaming({
   });
 }
 
+// packages/polycli-runtime/src/registry.js
+import { performance } from "node:perf_hooks";
+
 // packages/polycli-timing/src/constants.js
 var TIMING_SCHEMA_VERSION = 1;
 var TIMING_METRIC_NAMES = ["cold", "ttft", "gen", "tool", "retry", "tail", "total"];
@@ -2659,6 +2826,9 @@ function calculatePercentiles(values, percentiles = [50, 95, 99]) {
   const sorted = values.filter((value) => Number.isFinite(value)).slice().sort((left, right) => left - right);
   const output2 = {};
   for (const percentile of percentiles) {
+    if (!Number.isFinite(percentile) || percentile < 0 || percentile > 100) {
+      throw new Error(`Percentile must be between 0 and 100: ${percentile}`);
+    }
     const key = `p${percentile}`;
     if (sorted.length === 0) {
       output2[key] = null;
@@ -2678,6 +2848,11 @@ function validateMetric(name, metric, errors) {
   if (!metric || typeof metric !== "object" || Array.isArray(metric)) {
     errors.push(`metrics.${name} must be an object`);
     return;
+  }
+  for (const key of Object.keys(metric)) {
+    if (key !== "status" && key !== "ms") {
+      errors.push(`metrics.${name}.${key} is not allowed`);
+    }
   }
   if (!TIMING_METRIC_STATUSES.includes(metric.status)) {
     errors.push(`metrics.${name}.status must be one of ${TIMING_METRIC_STATUSES.join(", ")}`);
@@ -2722,6 +2897,11 @@ function validateTimingRecord(record) {
   if (!record.metrics || typeof record.metrics !== "object" || Array.isArray(record.metrics)) {
     errors.push("metrics must be an object");
   } else {
+    for (const metricName of Object.keys(record.metrics)) {
+      if (!TIMING_METRIC_NAMES.includes(metricName)) {
+        errors.push(`metrics.${metricName} is not allowed`);
+      }
+    }
     for (const metricName of TIMING_METRIC_NAMES) {
       if (!(metricName in record.metrics)) {
         errors.push(`metrics.${metricName} is required`);
@@ -2852,7 +3032,7 @@ function capabilityMetric(ms, supported) {
   if (!supported) {
     return unsupportedMetric();
   }
-  if (!Number.isFinite(ms)) {
+  if (!Number.isFinite(ms) || ms < 0) {
     return missingMetric();
   }
   return measuredOrZero(ms);
@@ -2885,7 +3065,7 @@ function buildPromptTimingRecord({
     cold: unsupportedMetric(),
     ttft: capabilityMetric(ttftMs, Boolean(supportedMetrics.ttft)),
     gen: capabilityMetric(
-      Number.isFinite(ttftMs) ? Math.max(totalMs - ttftMs, 0) : null,
+      Number.isFinite(ttftMs) ? totalMs - ttftMs : null,
       Boolean(supportedMetrics.gen)
     ),
     tool: capabilityMetric(toolMs, Boolean(supportedMetrics.tool)),
@@ -2952,7 +3132,7 @@ var TIMING_SUPPORT = {
   opencode: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" }
 };
-var RUNTIMES = {
+var RUNTIMES = Object.freeze({
   claude: {
     id: "claude",
     capabilities: {
@@ -3057,7 +3237,11 @@ var RUNTIMES = {
     runPrompt: runPiPrompt,
     runPromptStreaming: runPiPromptStreaming
   }
-};
+});
+for (const runtime of Object.values(RUNTIMES)) {
+  Object.freeze(runtime.capabilities);
+  Object.freeze(runtime);
+}
 function getTimingSupport(provider) {
   return TIMING_SUPPORT[provider] || {
     ttft: false,
@@ -3069,10 +3253,17 @@ function getTimingSupport(provider) {
 }
 function inferRuntimePersistence(provider, result) {
   const support = getTimingSupport(provider);
-  if (support.runtimePersistence === "session" && result?.sessionId) {
-    return "session";
+  return support.runtimePersistence;
+}
+function buildTimingMeta(provider, result, meta) {
+  const support = getTimingSupport(provider);
+  if (support.runtimePersistence !== "session" || result?.sessionId) {
+    return meta;
   }
-  return "ephemeral";
+  return {
+    ...meta || {},
+    sessionIdMissing: true
+  };
 }
 function trackQwenToolTiming(event, timestamp, state) {
   if (event?.type !== "assistant" || !Array.isArray(event.message?.content)) {
@@ -3132,18 +3323,21 @@ async function runProviderPromptStreaming({
   meta = null,
   defaultModel = null,
   onEvent,
+  nowMs = () => performance.now(),
+  runtime = null,
   ...options
 }) {
-  const startedAt = Date.now();
+  const startedAt = nowMs();
   const timingSupport = getTimingSupport(provider);
+  const selectedRuntime = runtime ?? getProviderRuntime(provider);
   let firstTextAt = null;
   let lastTextAt = null;
   const toolState = { pendingTools: /* @__PURE__ */ new Map(), toolMs: null };
-  const result = await getProviderRuntime(provider).runPromptStreaming({
+  const result = await selectedRuntime.runPromptStreaming({
     ...options,
     defaultModel,
     onEvent(event) {
-      const now = Date.now();
+      const now = nowMs();
       const eventText = extractProviderEventText(provider, event);
       if ((timingSupport.ttft || timingSupport.tail) && eventText.trim() && shouldCountEventTextForTiming(provider, event, firstTextAt)) {
         if (firstTextAt == null) {
@@ -3159,7 +3353,7 @@ async function runProviderPromptStreaming({
       }
     }
   });
-  const finishedAt = Date.now();
+  const finishedAt = nowMs();
   const resultWithModel = result.model || !defaultModel ? result : { ...result, model: defaultModel };
   const runtimePersistence = inferRuntimePersistence(provider, resultWithModel);
   return attachPromptTiming(resultWithModel, {
@@ -3172,7 +3366,7 @@ async function runProviderPromptStreaming({
     tailMs: lastTextAt == null ? null : Math.max(finishedAt - lastTextAt, 0),
     toolMs: toolState.toolMs,
     supportedMetrics: timingSupport,
-    meta
+    meta: buildTimingMeta(provider, result, meta)
   });
 }
 
@@ -4029,7 +4223,13 @@ function readNdjson(filePath) {
   let text;
   try {
     text = fs7.readFileSync(filePath, "utf8");
-  } catch {
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+  if (text.length === 0) {
     return [];
   }
   const records = [];
@@ -4060,7 +4260,10 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
         }
         needsLeadingNewline = lastByte[0] !== 10;
       }
-    } catch {
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
     }
     const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}
 `;

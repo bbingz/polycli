@@ -93,6 +93,19 @@ test("parseCopilotStreamText handles real assistant.message event shapes", () =>
   );
 });
 
+test("parseCopilotStreamText does not overwrite prior deltas with unrelated assistant.message content", () => {
+  const parsed = parseCopilotStreamText(
+    [
+      '{"type":"session_start","sessionId":"cop-3","model":"copilot-test"}',
+      '{"type":"assistant.message_delta","data":{"messageId":"m-1","deltaContent":"first"}}',
+      '{"type":"assistant.message","data":{"messageId":"m-2","content":"second","phase":"final_answer"}}',
+      '{"type":"result","sessionId":"cop-3","exitCode":0}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "first\nsecond");
+});
+
 test("runCopilotPrompt returns parsed success payloads", () => {
   withFakeCopilotBin(
     `#!/usr/bin/env node
@@ -151,6 +164,24 @@ process.exit(2);
 
       assert.equal(result.ok, false);
       assert.equal(result.error, "copilot exited with code 2");
+    }
+  );
+});
+
+test("runCopilotPrompt maps special exit codes to semantic errors", () => {
+  withFakeCopilotBin(
+    `#!/usr/bin/env node
+process.exit(130);
+`,
+    ({ root, bin }) => {
+      const result = runCopilotPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "copilot interrupted");
     }
   );
 });

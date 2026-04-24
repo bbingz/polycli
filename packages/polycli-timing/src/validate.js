@@ -16,6 +16,12 @@ function validateMetric(name, metric, errors) {
     return;
   }
 
+  for (const key of Object.keys(metric)) {
+    if (key !== "status" && key !== "ms") {
+      errors.push(`metrics.${name}.${key} is not allowed`);
+    }
+  }
+
   if (!TIMING_METRIC_STATUSES.includes(metric.status)) {
     errors.push(`metrics.${name}.status must be one of ${TIMING_METRIC_STATUSES.join(", ")}`);
     return;
@@ -65,6 +71,11 @@ export function validateTimingRecord(record) {
   if (!record.metrics || typeof record.metrics !== "object" || Array.isArray(record.metrics)) {
     errors.push("metrics must be an object");
   } else {
+    for (const metricName of Object.keys(record.metrics)) {
+      if (!TIMING_METRIC_NAMES.includes(metricName)) {
+        errors.push(`metrics.${metricName} is not allowed`);
+      }
+    }
     for (const metricName of TIMING_METRIC_NAMES) {
       if (!(metricName in record.metrics)) {
         errors.push(`metrics.${metricName} is required`);

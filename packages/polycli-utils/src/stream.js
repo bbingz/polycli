@@ -1,8 +1,14 @@
 import { StringDecoder } from "node:string_decoder";
 
-export function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true } = {}) {
+export function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true, maxBufferBytes = 1_048_576 } = {}) {
   const decoder = new StringDecoder(encoding);
   let buffer = "";
+
+  const assertBufferLimit = () => {
+    if (maxBufferBytes != null && Buffer.byteLength(buffer, encoding) > maxBufferBytes) {
+      throw new Error(`Line buffer exceeded maxBufferBytes (${maxBufferBytes})`);
+    }
+  };
 
   const normalize = (line) => {
     if (stripCarriageReturn && line.endsWith("\r")) {
@@ -26,10 +32,12 @@ export function createLineDecoder({ encoding = "utf8", stripCarriageReturn = tru
     push(chunk) {
       if (chunk == null) return [];
       buffer += decoder.write(chunk);
+      assertBufferLimit();
       return drain();
     },
     end() {
       buffer += decoder.end();
+      assertBufferLimit();
       const lines = drain();
       if (buffer.length > 0) {
         lines.push(normalize(buffer));

@@ -1,3 +1,17 @@
+function findJsonStart(text) {
+  for (let index = 0; index < text.length; index += 1) {
+    const slice = text.slice(index);
+    const character = text[index];
+    if (character === "{" || character === "[" || character === '"' || character === "-" || /\d/.test(character)) {
+      return index;
+    }
+    if (slice.startsWith("true") || slice.startsWith("false") || slice.startsWith("null")) {
+      return index;
+    }
+  }
+  return -1;
+}
+
 export function parseStreamJsonLine(raw, { allowPrefix = true } = {}) {
   const text = String(raw ?? "");
   const trimmed = text.trim();
@@ -9,14 +23,23 @@ export function parseStreamJsonLine(raw, { allowPrefix = true } = {}) {
   let prefix = "";
 
   if (allowPrefix) {
-    const jsonStart = text.indexOf("{");
+    const jsonStart = findJsonStart(text);
     if (jsonStart < 0) {
-      return { ok: false, kind: "blank", raw: text };
+      return { ok: false, kind: "non_json", raw: text };
     }
     prefix = text.slice(0, jsonStart);
     jsonCandidate = text.slice(jsonStart).trim();
-  } else if (!trimmed.startsWith("{")) {
-    return { ok: false, kind: "blank", raw: text };
+  } else if (
+    !trimmed.startsWith("{")
+    && !trimmed.startsWith("[")
+    && !trimmed.startsWith('"')
+    && !trimmed.startsWith("-")
+    && !/^\d/.test(trimmed)
+    && !trimmed.startsWith("true")
+    && !trimmed.startsWith("false")
+    && !trimmed.startsWith("null")
+  ) {
+    return { ok: false, kind: "non_json", raw: text };
   }
 
   try {

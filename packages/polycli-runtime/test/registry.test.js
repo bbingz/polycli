@@ -35,6 +35,14 @@ test("getProviderRuntime returns a stable runtime for each provider id", () => {
   }
 });
 
+test("provider runtimes are frozen against accidental mutation", () => {
+  const runtime = getProviderRuntime("claude");
+  assert.equal(Object.isFrozen(runtime), true);
+  assert.throws(() => {
+    runtime.id = "mutated";
+  }, /read only|Cannot assign|Cannot set property/i);
+});
+
 test("runProviderPromptStreaming ignores duplicate terminal summary text for providers with prior visible output", async () => {
   const cases = [
     {
@@ -104,6 +112,7 @@ test("runProviderPromptStreaming ignores duplicate terminal summary text for pro
         prompt: "ping",
         cwd: process.cwd(),
         timeout: 5_000,
+        nowMs: () => now,
         spawnImpl() {
           queueMicrotask(() => {
             now = 1_100;
@@ -165,28 +174,22 @@ test("runProviderPromptStreaming passes defaultModel as final model fallback", a
 });
 
 test("runProviderPrompt marks supported sync-only metrics as missing instead of unsupported", async () => {
-  const runtime = getProviderRuntime("gemini");
-  const originalRunPrompt = runtime.runPrompt;
-
-  runtime.runPrompt = async () => ({
-    ok: true,
-    response: "pong",
-    sessionId: "123e4567-e89b-42d3-a456-426614174000",
+  const result = await runProviderPrompt({
+    provider: "gemini",
+    prompt: "ping",
+    cwd: process.cwd(),
+    runtime: {
+      runPrompt: async () => ({
+        ok: true,
+        response: "pong",
+        sessionId: "123e4567-e89b-42d3-a456-426614174000",
+      }),
+    },
   });
 
-  try {
-    const result = await runProviderPrompt({
-      provider: "gemini",
-      prompt: "ping",
-      cwd: process.cwd(),
-    });
-
-    assert.equal(result.ok, true);
-    assert.equal(result.timing.metrics.ttft.status, "missing");
-    assert.equal(result.timing.metrics.gen.status, "missing");
-    assert.equal(result.timing.metrics.tail.status, "missing");
-    assert.equal(result.timing.runtimePersistence, "session");
-  } finally {
-    runtime.runPrompt = originalRunPrompt;
-  }
+  assert.equal(result.ok, true);
+  assert.equal(result.timing.metrics.ttft.status, "missing");
+  assert.equal(result.timing.metrics.gen.status, "missing");
+  assert.equal(result.timing.metrics.tail.status, "missing");
+  assert.equal(result.timing.runtimePersistence, "session");
 });

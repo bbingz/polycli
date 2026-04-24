@@ -31,7 +31,7 @@ function capabilityMetric(ms, supported) {
   if (!supported) {
     return unsupportedMetric();
   }
-  if (!Number.isFinite(ms)) {
+  if (!Number.isFinite(ms) || ms < 0) {
     return missingMetric();
   }
   return measuredOrZero(ms);
@@ -66,7 +66,7 @@ export function buildPromptTimingRecord({
     cold: unsupportedMetric(),
     ttft: capabilityMetric(ttftMs, Boolean(supportedMetrics.ttft)),
     gen: capabilityMetric(
-      Number.isFinite(ttftMs) ? Math.max(totalMs - ttftMs, 0) : null,
+      Number.isFinite(ttftMs) ? totalMs - ttftMs : null,
       Boolean(supportedMetrics.gen)
     ),
     tool: capabilityMetric(toolMs, Boolean(supportedMetrics.tool)),

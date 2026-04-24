@@ -31,6 +31,9 @@ export function parseArgs(argv, config = {}) {
       const key = aliasMap[rawKey] ?? rawKey;
 
       if (booleanOptions.has(key)) {
+        if (inlineValue === "") {
+          throw new Error(`Invalid boolean value for --${rawKey}`);
+        }
         options[key] = inlineValue === undefined ? true : inlineValue !== "false";
         continue;
       }
@@ -51,21 +54,29 @@ export function parseArgs(argv, config = {}) {
       continue;
     }
 
-    const shortKey = token.slice(1);
+    const shortToken = token.slice(1);
+    const shortKey = shortToken[0];
+    const inlineShortValue = shortToken.length > 1 ? shortToken.slice(1) : undefined;
     const key = aliasMap[shortKey] ?? shortKey;
 
     if (booleanOptions.has(key)) {
+      if (inlineShortValue !== undefined) {
+        positionals.push(token);
+        continue;
+      }
       options[key] = true;
       continue;
     }
 
     if (valueOptions.has(key)) {
-      const nextValue = argv[index + 1];
+      const nextValue = inlineShortValue ?? argv[index + 1];
       if (nextValue === undefined) {
         throw new Error(`Missing value for -${shortKey}`);
       }
       options[key] = nextValue;
-      index += 1;
+      if (inlineShortValue === undefined) {
+        index += 1;
+      }
       continue;
     }
 
@@ -89,6 +100,10 @@ export function splitRawArgumentString(raw) {
     }
 
     if (character === "\\") {
+      if (quote === "'") {
+        current += character;
+        continue;
+      }
       escaping = true;
       continue;
     }
@@ -119,7 +134,10 @@ export function splitRawArgumentString(raw) {
   }
 
   if (escaping) {
-    current += "\\";
+    throw new Error("Trailing escape in raw argument string");
+  }
+  if (quote) {
+    throw new Error(`Unterminated ${quote} quote in raw argument string`);
   }
 
   if (current) {

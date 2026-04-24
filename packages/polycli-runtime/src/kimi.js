@@ -5,6 +5,7 @@ import path from "node:path";
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
+import { formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
@@ -164,7 +165,7 @@ export function runKimiPrompt({
   if (result.status !== 0) {
     return {
       ok: false,
-      error: result.stderr.trim() || `kimi exited with code ${result.status}`,
+      error: result.stderr.trim() || formatProviderExitError("kimi", result.status),
       status: result.status,
     };
   }

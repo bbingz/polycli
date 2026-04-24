@@ -76,3 +76,83 @@ test("spawnStreamingCommand escalates timed out detached children to SIGKILL via
     process.kill = originalKill;
   }
 });
+
+test("spawnStreamingCommand waits for stdin drain before ending input", async () => {
+  const child = createFakeChild();
+  const calls = [];
+
+  child.stdin = new EventEmitter();
+  child.stdin.write = () => {
+    calls.push("write");
+    queueMicrotask(() => child.stdin.emit("drain"));
+    return false;
+  };
+  child.stdin.end = () => {
+    calls.push("end");
+    queueMicrotask(() => child.emit("close", 0, null));
+  };
+
+  const result = await spawnStreamingCommand({
+    bin: "slow-stdin",
+    args: [],
+    input: "hello",
+    spawnImpl() {
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ["write", "end"]);
+});
+
+test("spawnStreamingCommand supports AbortSignal-driven termination", async () => {
+  const child = createFakeChild();
+  const controller = new AbortController();
+  const calls = [];
+
+  child.kill = (signal) => {
+    calls.push(signal);
+    queueMicrotask(() => child.emit("close", null, signal));
+  };
+
+  const resultPromise = spawnStreamingCommand({
+    bin: "abortable-bin",
+    args: [],
+    signal: controller.signal,
+    spawnImpl() {
+      return child;
+    },
+  });
+
+  controller.abort();
+  const result = await resultPromise;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "process aborted");
+  assert.deepEqual(calls, ["SIGTERM"]);
+});
+
+test("spawnStreamingCommand ignores stdout emitted after settle", async () => {
+  const child = createFakeChild();
+  const seen = [];
+
+  const result = await spawnStreamingCommand({
+    bin: "late-output-bin",
+    args: [],
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from("first\n"));
+        child.emit("close", 0, null);
+        child.stdout.emit("data", Buffer.from("second\n"));
+      });
+      return child;
+    },
+    onStdoutLine(line) {
+      seen.push(line);
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(seen, ["first"]);
+  assert.equal(result.stdout, "first\n");
+});

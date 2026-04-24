@@ -2,6 +2,22 @@ import { spawn } from "node:child_process";
 
 import { createLineDecoder } from "@bbingz/polycli-utils/stream";
 
+function formatExitError(status, signal, { timedOut = false, aborted = false } = {}) {
+  if (aborted) {
+    return "process aborted";
+  }
+  if (timedOut || status === 124) {
+    return "process timed out";
+  }
+  if (signal === "SIGINT" || status === 130) {
+    return "process interrupted";
+  }
+  if (signal === "SIGTERM" || status === 143) {
+    return "process terminated";
+  }
+  return `process exited with code ${status}`;
+}
+
 export function spawnStreamingCommand({
   bin,
   args = [],
@@ -10,6 +26,8 @@ export function spawnStreamingCommand({
   input,
   timeout,
   killGraceMs = 2_000,
+  signal = null,
+  maxBufferBytes = 1_048_576,
   stdio = ["pipe", "pipe", "pipe"],
   detached = false,
   unref = false,
@@ -38,10 +56,11 @@ export function spawnStreamingCommand({
       child.unref();
     }
 
-    const decoder = createLineDecoder();
+    const decoder = createLineDecoder({ maxBufferBytes });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let aborted = false;
     let settled = false;
     let timer = null;
     let forceTimer = null;
@@ -58,12 +77,47 @@ export function spawnStreamingCommand({
       }
     };
 
+    const cleanup = () => {
+      if (signal && typeof signal.removeEventListener === "function") {
+        signal.removeEventListener("abort", abortHandler);
+      }
+      child.stdout?.off?.("data", handleStdoutData);
+      child.stderr?.off?.("data", handleStderrData);
+      child.stdin?.off?.("error", handleStdinError);
+      child.off?.("error", handleChildError);
+      child.off?.("close", handleChildClose);
+    };
+
     const finish = (result) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
       if (forceTimer) clearTimeout(forceTimer);
+      cleanup();
       resolve(result);
+    };
+
+    const finishDecoderError = (error) => {
+      finish({
+        ok: false,
+        status: null,
+        signal: null,
+        timedOut,
+        stdout,
+        stderr,
+        error: error.message,
+      });
+    };
+
+    const abortHandler = () => {
+      if (settled || aborted) return;
+      aborted = true;
+      signalChild("SIGTERM");
+      if (killGraceMs > 0 && !forceTimer) {
+        forceTimer = setTimeout(() => {
+          signalChild("SIGKILL");
+        }, killGraceMs);
+      }
     };
 
     if (timeout != null) {
@@ -78,7 +132,7 @@ export function spawnStreamingCommand({
       }, timeout);
     }
 
-    child.on("error", (error) => {
+    const handleChildError = (error) => {
       finish({
         ok: false,
         status: null,
@@ -88,54 +142,94 @@ export function spawnStreamingCommand({
         stderr,
         error: error.message,
       });
-    });
+    };
 
-    if (child.stdin?.on) {
-      child.stdin.on("error", (error) => {
-        if (error?.code === "EPIPE" || error?.code === "ERR_STREAM_DESTROYED") {
-          return;
-        }
-        stderr += `${error.message}\n`;
-      });
-    }
+    const handleStdinError = (error) => {
+      if (error?.code === "EPIPE" || error?.code === "ERR_STREAM_DESTROYED") {
+        return;
+      }
+      stderr += `${error.message}\n`;
+    };
 
-    if (child.stdout?.on) {
-      child.stdout.on("data", (chunk) => {
-        for (const line of decoder.push(chunk)) {
-          stdout += `${line}\n`;
-          try { onStdoutLine(line); } catch {}
-        }
-      });
-    }
+    const handleStdoutData = (chunk) => {
+      if (settled) return;
+      let lines;
+      try {
+        lines = decoder.push(chunk);
+      } catch (error) {
+        finishDecoderError(error);
+        return;
+      }
+      for (const line of lines) {
+        stdout += `${line}\n`;
+        try { onStdoutLine(line); } catch {}
+      }
+    };
 
-    if (child.stderr?.on) {
-      child.stderr.on("data", (chunk) => {
-        const text = chunk.toString("utf8");
-        stderr += text;
-        try { onStderrChunk(text); } catch {}
-      });
-    }
+    const handleStderrData = (chunk) => {
+      if (settled) return;
+      const text = chunk.toString("utf8");
+      stderr += text;
+      try { onStderrChunk(text); } catch {}
+    };
 
-    child.on("close", (status, signal) => {
-      for (const line of decoder.end()) {
+    const handleChildClose = (status, signalName) => {
+      let lines;
+      try {
+        lines = decoder.end();
+      } catch (error) {
+        finishDecoderError(error);
+        return;
+      }
+
+      for (const line of lines) {
         stdout += `${line}\n`;
         try { onStdoutLine(line); } catch {}
       }
 
       finish({
-        ok: status === 0 && !timedOut,
+        ok: status === 0 && !timedOut && !aborted,
         status,
-        signal,
+        signal: signalName,
         timedOut,
         stdout,
         stderr,
-        error: status === 0 && !timedOut ? null : stderr.trim() || `process exited with code ${status}`,
+        error:
+          status === 0 && !timedOut && !aborted
+            ? null
+            : stderr.trim() || formatExitError(status, signalName, { timedOut, aborted }),
       });
-    });
+    };
+
+    child.on("error", handleChildError);
+    child.stdin?.on?.("error", handleStdinError);
+    child.stdout?.on?.("data", handleStdoutData);
+    child.stderr?.on?.("data", handleStderrData);
+    child.on("close", handleChildClose);
+
+    if (signal && typeof signal.addEventListener === "function") {
+      if (signal.aborted) {
+        abortHandler();
+      } else {
+        signal.addEventListener("abort", abortHandler, { once: true });
+      }
+    }
 
     if (child.stdin) {
-      if (input != null) child.stdin.write(input);
-      child.stdin.end();
+      if (input != null) {
+        const wroteAll = child.stdin.write(input);
+        if (wroteAll === false && child.stdin.once) {
+          child.stdin.once("drain", () => {
+            if (!settled) {
+              child.stdin.end();
+            }
+          });
+        } else {
+          child.stdin.end();
+        }
+      } else {
+        child.stdin.end();
+      }
     }
   });
 }

@@ -1,6 +1,7 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
+import { formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const COPILOT_BIN = process.env.COPILOT_CLI_BIN || "copilot";
@@ -47,10 +48,10 @@ function getCopilotResultError(event) {
     return event.error;
   }
   if (event.exitCode && event.exitCode !== 0) {
-    return `copilot exited with code ${event.exitCode}`;
+    return formatProviderExitError("copilot", event.exitCode);
   }
   if (event.status && event.status !== 0) {
-    return `copilot exited with code ${event.status}`;
+    return formatProviderExitError("copilot", event.status);
   }
   return null;
 }
@@ -149,7 +150,11 @@ export function parseCopilotStreamText(text) {
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (!model && typeof event.data?.model === "string") model = event.data.model;
     if (event.type === "assistant.message" && typeof event.data?.content === "string") {
-      response = event.data.content;
+      if (!response.trim() || event.data.content.startsWith(response)) {
+        response = event.data.content;
+      } else {
+        response = `${response}\n${event.data.content}`;
+      }
       continue;
     }
     if (event.type === "result" || event.type === "final" || event.type === "error") {
@@ -236,7 +241,7 @@ export function runCopilotPrompt({
     model: parsed.model,
     error: result.status === 0
       ? (resultError || (hasVisibleText ? null : "copilot produced no visible text"))
-      : (result.stderr.trim() || `copilot exited with code ${result.status}`),
+      : (result.stderr.trim() || formatProviderExitError("copilot", result.status)),
     status: result.status,
   };
 }

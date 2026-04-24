@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { validateTimingRecord } from "@bbingz/polycli-timing";
 
 import { buildPromptTimingRecord, extractProviderEventText } from "../src/timing.js";
+import { getProviderRuntime, runProviderPrompt } from "../src/index.js";
 
 test("buildPromptTimingRecord emits a valid request-scoped record for one-shot runs", () => {
   const record = buildPromptTimingRecord({
@@ -73,6 +74,45 @@ test("buildPromptTimingRecord keeps supported-but-missing metrics separate from 
   assert.equal(record.metrics.tool.status, "missing");
   assert.equal(record.metrics.tail.status, "missing");
   assert.equal(record.metrics.retry.status, "unsupported");
+});
+
+test("buildPromptTimingRecord degrades negative derived metrics to missing instead of throwing", () => {
+  const record = buildPromptTimingRecord({
+    provider: "gemini",
+    kind: "prompt",
+    completedAt: "2026-04-22T00:00:00.000Z",
+    totalMs: 100,
+    ttftMs: 120,
+    tailMs: -1,
+    supportedMetrics: {
+      ttft: true,
+      gen: true,
+      tail: true,
+    },
+  });
+
+  assert.equal(record.metrics.ttft.status, "measured");
+  assert.equal(record.metrics.gen.status, "missing");
+  assert.equal(record.metrics.tail.status, "missing");
+});
+
+test("runProviderPrompt preserves session persistence capability when a run omits sessionId", async () => {
+  const result = await runProviderPrompt({
+    provider: "gemini",
+    prompt: "ping",
+    cwd: process.cwd(),
+    meta: { source: "test" },
+    runtime: {
+      runPrompt: async () => ({
+        ok: true,
+        response: "pong",
+      }),
+    },
+  });
+
+  assert.equal(result.timing.runtimePersistence, "session");
+  assert.equal(result.timing.meta.source, "test");
+  assert.equal(result.timing.meta.sessionIdMissing, true);
 });
 
 test("extractProviderEventText handles provider-specific assistant/result payloads", () => {

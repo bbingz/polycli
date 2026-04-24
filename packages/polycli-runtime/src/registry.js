@@ -1,3 +1,5 @@
+import { performance } from "node:perf_hooks";
+
 import { PROVIDER_IDS, PROVIDER_OPERATION_NAMES } from "./constants.js";
 import {
   getClaudeAvailability,
@@ -60,7 +62,7 @@ const TIMING_SUPPORT = {
   pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
 };
 
-const RUNTIMES = {
+const RUNTIMES = Object.freeze({
   claude: {
     id: "claude",
     capabilities: {
@@ -165,7 +167,12 @@ const RUNTIMES = {
     runPrompt: runPiPrompt,
     runPromptStreaming: runPiPromptStreaming,
   },
-};
+});
+
+for (const runtime of Object.values(RUNTIMES)) {
+  Object.freeze(runtime.capabilities);
+  Object.freeze(runtime);
+}
 
 function getTimingSupport(provider) {
   return TIMING_SUPPORT[provider] || {
@@ -179,10 +186,19 @@ function getTimingSupport(provider) {
 
 function inferRuntimePersistence(provider, result) {
   const support = getTimingSupport(provider);
-  if (support.runtimePersistence === "session" && result?.sessionId) {
-    return "session";
+  return support.runtimePersistence;
+}
+
+function buildTimingMeta(provider, result, meta) {
+  const support = getTimingSupport(provider);
+  if (support.runtimePersistence !== "session" || result?.sessionId) {
+    return meta;
   }
-  return "ephemeral";
+
+  return {
+    ...(meta || {}),
+    sessionIdMissing: true,
+  };
 }
 
 function trackQwenToolTiming(event, timestamp, state) {
@@ -248,10 +264,13 @@ export async function runProviderPrompt({
   measurementScope = "request",
   meta = null,
   defaultModel = null,
+  nowMs = () => performance.now(),
+  runtime = null,
   ...options
 }) {
-  const startedAt = Date.now();
-  const result = await getProviderRuntime(provider).runPrompt({ ...options, defaultModel });
+  const startedAt = nowMs();
+  const selectedRuntime = runtime ?? getProviderRuntime(provider);
+  const result = await selectedRuntime.runPrompt({ ...options, defaultModel });
   const runtimePersistence = inferRuntimePersistence(provider, result);
   const resultWithModel = result.model || !defaultModel
     ? result
@@ -261,9 +280,9 @@ export async function runProviderPrompt({
     kind,
     runtimePersistence,
     measurementScope,
-    totalMs: Date.now() - startedAt,
+    totalMs: Math.max(nowMs() - startedAt, 0),
     supportedMetrics: getTimingSupport(provider),
-    meta,
+    meta: buildTimingMeta(provider, result, meta),
   });
 }
 
@@ -274,19 +293,22 @@ export async function runProviderPromptStreaming({
   meta = null,
   defaultModel = null,
   onEvent,
+  nowMs = () => performance.now(),
+  runtime = null,
   ...options
 }) {
-  const startedAt = Date.now();
+  const startedAt = nowMs();
   const timingSupport = getTimingSupport(provider);
+  const selectedRuntime = runtime ?? getProviderRuntime(provider);
   let firstTextAt = null;
   let lastTextAt = null;
   const toolState = { pendingTools: new Map(), toolMs: null };
 
-  const result = await getProviderRuntime(provider).runPromptStreaming({
+  const result = await selectedRuntime.runPromptStreaming({
     ...options,
     defaultModel,
     onEvent(event) {
-      const now = Date.now();
+      const now = nowMs();
       const eventText = extractProviderEventText(provider, event);
       if ((timingSupport.ttft || timingSupport.tail) && eventText.trim() && shouldCountEventTextForTiming(provider, event, firstTextAt)) {
         if (firstTextAt == null) {
@@ -303,7 +325,7 @@ export async function runProviderPromptStreaming({
     },
   });
 
-  const finishedAt = Date.now();
+  const finishedAt = nowMs();
   const resultWithModel = result.model || !defaultModel
     ? result
     : { ...result, model: defaultModel };
@@ -318,6 +340,6 @@ export async function runProviderPromptStreaming({
     tailMs: lastTextAt == null ? null : Math.max(finishedAt - lastTextAt, 0),
     toolMs: toolState.toolMs,
     supportedMetrics: timingSupport,
-    meta,
+    meta: buildTimingMeta(provider, result, meta),
   });
 }

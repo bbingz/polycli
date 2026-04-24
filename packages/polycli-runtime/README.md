@@ -93,6 +93,12 @@ Provider-specific runtime methods：
 - `getOpenCodeAvailability()` / `getOpenCodeAuthStatus()` / `runOpenCodePrompt()` / `runOpenCodePromptStreaming()`
 - `getPiAvailability()` / `getPiAuthStatus()` / `runPiPrompt()` / `runPiPromptStreaming()`
 
+Intentional omission:
+
+- `listModels` is not in the current public surface.
+- Reason: upstream CLIs do not expose a stable enough cross-provider listing contract yet.
+- Decision: keep model enumeration out of the runtime API until it can be implemented as a real capability instead of provider-specific best-effort wrappers.
+
 ## Example
 
 ```js

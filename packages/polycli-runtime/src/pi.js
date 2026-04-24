@@ -1,6 +1,7 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
+import { formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const PI_BIN = process.env.PI_CLI_BIN || "pi";
@@ -232,7 +233,7 @@ export function runPiPrompt({
     model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
     error: result.status === 0
       ? (resultError || (hasVisibleText ? null : "pi produced no visible text"))
-      : (result.stderr.trim() || `pi exited with code ${result.status}`),
+      : (result.stderr.trim() || formatProviderExitError("pi", result.status)),
     status: result.status,
   };
 }

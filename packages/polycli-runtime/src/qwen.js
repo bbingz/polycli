@@ -1,6 +1,7 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
+import { formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const QWEN_BIN = process.env.QWEN_CLI_BIN || "qwen";
@@ -303,7 +304,7 @@ export function runQwenPrompt({
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     error: result.status === 0 && !resultEventError && parsed.response.trim()
       ? null
-      : result.stderr.trim() || resultEventError || `qwen exited with code ${result.status}`,
+      : result.stderr.trim() || resultEventError || formatProviderExitError("qwen", result.status),
   };
 }
 

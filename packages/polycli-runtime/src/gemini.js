@@ -2,6 +2,7 @@ import { parseStreamJsonLine } from "@bbingz/polycli-utils/parse-stream-json";
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
+import { formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const GEMINI_BIN = process.env.GEMINI_CLI_BIN || "gemini";
@@ -88,7 +89,7 @@ function parseGeminiJsonResult(stdout, stderr, status, { defaultModel = null } =
   if (jsonStart < 0) {
     return {
       ok: false,
-      error: String(stderr ?? "").trim() || `gemini exited with code ${status}`,
+      error: String(stderr ?? "").trim() || formatProviderExitError("gemini", status),
       status,
     };
   }

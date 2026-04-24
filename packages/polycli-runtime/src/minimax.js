@@ -225,18 +225,48 @@ export function runMiniMaxPrompt({
       spawnImpl,
       onStdoutLine: handleStdoutLine,
     }).then((result) => {
-      const effectiveLogPath = logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR);
-      const parsed = effectiveLogPath && fs.existsSync(effectiveLogPath)
-        ? extractMiniMaxResponseFromLogText(fs.readFileSync(effectiveLogPath, "utf8"))
-        : { response: "", finishReason: null, toolCalls: [] };
+      try {
+        const effectiveLogPath = logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR);
+        const parsed = effectiveLogPath && fs.existsSync(effectiveLogPath)
+          ? extractMiniMaxResponseFromLogText(fs.readFileSync(effectiveLogPath, "utf8"))
+          : { response: "", finishReason: null, toolCalls: [] };
 
+        resolve({
+          ...result,
+          logPath: effectiveLogPath,
+          ...parsed,
+          model: parsed.model ?? defaultModel,
+          ok: result.ok && Boolean(parsed.response.trim()),
+          error: result.ok && parsed.response.trim() ? null : result.error,
+        });
+      } catch (error) {
+        resolve({
+          ok: false,
+          status: null,
+          signal: null,
+          timedOut: false,
+          stdout: "",
+          stderr: "",
+          response: "",
+          finishReason: null,
+          toolCalls: [],
+          logPath: logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR),
+          error: error.message,
+        });
+      }
+    }, (error) => {
       resolve({
-        ...result,
-        logPath: effectiveLogPath,
-        ...parsed,
-        model: parsed.model ?? defaultModel,
-        ok: result.ok && Boolean(parsed.response.trim()),
-        error: result.ok && parsed.response.trim() ? null : result.error,
+        ok: false,
+        status: null,
+        signal: null,
+        timedOut: false,
+        stdout: "",
+        stderr: "",
+        response: "",
+        finishReason: null,
+        toolCalls: [],
+        logPath: logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR),
+        error: error.message,
       });
     });
   });

@@ -126,3 +126,37 @@ test("aggregateTimingRecords excludes zero values from measured percentiles", ()
   assert.equal(tool.avg, 40);
   assert.equal(tool.capability, "supported");
 });
+
+test("aggregateTimingRecords handles empty input", () => {
+  const summary = aggregateTimingRecords([]);
+
+  assert.equal(summary.recordCount, 0);
+  assert.deepEqual(summary.invalidRecords, []);
+  assert.deepEqual(summary.byProvider, {});
+});
+
+test("aggregateTimingRecords preserves unsupported-only metrics without fake percentiles", () => {
+  const summary = aggregateTimingRecords([
+    {
+      version: 1,
+      provider: "minimax",
+      runtimePersistence: "ephemeral",
+      measurementScope: "request",
+      completedAt: "2026-04-21T10:00:00.000Z",
+      metrics: {
+        cold: { status: "unsupported", ms: null },
+        ttft: { status: "unsupported", ms: null },
+        gen: { status: "unsupported", ms: null },
+        tool: { status: "unsupported", ms: null },
+        retry: { status: "unsupported", ms: null },
+        tail: { status: "unsupported", ms: null },
+        total: { status: "measured", ms: 500 },
+      },
+    },
+  ]);
+
+  const ttft = summary.byProvider.minimax.metrics.ttft;
+  assert.equal(ttft.unsupportedCount, 1);
+  assert.equal(ttft.capability, "unsupported");
+  assert.equal(ttft.p50, null);
+});
