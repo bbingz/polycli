@@ -8,7 +8,7 @@ import { randomUUID as randomUUID2 } from "node:crypto";
 import { spawn as spawn2 } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-// packages/polycli-utils/src/args.js
+// ../../../packages/polycli-utils/src/args.js
 function parseArgs(argv, config = {}) {
   const valueOptions = new Set(config.valueOptions ?? []);
   const booleanOptions = new Set(config.booleanOptions ?? []);
@@ -84,11 +84,11 @@ function parseArgs(argv, config = {}) {
   return { options, positionals };
 }
 
-// packages/polycli-runtime/src/constants.js
+// ../../../packages/polycli-runtime/src/constants.js
 var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi"];
 var PROVIDER_OPERATION_NAMES = ["prompt"];
 
-// packages/polycli-utils/src/parse-stream-json.js
+// ../../../packages/polycli-utils/src/parse-stream-json.js
 function findJsonStart(text) {
   for (let index = 0; index < text.length; index += 1) {
     const slice = text.slice(index);
@@ -140,7 +140,7 @@ function parseStreamJsonLine(raw, { allowPrefix = true } = {}) {
   }
 }
 
-// packages/polycli-utils/src/process.js
+// ../../../packages/polycli-utils/src/process.js
 import { spawnSync } from "node:child_process";
 import process2 from "node:process";
 function runCommand(command, args = [], options = {}) {
@@ -257,7 +257,7 @@ async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SI
   return true;
 }
 
-// packages/polycli-utils/src/session-id.js
+// ../../../packages/polycli-utils/src/session-id.js
 var UUID_SESSION_ID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 function matchSessionId(text, { patterns = [UUID_SESSION_ID_REGEX] } = {}) {
   if (typeof text !== "string" || text.length === 0) {
@@ -294,7 +294,7 @@ function resolveSessionId({
   return { sessionId: null, source: null };
 }
 
-// packages/polycli-runtime/src/errors.js
+// ../../../packages/polycli-runtime/src/errors.js
 function formatProviderExitError(provider, status) {
   if (status === 124) {
     return `${provider} timed out`;
@@ -308,10 +308,10 @@ function formatProviderExitError(provider, status) {
   return `${provider} exited with code ${status}`;
 }
 
-// packages/polycli-runtime/src/spawn.js
+// ../../../packages/polycli-runtime/src/spawn.js
 import { spawn } from "node:child_process";
 
-// packages/polycli-utils/src/stream.js
+// ../../../packages/polycli-utils/src/stream.js
 import { StringDecoder } from "node:string_decoder";
 function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true, maxBufferBytes = 1048576 } = {}) {
   const decoder = new StringDecoder(encoding);
@@ -357,7 +357,7 @@ function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true, maxB
   };
 }
 
-// packages/polycli-runtime/src/spawn.js
+// ../../../packages/polycli-runtime/src/spawn.js
 function formatExitError(status, signal, { timedOut = false, aborted = false } = {}) {
   if (aborted) {
     return "process aborted";
@@ -581,7 +581,7 @@ function spawnStreamingCommand({
   });
 }
 
-// packages/polycli-runtime/src/claude.js
+// ../../../packages/polycli-runtime/src/claude.js
 var CLAUDE_BIN = process.env.CLAUDE_CLI_BIN || "claude";
 var DEFAULT_TIMEOUT_MS = 9e5;
 var AUTH_CHECK_TIMEOUT_MS = 3e4;
@@ -873,7 +873,7 @@ function runClaudePromptStreaming({
   });
 }
 
-// packages/polycli-runtime/src/copilot.js
+// ../../../packages/polycli-runtime/src/copilot.js
 var COPILOT_BIN = process.env.COPILOT_CLI_BIN || "copilot";
 var DEFAULT_TIMEOUT_MS2 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS2 = 3e4;
@@ -1138,7 +1138,7 @@ function runCopilotPromptStreaming({
   });
 }
 
-// packages/polycli-runtime/src/gemini.js
+// ../../../packages/polycli-runtime/src/gemini.js
 var GEMINI_BIN = process.env.GEMINI_CLI_BIN || "gemini";
 var DEFAULT_TIMEOUT_MS3 = 3e5;
 var AUTH_CHECK_TIMEOUT_MS3 = 3e4;
@@ -1398,7 +1398,7 @@ function runGeminiPromptStreaming({
   });
 }
 
-// packages/polycli-runtime/src/kimi.js
+// ../../../packages/polycli-runtime/src/kimi.js
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1777,7 +1777,7 @@ function withKimiResumeWarnings(result, requestedSessionId) {
   };
 }
 
-// packages/polycli-runtime/src/qwen.js
+// ../../../packages/polycli-runtime/src/qwen.js
 var QWEN_BIN = process.env.QWEN_CLI_BIN || "qwen";
 var DEFAULT_TIMEOUT_MS5 = 3e5;
 var AUTH_CHECK_TIMEOUT_MS5 = 3e4;
@@ -2132,7 +2132,7 @@ function runQwenPromptStreaming({
   });
 }
 
-// packages/polycli-runtime/src/minimax.js
+// ../../../packages/polycli-runtime/src/minimax.js
 import fs2 from "node:fs";
 import os2 from "node:os";
 import path2 from "node:path";
@@ -2417,7 +2417,7 @@ async function runMiniMaxPromptStreaming({
   });
 }
 
-// packages/polycli-runtime/src/opencode.js
+// ../../../packages/polycli-runtime/src/opencode.js
 var OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
 var DEFAULT_TIMEOUT_MS7 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS7 = 3e4;
@@ -2753,7 +2753,7 @@ function runOpenCodePromptStreaming({
   });
 }
 
-// packages/polycli-runtime/src/pi.js
+// ../../../packages/polycli-runtime/src/pi.js
 var PI_BIN = process.env.PI_CLI_BIN || "pi";
 var DEFAULT_PI_MODEL = "openai-codex/gpt-5.4";
 var DEFAULT_TIMEOUT_MS8 = 9e5;
@@ -3009,17 +3009,17 @@ function runPiPromptStreaming({
   });
 }
 
-// packages/polycli-runtime/src/registry.js
+// ../../../packages/polycli-runtime/src/registry.js
 import { performance } from "node:perf_hooks";
 
-// packages/polycli-timing/src/constants.js
+// ../../../packages/polycli-timing/src/constants.js
 var TIMING_SCHEMA_VERSION = 1;
 var TIMING_METRIC_NAMES = ["cold", "ttft", "gen", "tool", "retry", "tail", "total"];
 var TIMING_METRIC_STATUSES = ["measured", "zero", "missing", "unsupported"];
 var TIMING_RUNTIME_PERSISTENCE = ["ephemeral", "session", "daemon"];
 var TIMING_MEASUREMENT_SCOPES = ["request", "turn", "job"];
 
-// packages/polycli-timing/src/percentile.js
+// ../../../packages/polycli-timing/src/percentile.js
 function calculatePercentiles(values, percentiles = [50, 95, 99]) {
   const sorted = values.filter((value) => Number.isFinite(value)).slice().sort((left, right) => left - right);
   const output2 = {};
@@ -3038,7 +3038,7 @@ function calculatePercentiles(values, percentiles = [50, 95, 99]) {
   return output2;
 }
 
-// packages/polycli-timing/src/validate.js
+// ../../../packages/polycli-timing/src/validate.js
 function isIsoDate(value) {
   return typeof value === "string" && !Number.isNaN(Date.parse(value));
 }
@@ -3115,7 +3115,7 @@ function validateTimingRecord(record) {
   return { ok: errors.length === 0, errors };
 }
 
-// packages/polycli-timing/src/aggregate.js
+// ../../../packages/polycli-timing/src/aggregate.js
 function createMetricSummary() {
   return {
     contributingCount: 0,
@@ -3207,10 +3207,10 @@ function aggregateTimingRecords(records) {
   return summary;
 }
 
-// packages/polycli-timing/src/index.js
+// ../../../packages/polycli-timing/src/index.js
 var TIMING_SCHEMA_URL = new URL("../timing.schema.json", import.meta.url);
 
-// packages/polycli-runtime/src/timing.js
+// ../../../packages/polycli-runtime/src/timing.js
 function measuredOrZero(ms) {
   if (!Number.isFinite(ms) || ms < 0) {
     throw new Error(`Invalid measured timing value: ${ms}`);
@@ -3319,7 +3319,7 @@ function attachPromptTiming(result, {
   };
 }
 
-// packages/polycli-runtime/src/registry.js
+// ../../../packages/polycli-runtime/src/registry.js
 var TIMING_SUPPORT = {
   claude: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   copilot: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
@@ -3569,90 +3569,52 @@ async function runProviderPromptStreaming({
 }
 
 // plugins/polycli/scripts/lib/job-control.mjs
-import fs5 from "node:fs";
-import process4 from "node:process";
+import fs4 from "node:fs";
+import process3 from "node:process";
 
 // plugins/polycli/scripts/lib/state.mjs
-import crypto2 from "node:crypto";
-import fs4 from "node:fs";
-import os3 from "node:os";
-import path4 from "node:path";
-
-// packages/polycli-utils/src/atomic-save.js
 import crypto from "node:crypto";
 import fs3 from "node:fs";
+import os3 from "node:os";
 import path3 from "node:path";
-import process3 from "node:process";
-var LockfileTimeoutError = class extends Error {
-  constructor(lockPath, timeoutMs) {
-    super(`Timed out acquiring lockfile ${lockPath} after ${timeoutMs}ms`);
-    this.code = "ELOCKTIMEOUT";
-    this.lockPath = lockPath;
-    this.timeoutMs = timeoutMs;
-  }
-};
+import { spawnSync as spawnSync2 } from "node:child_process";
+var STATE_VERSION = 1;
+var STATE_FILE_NAME = "state.json";
+var JOBS_DIR_NAME = "jobs";
+var MAX_JOBS = 100;
+var PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
+var FALLBACK_STATE_ROOT = path3.join(os3.tmpdir(), "polycli-companion");
 function sleepSync(ms) {
   if (ms <= 0) return;
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
-function ensureParentDir(filePath) {
+function writeJsonAtomic(filePath, value) {
   fs3.mkdirSync(path3.dirname(filePath), { recursive: true });
-}
-function normalizeWriteOptions(options) {
-  if (typeof options === "string") {
-    return {
-      flag: "w",
-      mode: 438,
-      writeOptions: options
-    };
-  }
-  if (options && typeof options === "object") {
-    const { flag = "w", mode = 438, ...writeOptions } = options;
-    return {
-      flag,
-      mode,
-      writeOptions: Object.keys(writeOptions).length > 0 ? writeOptions : void 0
-    };
-  }
-  return {
-    flag: "w",
-    mode: 438,
-    writeOptions: void 0
-  };
-}
-function writeFileAtomicSync(filePath, contents, options = {}) {
-  ensureParentDir(filePath);
-  const tmpPath = `${filePath}.tmp.${process3.pid}.${Date.now()}.${crypto.randomUUID()}`;
-  const { flag, mode, writeOptions } = normalizeWriteOptions(options);
-  const fd = fs3.openSync(tmpPath, flag, mode);
+  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${crypto.randomUUID()}`;
+  const fd = fs3.openSync(tmpPath, "w", 438);
   try {
-    fs3.writeFileSync(fd, contents, writeOptions);
+    fs3.writeFileSync(fd, `${JSON.stringify(value, null, 2)}
+`, "utf8");
     fs3.fsyncSync(fd);
   } finally {
     fs3.closeSync(fd);
   }
   fs3.renameSync(tmpPath, filePath);
-  const dirFd = fs3.openSync(path3.dirname(filePath), "r");
   try {
-    fs3.fsyncSync(dirFd);
+    const dirFd = fs3.openSync(path3.dirname(filePath), "r");
+    try {
+      fs3.fsyncSync(dirFd);
+    } finally {
+      fs3.closeSync(dirFd);
+    }
   } catch (error) {
     if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
       throw error;
     }
-  } finally {
-    fs3.closeSync(dirFd);
   }
 }
-function writeFileAtomic(filePath, contents, options = {}) {
-  writeFileAtomicSync(filePath, contents, options);
-  return filePath;
-}
-function writeJsonAtomic(filePath, value, { spaces = 2, finalNewline = true } = {}) {
-  const text = JSON.stringify(value, null, spaces) + (finalNewline ? "\n" : "");
-  return writeFileAtomic(filePath, text, "utf8");
-}
 function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 25 } = {}) {
-  ensureParentDir(lockPath);
+  fs3.mkdirSync(path3.dirname(lockPath), { recursive: true });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -3662,7 +3624,7 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
         384
       );
       try {
-        fs3.writeFileSync(fd, JSON.stringify({ pid: process3.pid, acquiredAt: Date.now() }), "utf8");
+        fs3.writeFileSync(fd, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), "utf8");
         fs3.fsyncSync(fd);
       } finally {
         fs3.closeSync(fd);
@@ -3675,9 +3637,9 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
         } catch {
         }
       }
-    } catch (error) {
-      if (error.code !== "EEXIST") {
-        throw error;
+    } catch (error2) {
+      if (error2.code !== "EEXIST") {
+        throw error2;
       }
       try {
         const lock = JSON.parse(fs3.readFileSync(lockPath, "utf8"));
@@ -3687,7 +3649,7 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
         let ownerAlive = false;
         if (pid != null) {
           try {
-            process3.kill(pid, 0);
+            process.kill(pid, 0);
             ownerAlive = true;
           } catch (killError) {
             if (killError.code === "ESRCH") {
@@ -3710,24 +3672,38 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
       sleepSync(pollMs);
     }
   }
-  throw new LockfileTimeoutError(lockPath, timeoutMs);
+  const error = new Error(`Timed out acquiring lockfile ${lockPath} after ${timeoutMs}ms`);
+  error.code = "ELOCKTIMEOUT";
+  throw error;
 }
-
-// plugins/polycli/scripts/lib/state.mjs
-var STATE_VERSION = 1;
-var STATE_FILE_NAME = "state.json";
-var JOBS_DIR_NAME = "jobs";
-var MAX_JOBS = 100;
-var PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
-var FALLBACK_STATE_ROOT = path4.join(os3.tmpdir(), "polycli-companion");
+function runCommand2(command, args = [], options = {}) {
+  const result = spawnSync2(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    encoding: "utf8",
+    input: options.input,
+    timeout: options.timeout,
+    stdio: options.stdio ?? "pipe"
+  });
+  return {
+    command,
+    args,
+    status: result.status ?? 0,
+    signal: result.signal ?? null,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    error: result.error ?? null
+  };
+}
 function computeWorkspaceSlug(workspaceRoot) {
-  const base = path4.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
-  const hash = crypto2.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
+  const base = path3.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
+  const hash = crypto.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
   return `${base}-${hash}`;
 }
 function defaultState() {
   return {
     version: STATE_VERSION,
+    config: {},
     jobs: []
   };
 }
@@ -3737,50 +3713,50 @@ function buildCorruptBackupPath(stateFile) {
 }
 function backupCorruptStateFile(stateFile) {
   try {
-    fs4.renameSync(stateFile, buildCorruptBackupPath(stateFile));
+    fs3.renameSync(stateFile, buildCorruptBackupPath(stateFile));
   } catch {
   }
 }
 function stateRootDir() {
   const pluginData = process.env[PLUGIN_DATA_ENV];
   if (pluginData) {
-    return path4.join(pluginData, "state");
+    return path3.join(pluginData, "state");
   }
   return FALLBACK_STATE_ROOT;
 }
 function resolveWorkspaceRoot(cwd = process.cwd()) {
-  const result = runCommand("git", ["rev-parse", "--show-toplevel"], { cwd });
+  const result = runCommand2("git", ["rev-parse", "--show-toplevel"], { cwd });
   if (result.status === 0 && result.stdout.trim()) {
-    return path4.resolve(result.stdout.trim());
+    return path3.resolve(result.stdout.trim());
   }
-  return path4.resolve(cwd);
+  return path3.resolve(cwd);
 }
 function resolveStateDir(workspaceRoot) {
-  return path4.join(stateRootDir(), computeWorkspaceSlug(workspaceRoot));
+  return path3.join(stateRootDir(), computeWorkspaceSlug(workspaceRoot));
 }
 function resolveStateFile(workspaceRoot) {
-  return path4.join(resolveStateDir(workspaceRoot), STATE_FILE_NAME);
+  return path3.join(resolveStateDir(workspaceRoot), STATE_FILE_NAME);
 }
 function resolveJobsDir(workspaceRoot) {
-  return path4.join(resolveStateDir(workspaceRoot), JOBS_DIR_NAME);
+  return path3.join(resolveStateDir(workspaceRoot), JOBS_DIR_NAME);
 }
 function resolveJobFile(workspaceRoot, jobId) {
-  return path4.join(resolveJobsDir(workspaceRoot), `${jobId}.json`);
+  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.json`);
 }
 function resolveJobLogFile(workspaceRoot, jobId) {
-  return path4.join(resolveJobsDir(workspaceRoot), `${jobId}.log`);
+  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.log`);
 }
 function resolveJobConfigFile(workspaceRoot, jobId) {
-  return path4.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
+  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
 }
 function ensureStateDir(workspaceRoot) {
-  fs4.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
+  fs3.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
 }
 function loadState(workspaceRoot) {
   const stateFile = resolveStateFile(workspaceRoot);
   let raw;
   try {
-    raw = fs4.readFileSync(stateFile, "utf8");
+    raw = fs3.readFileSync(stateFile, "utf8");
   } catch {
     return defaultState();
   }
@@ -3793,6 +3769,7 @@ function loadState(workspaceRoot) {
     }
     return {
       version: parsed.version ?? STATE_VERSION,
+      config: parsed.config && typeof parsed.config === "object" ? parsed.config : {},
       jobs: parsed.jobs
     };
   } catch {
@@ -3803,8 +3780,9 @@ function loadState(workspaceRoot) {
 function saveState(workspaceRoot, state) {
   ensureStateDir(workspaceRoot);
   const jobs = state.jobs.slice().sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || "")).slice(0, MAX_JOBS);
-  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, jobs });
-  return { version: STATE_VERSION, jobs };
+  const config = state.config && typeof state.config === "object" ? state.config : {};
+  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs });
+  return { version: STATE_VERSION, config, jobs };
 }
 function updateState(workspaceRoot, mutate) {
   ensureStateDir(workspaceRoot);
@@ -3873,6 +3851,23 @@ function listJobs(workspaceRoot) {
 function getJob(workspaceRoot, reference) {
   return listJobs(workspaceRoot).find((job) => job.jobId === reference) || null;
 }
+function getConfig(workspaceRoot) {
+  return loadState(workspaceRoot).config || {};
+}
+function setConfig(workspaceRoot, key, value) {
+  updateState(workspaceRoot, (state) => {
+    state.config = state.config || {};
+    state.config[key] = value;
+  });
+}
+function recordLastUsedProvider(workspaceRoot, provider) {
+  if (typeof provider !== "string" || !provider.trim()) return;
+  updateState(workspaceRoot, (state) => {
+    state.config = state.config || {};
+    state.config.lastUsedProvider = provider.trim();
+    state.config.lastUsedProviderAt = (/* @__PURE__ */ new Date()).toISOString();
+  });
+}
 function writeJobFile(workspaceRoot, jobId, payload) {
   ensureStateDir(workspaceRoot);
   writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), payload);
@@ -3880,7 +3875,7 @@ function writeJobFile(workspaceRoot, jobId, payload) {
 }
 function readJobFile(jobFile) {
   try {
-    return JSON.parse(fs4.readFileSync(jobFile, "utf8"));
+    return JSON.parse(fs3.readFileSync(jobFile, "utf8"));
   } catch {
     return null;
   }
@@ -3892,14 +3887,14 @@ function writeJobConfigFile(workspaceRoot, jobId, payload) {
 }
 function readJobConfigFile(configFile) {
   try {
-    return JSON.parse(fs4.readFileSync(configFile, "utf8"));
+    return JSON.parse(fs3.readFileSync(configFile, "utf8"));
   } catch {
     return null;
   }
 }
 function removeJobConfigFile(workspaceRoot, jobId) {
   try {
-    fs4.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
+    fs3.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
   } catch {
   }
 }
@@ -3911,7 +3906,7 @@ var DEFAULT_STATUS_LIMIT = 8;
 function isProcessAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
-    process4.kill(pid, 0);
+    process3.kill(pid, 0);
     return true;
   } catch {
     return false;
@@ -3923,7 +3918,7 @@ function sortJobsNewestFirst(jobs) {
 function readProgressPreview(logFile, maxLines = 4) {
   if (!logFile) return "";
   try {
-    const lines = fs5.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const lines = fs4.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return lines.slice(-maxLines).join("\n");
   } catch {
     return "";
@@ -4116,9 +4111,9 @@ function resolveProvider({ provider, positionals = [] } = {}) {
 }
 
 // plugins/polycli/scripts/lib/review.mjs
-import fs6 from "node:fs";
+import fs5 from "node:fs";
 import os4 from "node:os";
-import path5 from "node:path";
+import path4 from "node:path";
 import { randomUUID } from "node:crypto";
 var DEFAULT_MAX_DIFF_BYTES = 2e5;
 var REVIEW_SCOPES = /* @__PURE__ */ new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
@@ -4153,7 +4148,7 @@ var reviewTempDirs = /* @__PURE__ */ new Set();
 process.once("exit", () => {
   for (const dir of reviewTempDirs) {
     try {
-      fs6.rmSync(dir, { recursive: true, force: true });
+      fs5.rmSync(dir, { recursive: true, force: true });
     } catch {
     }
   }
@@ -4169,14 +4164,14 @@ function git(cwd, args) {
   return runCommand("git", args, { cwd });
 }
 function writeReviewTempFile(prefix, extension, text) {
-  const root = fs6.mkdtempSync(path5.join(os4.tmpdir(), `polycli-review-${prefix}-`));
+  const root = fs5.mkdtempSync(path4.join(os4.tmpdir(), `polycli-review-${prefix}-`));
   reviewTempDirs.add(root);
-  const filePath = path5.join(root, `${prefix}-${randomUUID()}${extension}`);
-  fs6.writeFileSync(filePath, text, "utf8");
+  const filePath = path4.join(root, `${prefix}-${randomUUID()}${extension}`);
+  fs5.writeFileSync(filePath, text, "utf8");
   return filePath;
 }
 function makeReviewTempDir(prefix) {
-  return fs6.mkdtempSync(path5.join(os4.tmpdir(), `polycli-review-${prefix}-`));
+  return fs5.mkdtempSync(path4.join(os4.tmpdir(), `polycli-review-${prefix}-`));
 }
 function findSingleQuotedScalarEnd(raw) {
   for (let index = 1; index < raw.length; index += 1) {
@@ -4282,10 +4277,10 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   }
 }
 function buildMiniMaxReviewEnv(parentEnv = process.env) {
-  const baseConfigPath = parentEnv.MINI_AGENT_CONFIG_PATH || path5.join(os4.homedir(), ".mini-agent", "config", "config.yaml");
+  const baseConfigPath = parentEnv.MINI_AGENT_CONFIG_PATH || path4.join(os4.homedir(), ".mini-agent", "config", "config.yaml");
   let baseConfigText = "";
   try {
-    baseConfigText = fs6.readFileSync(baseConfigPath, "utf8");
+    baseConfigText = fs5.readFileSync(baseConfigPath, "utf8");
   } catch {
   }
   const lines = [];
@@ -4502,8 +4497,141 @@ function buildReviewPrompt({
 // plugins/polycli/scripts/lib/timing.mjs
 import path6 from "node:path";
 
-// packages/polycli-utils/src/ndjson.js
+// ../../../packages/polycli-utils/src/ndjson.js
 import fs7 from "node:fs";
+
+// ../../../packages/polycli-utils/src/atomic-save.js
+import crypto2 from "node:crypto";
+import fs6 from "node:fs";
+import path5 from "node:path";
+import process4 from "node:process";
+var LockfileTimeoutError = class extends Error {
+  constructor(lockPath, timeoutMs) {
+    super(`Timed out acquiring lockfile ${lockPath} after ${timeoutMs}ms`);
+    this.code = "ELOCKTIMEOUT";
+    this.lockPath = lockPath;
+    this.timeoutMs = timeoutMs;
+  }
+};
+function sleepSync2(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function ensureParentDir(filePath) {
+  fs6.mkdirSync(path5.dirname(filePath), { recursive: true });
+}
+function normalizeWriteOptions(options) {
+  if (typeof options === "string") {
+    return {
+      flag: "w",
+      mode: 438,
+      writeOptions: options
+    };
+  }
+  if (options && typeof options === "object") {
+    const { flag = "w", mode = 438, ...writeOptions } = options;
+    return {
+      flag,
+      mode,
+      writeOptions: Object.keys(writeOptions).length > 0 ? writeOptions : void 0
+    };
+  }
+  return {
+    flag: "w",
+    mode: 438,
+    writeOptions: void 0
+  };
+}
+function writeFileAtomicSync(filePath, contents, options = {}) {
+  ensureParentDir(filePath);
+  const tmpPath = `${filePath}.tmp.${process4.pid}.${Date.now()}.${crypto2.randomUUID()}`;
+  const { flag, mode, writeOptions } = normalizeWriteOptions(options);
+  const fd = fs6.openSync(tmpPath, flag, mode);
+  try {
+    fs6.writeFileSync(fd, contents, writeOptions);
+    fs6.fsyncSync(fd);
+  } finally {
+    fs6.closeSync(fd);
+  }
+  fs6.renameSync(tmpPath, filePath);
+  const dirFd = fs6.openSync(path5.dirname(filePath), "r");
+  try {
+    fs6.fsyncSync(dirFd);
+  } catch (error) {
+    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
+      throw error;
+    }
+  } finally {
+    fs6.closeSync(dirFd);
+  }
+}
+function writeFileAtomic(filePath, contents, options = {}) {
+  writeFileAtomicSync(filePath, contents, options);
+  return filePath;
+}
+function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 25 } = {}) {
+  ensureParentDir(lockPath);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const fd = fs6.openSync(
+        lockPath,
+        fs6.constants.O_CREAT | fs6.constants.O_EXCL | fs6.constants.O_WRONLY,
+        384
+      );
+      try {
+        fs6.writeFileSync(fd, JSON.stringify({ pid: process4.pid, acquiredAt: Date.now() }), "utf8");
+        fs6.fsyncSync(fd);
+      } finally {
+        fs6.closeSync(fd);
+      }
+      try {
+        return fn();
+      } finally {
+        try {
+          fs6.unlinkSync(lockPath);
+        } catch {
+        }
+      }
+    } catch (error) {
+      if (error.code !== "EEXIST") {
+        throw error;
+      }
+      try {
+        const lock = JSON.parse(fs6.readFileSync(lockPath, "utf8"));
+        const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
+        const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
+        const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
+        let ownerAlive = false;
+        if (pid != null) {
+          try {
+            process4.kill(pid, 0);
+            ownerAlive = true;
+          } catch (killError) {
+            if (killError.code === "ESRCH") {
+              fs6.unlinkSync(lockPath);
+              continue;
+            }
+            if (killError.code !== "EPERM") {
+              throw killError;
+            }
+            ownerAlive = true;
+          }
+        }
+        if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
+          fs6.unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      sleepSync2(pollMs);
+    }
+  }
+  throw new LockfileTimeoutError(lockPath, timeoutMs);
+}
+
+// ../../../packages/polycli-utils/src/ndjson.js
 function safeParseLine(line) {
   try {
     return JSON.parse(line);
@@ -4537,7 +4665,7 @@ function readNdjson(filePath) {
 }
 function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs = 25, maxBytes = null, keepRatio = 0.5 } = {}) {
   const lockPath = `${filePath}.lock`;
-  return withLockfile(lockPath, () => {
+  return withLockfile2(lockPath, () => {
     ensureParentDir(filePath);
     let needsLeadingNewline = false;
     try {
@@ -4719,11 +4847,13 @@ var TIMEOUTS_MS = {
   health: 6e4
 };
 var HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
+var SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
 function printUsage() {
   console.log(
     [
       "Usage:",
       "  polycli-companion.mjs setup [--provider <provider>] [--json]",
+      "    [--enable-review-gate|--disable-review-gate]",
       "  polycli-companion.mjs health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
       "  polycli-companion.mjs rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>",
@@ -4995,6 +5125,7 @@ function buildQueuedJob(execution, workspaceRoot) {
     logFile: resolveJobLogFile(workspaceRoot, jobId),
     createdAt: now,
     updatedAt: now,
+    sessionId: process5.env[SESSION_ID_ENV] || null,
     ...execution.jobMeta
   };
 }
@@ -5132,9 +5263,18 @@ async function startBackgroundExecution(execution, asJson) {
 }
 async function runSetup(rawArgs) {
   const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json"],
+    booleanOptions: ["json", "enable-review-gate", "disable-review-gate"],
     valueOptions: ["provider"]
   });
+  if (options["enable-review-gate"] && options["disable-review-gate"]) {
+    throw new Error("Choose either --enable-review-gate or --disable-review-gate, not both.");
+  }
+  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  if (options["enable-review-gate"]) {
+    setConfig(workspaceRoot, "stopReviewGate", true);
+  } else if (options["disable-review-gate"]) {
+    setConfig(workspaceRoot, "stopReviewGate", false);
+  }
   let providers;
   if (options.provider) {
     providers = [resolveProvider({ provider: options.provider }).provider];
@@ -5143,9 +5283,14 @@ async function runSetup(rawArgs) {
   } else {
     providers = listProviderRuntimes().map((runtime) => runtime.id);
   }
+  const gateConfig = getConfig(workspaceRoot);
   const results = [];
   for (const provider of providers) {
-    results.push(await inspectProvider(provider));
+    results.push({
+      ...await inspectProvider(provider),
+      stopReviewGate: gateConfig.stopReviewGate === true,
+      stopReviewGateWorkspace: workspaceRoot
+    });
   }
   if (options.json) {
     output(results, true);
@@ -5330,6 +5475,7 @@ function parsePromptExecution(rawArgs, kind) {
 }
 async function runAsk(rawArgs) {
   const { options, execution } = parsePromptExecution(rawArgs, "ask");
+  recordLastUsedProvider(resolveWorkspaceRoot(execution.cwd), execution.provider);
   const { background } = parseExecutionMode(options);
   if (background) {
     await startBackgroundExecution(execution, options.json);
@@ -5339,6 +5485,7 @@ async function runAsk(rawArgs) {
 }
 async function runRescue(rawArgs) {
   const { options, execution } = parsePromptExecution(rawArgs, "rescue");
+  recordLastUsedProvider(resolveWorkspaceRoot(execution.cwd), execution.provider);
   const { background } = parseExecutionMode(options);
   if (background) {
     await startBackgroundExecution(execution, options.json);

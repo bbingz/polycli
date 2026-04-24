@@ -9,10 +9,13 @@ import {
   listJobs,
   loadState,
   readJobFile,
+  readLastUsedProvider,
   resolveStateFile,
   resolveJobFile,
   resolveStateDir,
   resolveWorkspaceRoot,
+  setConfig,
+  recordLastUsedProvider,
   updateJobAtomically,
   upsertJob,
   writeJobFile,
@@ -74,6 +77,19 @@ test("upsertJob stores jobs and writeJobFile persists envelopes", () => {
     const envelope = readJobFile(resolveJobFile(workspaceRoot, "job-1"));
     assert.equal(envelope.job.status, "completed");
     assert.equal(envelope.result.response, "PONG");
+  });
+});
+
+test("config and last-used provider share the workspace state file", () => {
+  withPluginData(() => {
+    const workspaceRoot = "/tmp/polycli-config-state";
+
+    setConfig(workspaceRoot, "stopReviewGate", true);
+    recordLastUsedProvider(workspaceRoot, "qwen");
+
+    const state = loadState(workspaceRoot);
+    assert.equal(state.config.stopReviewGate, true);
+    assert.equal(readLastUsedProvider(workspaceRoot), "qwen");
   });
 });
 

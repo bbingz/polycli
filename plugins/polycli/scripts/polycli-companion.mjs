@@ -24,6 +24,7 @@ import { resolveProvider } from "./lib/providers.mjs";
 import { buildReviewPrompt, buildReviewRuntimeOptions, collectReviewContext } from "./lib/review.mjs";
 import {
   getJob,
+  recordLastUsedProvider,
   readJobConfigFile,
   readJobFile,
   removeJobConfigFile,
@@ -32,6 +33,8 @@ import {
   resolveJobLogFile,
   resolveStateDir,
   resolveWorkspaceRoot,
+  getConfig,
+  setConfig,
   updateJobAtomically,
   upsertJob,
   writeJobConfigFile,
@@ -59,12 +62,14 @@ const TIMEOUTS_MS = {
   health: 60_000,
 };
 const HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
+const SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
 
 function printUsage() {
   console.log(
     [
       "Usage:",
       "  polycli-companion.mjs setup [--provider <provider>] [--json]",
+      "    [--enable-review-gate|--disable-review-gate]",
       "  polycli-companion.mjs health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
       "  polycli-companion.mjs rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>",
@@ -356,6 +361,7 @@ function buildQueuedJob(execution, workspaceRoot) {
     logFile: resolveJobLogFile(workspaceRoot, jobId),
     createdAt: now,
     updatedAt: now,
+    sessionId: process.env[SESSION_ID_ENV] || null,
     ...execution.jobMeta,
   };
 }
@@ -504,9 +510,18 @@ async function startBackgroundExecution(execution, asJson) {
 
 async function runSetup(rawArgs) {
   const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json"],
+    booleanOptions: ["json", "enable-review-gate", "disable-review-gate"],
     valueOptions: ["provider"],
   });
+  if (options["enable-review-gate"] && options["disable-review-gate"]) {
+    throw new Error("Choose either --enable-review-gate or --disable-review-gate, not both.");
+  }
+  const workspaceRoot = resolveWorkspaceRoot(process.cwd());
+  if (options["enable-review-gate"]) {
+    setConfig(workspaceRoot, "stopReviewGate", true);
+  } else if (options["disable-review-gate"]) {
+    setConfig(workspaceRoot, "stopReviewGate", false);
+  }
 
   let providers;
   if (options.provider) {
@@ -517,9 +532,14 @@ async function runSetup(rawArgs) {
     providers = listProviderRuntimes().map((runtime) => runtime.id);
   }
 
+  const gateConfig = getConfig(workspaceRoot);
   const results = [];
   for (const provider of providers) {
-    results.push(await inspectProvider(provider));
+    results.push({
+      ...(await inspectProvider(provider)),
+      stopReviewGate: gateConfig.stopReviewGate === true,
+      stopReviewGateWorkspace: workspaceRoot,
+    });
   }
 
   if (options.json) {
@@ -719,6 +739,7 @@ function parsePromptExecution(rawArgs, kind) {
 
 async function runAsk(rawArgs) {
   const { options, execution } = parsePromptExecution(rawArgs, "ask");
+  recordLastUsedProvider(resolveWorkspaceRoot(execution.cwd), execution.provider);
   const { background } = parseExecutionMode(options);
   if (background) {
     await startBackgroundExecution(execution, options.json);
@@ -729,6 +750,7 @@ async function runAsk(rawArgs) {
 
 async function runRescue(rawArgs) {
   const { options, execution } = parsePromptExecution(rawArgs, "rescue");
+  recordLastUsedProvider(resolveWorkspaceRoot(execution.cwd), execution.provider);
   const { background } = parseExecutionMode(options);
   if (background) {
     await startBackgroundExecution(execution, options.json);
