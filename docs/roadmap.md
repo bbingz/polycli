@@ -16,7 +16,7 @@ Living document — update when items land, when priorities shift, or when a def
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode), each with an independent marketplace manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` / `@bbingz/polycli-runtime` are internal bundler inputs (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
 
-**v0.5.0 scope** is the two medium-term items below (R5 + R6) plus any of the three design questions (Q1 / Q2 / Q3) that the user chooses to resolve. Nothing in the v0.5.0 scope is a breaking change; the `v0.5` bump is just the natural next marker after a minor feature addition (if any of R5/R6 qualify).
+**v0.5.0 scope** is R5 + R6 (below) plus Q1 (publish utils/timing to npm, decided 2026-04-24). Q2 and Q3 stay in "observe, do not act" state. The spec handed to Codex is `docs/review-2026-04-24-v0.5.0-spec.md`. The `v0.5` bump is the natural next marker because Q1 introduces a new public npm surface (utils + timing leave the internal-only bucket).
 
 ---
 
@@ -36,15 +36,9 @@ Deliverable: extract patterns into named constants per provider, add one test pe
 
 ---
 
-## Design-level open questions (not scheduled — decide before doing)
+## Design-level open questions (observation only)
 
-### Q1 — Will `polycli-utils` / `polycli-timing` ever be published to npm?
-
-Today they are `"private": true`. The published surface is bundled into host plugins. Making them public would let third parties build their own hosts without re-bundling, at the cost of committing to a semver contract. `docs/polycli-v1-public-surface.md` was drafted for this scenario but is now out of date (see R3).
-
-**Decide**: keep forever-internal, or schedule an explicit 1.0 publish after R3 is resolved.
-
-### Q2 — Are the provider-specific `model` fallbacks sustainable?
+### Q2 — Are the provider-specific `model` fallbacks sustainable? (status: observing)
 
 v0.4.1 populates the top-level `model` field for all 8 providers, but the fallback paths differ:
 
@@ -52,16 +46,13 @@ v0.4.1 populates the top-level `model` field for all 8 providers, but the fallba
 - opencode pulls model from `opencode export <session>` session metadata (an extra CLI call)
 - pi falls back to the pinned default `openai-codex/gpt-5.4`
 
-If any of these upstream surfaces change, the fallback breaks silently. No alert today. Two answers:
+If any of these upstream surfaces change, the fallback breaks silently. **User direction (2026-04-24): record the concern, keep observing, revisit when a concrete failure signal accumulates** — e.g., an upstream CLI flips the shape, a second provider independently needs a similar fallback, or integration tests start flaking on model assertions. Do not pre-generalize. When the time comes, pair the fix with R6-style regex naming so the fallback contract is lockable.
 
-- Accept it as provider-quirk maintenance, encode the assumptions in tests (pair with R7).
-- Revisit when a second provider grows a similar need; do not pre-generalize.
-
-### Q3 — Four-host asymmetry: accept or converge?
+### Q3 — Four-host asymmetry: accept or converge? (status: observing)
 
 polycli has 10 slash-commands, polycli-codex / polycli-copilot have a skill with 10 subcommands, polycli-opencode has 2 tool functions. All functionally equivalent. Asymmetry is driven by host capability, not project drift.
 
-R4 (the map doc) treats this as a "document it" problem. The deeper question — "should the host surfaces converge over time?" — is not scheduled. Do not preemptively converge; wait for a concrete pain point from a real user.
+**User direction (2026-04-24): observe only.** `docs/host-command-map.md` is the interim answer (document the asymmetry, do not try to converge). Revisit if a real user reports friction from host switching, or if a new host onboarding makes the asymmetry costly.
 
 ---
 
