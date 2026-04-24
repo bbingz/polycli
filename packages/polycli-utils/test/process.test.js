@@ -24,6 +24,24 @@ test("binaryAvailable reports missing binaries as unavailable", () => {
   assert.equal(result.available, false);
 });
 
+test("binaryAvailable keeps only the first non-empty detail line", () => {
+  const result = binaryAvailable(process.execPath, [
+    "-e",
+    "process.stdout.write('\\ncli 1.0\\nupdate available\\n')",
+  ]);
+  assert.equal(result.available, true);
+  assert.equal(result.detail, "cli 1.0");
+});
+
+test("binaryAvailable keeps only the first non-empty error detail line", () => {
+  const result = binaryAvailable(process.execPath, [
+    "-e",
+    "process.stderr.write('\\nfirst error\\nsecond error\\n'); process.exit(2)",
+  ]);
+  assert.equal(result.available, false);
+  assert.equal(result.detail, "first error");
+});
+
 test("formatCommandFailure includes exit and stderr", () => {
   const message = formatCommandFailure({
     command: "demo",

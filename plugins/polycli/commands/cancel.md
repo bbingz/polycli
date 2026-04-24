@@ -16,3 +16,4 @@ Present the companion stdout directly.
 Rules:
 - Keep the cancellation result terse.
 - If cancellation fails, show the exact failure message.
+- Treat "no active job found" as a non-zero no-op.

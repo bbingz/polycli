@@ -139,6 +139,13 @@ function runCommand(command, args = [], options = {}) {
     error: result.error ?? null
   };
 }
+function firstNonEmptyLine(text) {
+  for (const line of (text ?? "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
 function binaryAvailable(command, versionArgs = ["--version"], options = {}) {
   const result = runCommand(command, versionArgs, options);
   if (result.error && result.error.code === "ENOENT") {
@@ -148,12 +155,12 @@ function binaryAvailable(command, versionArgs = ["--version"], options = {}) {
     return { available: false, detail: result.error.message };
   }
   if (result.status !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.status}`;
+    const detail = firstNonEmptyLine(result.stderr) || firstNonEmptyLine(result.stdout) || `exit ${result.status}`;
     return { available: false, detail };
   }
   return {
     available: true,
-    detail: result.stdout.trim() || result.stderr.trim() || "ok"
+    detail: firstNonEmptyLine(result.stdout) || firstNonEmptyLine(result.stderr) || "ok"
   };
 }
 function formatCommandFailure(result) {
@@ -4106,6 +4113,34 @@ function printUsage() {
     ].join("\n")
   );
 }
+function hasHelpFlag(args = []) {
+  return args.includes("--help") || args.includes("-h");
+}
+function wantsJson(args = []) {
+  return args.includes("--json");
+}
+function classifyErrorCode(message = "") {
+  if (message.startsWith("Missing provider.")) return "missing_provider";
+  if (message.startsWith("Unknown provider ")) return "unknown_provider";
+  if (message.startsWith("Invalid --scope value ")) return "invalid_scope";
+  if (message.startsWith("Missing prompt text ")) return "missing_prompt";
+  if (message.startsWith("Unknown subcommand ")) return "unknown_subcommand";
+  if (/^Job '.+' not found\.$/.test(message)) return "job_not_found";
+  if (message === "No completed job found.") return "no_completed_job";
+  if (message === "No active job found.") return "no_active_job";
+  if (message === "--history must be a non-negative integer.") return "invalid_history";
+  return "error";
+}
+function exitWithError({ message, code = classifyErrorCode(message), asJson = false, exitCode = 1 }) {
+  if (asJson) {
+    process5.stdout.write(`${JSON.stringify({ error: message, code }, null, 2)}
+`);
+  } else {
+    process5.stderr.write(`Error: ${message}
+`);
+  }
+  process5.exitCode = exitCode;
+}
 function output(value, asJson) {
   if (asJson) {
     process5.stdout.write(`${JSON.stringify(value, null, 2)}
@@ -4292,6 +4327,7 @@ function renderStatusSnapshot(snapshot) {
   return lines.join("\n");
 }
 function renderResultEnvelope(envelope) {
+  const result = envelope.result ?? envelope;
   const lines = [
     `Job: ${envelope.job.jobId}`,
     `Provider: ${envelope.job.provider}`,
@@ -4300,17 +4336,43 @@ function renderResultEnvelope(envelope) {
   ];
   if (envelope.job.finishedAt) lines.push(`Finished: ${envelope.job.finishedAt}`);
   if (envelope.job.sessionId) lines.push(`Session: ${envelope.job.sessionId}`);
-  if (envelope.result?.response) {
+  if (result?.response) {
     lines.push("");
     lines.push("Response:");
-    lines.push(envelope.result.response);
+    lines.push(result.response);
   }
-  if (!envelope.result?.response && envelope.result?.error) {
+  if (!result?.response && result?.error) {
     lines.push("");
     lines.push("Error:");
-    lines.push(envelope.result.error);
+    lines.push(result.error);
   }
   return lines.join("\n");
+}
+function buildResultPayload(envelope) {
+  const job = envelope.job || {};
+  const result = envelope.result || {};
+  return {
+    provider: result.provider ?? job.provider ?? null,
+    kind: result.kind ?? job.kind ?? null,
+    model: result.model ?? job.model ?? null,
+    promptPreview: result.promptPreview ?? job.promptPreview ?? null,
+    ...result,
+    job: {
+      jobId: job.jobId ?? null,
+      provider: job.provider ?? null,
+      kind: job.kind ?? null,
+      model: job.model ?? null,
+      status: job.status ?? null,
+      promptPreview: job.promptPreview ?? null,
+      createdAt: job.createdAt ?? null,
+      updatedAt: job.updatedAt ?? null,
+      finishedAt: job.finishedAt ?? null,
+      pid: job.pid ?? null,
+      logFile: job.logFile ?? null,
+      sessionId: job.sessionId ?? null,
+      error: job.error ?? null
+    }
+  };
 }
 async function startBackgroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
@@ -4698,7 +4760,7 @@ async function runResult(rawArgs) {
   }
   const envelope = readJobFile(resolveJobFile(workspaceRoot, refreshed.jobId)) || { job: refreshed, result: refreshed.result };
   if (options.json) {
-    output(envelope, true);
+    output(buildResultPayload(envelope), true);
     return;
   }
   output(renderResultEnvelope(envelope), false);
@@ -4712,11 +4774,11 @@ async function runCancel(rawArgs) {
   if (!job) {
     if (options.json) {
       output({ cancelled: false, reason: "not_found", jobId: positionals[0] || null }, true);
-      process5.exitCode = 3;
+      process5.exitCode = 1;
       return;
     }
     output(positionals[0] ? `Job ${positionals[0]} not found.` : "No active job found to cancel.", false);
-    process5.exitCode = 3;
+    process5.exitCode = 1;
     return;
   }
   const report = await cancelJob(workspaceRoot, job.jobId);
@@ -4765,16 +4827,24 @@ function renderTimingReport(records, aggregate) {
   }
   return lines.join("\n");
 }
+function parseHistoryLimit(value) {
+  if (value == null) return 20;
+  if (!/^\d+$/.test(String(value))) {
+    throw new Error("--history must be a non-negative integer.");
+  }
+  return Number.parseInt(value, 10);
+}
 async function runTiming(rawArgs) {
   const { options } = parseArgs(rawArgs, {
     booleanOptions: ["json"],
     valueOptions: ["provider", "history"]
   });
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
-  const limit = options.history ? Number.parseInt(options.history, 10) : 20;
+  const provider = options.provider ? resolveProvider({ provider: options.provider }).provider : null;
+  const limit = parseHistoryLimit(options.history);
   const records = listTimingRecords(workspaceRoot, {
-    provider: options.provider || null,
-    limit: Number.isFinite(limit) ? limit : 20
+    provider,
+    limit
   });
   const aggregate = summarizeTimingRecords(records);
   if (options.json) {
@@ -4878,6 +4948,10 @@ async function main() {
     printUsage();
     return;
   }
+  if (hasHelpFlag(rawArgs) && command !== "_job-worker") {
+    printUsage();
+    return;
+  }
   if (command === "setup") {
     await runSetup(rawArgs);
     return;
@@ -4925,7 +4999,9 @@ async function main() {
   throw new Error(`Unknown subcommand '${command}'.`);
 }
 main().catch((error) => {
-  process5.stderr.write(`Error: ${error.message}
-`);
-  process5.exitCode = process5.exitCode || 1;
+  exitWithError({
+    message: error.message,
+    asJson: wantsJson(process5.argv.slice(2)),
+    exitCode: process5.exitCode || 1
+  });
 });

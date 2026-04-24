@@ -35,6 +35,14 @@ export function runCommandChecked(command, args = [], options = {}) {
   return result;
 }
 
+function firstNonEmptyLine(text) {
+  for (const line of (text ?? "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
 export function binaryAvailable(command, versionArgs = ["--version"], options = {}) {
   const result = runCommand(command, versionArgs, options);
   if (result.error && result.error.code === "ENOENT") {
@@ -44,12 +52,12 @@ export function binaryAvailable(command, versionArgs = ["--version"], options = 
     return { available: false, detail: result.error.message };
   }
   if (result.status !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.status}`;
+    const detail = firstNonEmptyLine(result.stderr) || firstNonEmptyLine(result.stdout) || `exit ${result.status}`;
     return { available: false, detail };
   }
   return {
     available: true,
-    detail: result.stdout.trim() || result.stderr.trim() || "ok",
+    detail: firstNonEmptyLine(result.stdout) || firstNonEmptyLine(result.stderr) || "ok",
   };
 }
 

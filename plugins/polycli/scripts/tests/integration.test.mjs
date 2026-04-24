@@ -506,6 +506,123 @@ async function assertSetupAndAsk(provider, env, prompt = "__reply=PONG") {
   return askPayload;
 }
 
+function assertJsonError(result, expectedCode) {
+  assert.equal(result.stderr, "");
+  const payload = JSON.parse(result.stdout);
+  assert.equal(typeof payload.error, "string");
+  assert.equal(payload.code, expectedCode);
+  return payload;
+}
+
+test("integration: subcommand help exits before provider dispatch", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: "__must_not_be_called__",
+    });
+    const commands = [
+      "setup",
+      "health",
+      "ask",
+      "rescue",
+      "review",
+      "adversarial-review",
+      "status",
+      "result",
+      "cancel",
+      "timing",
+    ];
+    for (const command of commands) {
+      const result = await runCompanion([command, "--help", "--provider", "qwen"], {
+        cwd: process.cwd(),
+        env,
+      });
+      assert.equal(result.code, 0, `${command}: ${result.stderr}`);
+      assert.match(result.stdout, /Usage:/, command);
+      assert.equal(result.stderr, "");
+    }
+  } finally {
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: json errors keep structured shape", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  try {
+    const context = {
+      cwd: process.cwd(),
+      env: cleanEnv({ CLAUDE_PLUGIN_DATA: pluginData }),
+    };
+    const cases = [
+      { args: ["ask", "--json"], code: "missing_provider" },
+      { args: ["ask", "--provider", "nonexistent", "--json", "hi"], code: "unknown_provider" },
+      { args: ["review", "--provider", "claude", "--scope", "wrong", "--json"], code: "invalid_scope" },
+      { args: ["bogus", "--json"], code: "unknown_subcommand" },
+      { args: ["result", "--json"], code: "no_completed_job" },
+      { args: ["status", "fake", "--json"], code: "job_not_found" },
+    ];
+    for (const entry of cases) {
+      const result = await runCompanion(entry.args, context);
+      assert.equal(result.code, 1, entry.args.join(" "));
+      assertJsonError(result, entry.code);
+    }
+  } finally {
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: cancel no-op uses exit 1 in text and json modes", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  try {
+    const context = {
+      cwd: process.cwd(),
+      env: cleanEnv({ CLAUDE_PLUGIN_DATA: pluginData }),
+    };
+    const text = await runCompanion(["cancel"], context);
+    assert.equal(text.code, 1, text.stderr);
+    assert.match(text.stdout, /No active job found to cancel\./);
+
+    const json = await runCompanion(["cancel", "--json"], context);
+    assert.equal(json.code, 1, json.stderr);
+    const payload = JSON.parse(json.stdout);
+    assert.equal(payload.cancelled, false);
+    assert.equal(payload.reason, "not_found");
+  } finally {
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: timing validates provider and history arguments", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  try {
+    const context = {
+      cwd: process.cwd(),
+      env: cleanEnv({ CLAUDE_PLUGIN_DATA: pluginData }),
+    };
+
+    const unknownProvider = await runCompanion(["timing", "--provider", "nonexistent", "--json"], context);
+    assert.equal(unknownProvider.code, 1, unknownProvider.stderr);
+    assertJsonError(unknownProvider, "unknown_provider");
+
+    for (const rawHistory of ["abc", "-1"]) {
+      const invalidHistory = await runCompanion(["timing", "--history", rawHistory, "--json"], context);
+      assert.equal(invalidHistory.code, 1, invalidHistory.stderr);
+      assertJsonError(invalidHistory, "invalid_history");
+    }
+
+    const zeroHistory = await runCompanion(["timing", "--history", "0", "--json"], context);
+    assert.equal(zeroHistory.code, 0, zeroHistory.stderr);
+    assert.equal(JSON.parse(zeroHistory.stdout).records.length, 0);
+
+    const validProvider = await runCompanion(["timing", "--provider", "claude", "--history", "5", "--json"], context);
+    assert.equal(validProvider.code, 0, validProvider.stderr);
+    assert.ok(Array.isArray(JSON.parse(validProvider.stdout).records));
+  } finally {
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
 test("integration: setup reports qwen as available when fake binary is configured", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   const fake = createFakeQwenBin();
@@ -642,7 +759,8 @@ test("integration: health rejects --model without a single provider", async () =
   });
 
   assert.equal(health.code, 1);
-  assert.match(health.stderr, /--model requires --provider/i);
+  const payload = assertJsonError(health, "error");
+  assert.match(payload.error, /--model requires --provider/i);
 });
 
 test("integration: health without provider returns every healthy provider", async () => {
@@ -926,7 +1044,8 @@ test("integration: review --background preserves kimi runtime options and stored
     });
     assert.equal(stored.code, 0, stored.stderr);
     const payload = JSON.parse(stored.stdout);
-    assert.equal(payload.result.response, "BACKGROUND_KIMI_OK");
+    assert.equal(payload.response, "BACKGROUND_KIMI_OK");
+    assert.equal(payload.job.jobId, started.job.jobId);
 
     const logged = JSON.parse(fs.readFileSync(argLog, "utf8").trim());
     assert.match(logged.argv.join(" "), /--no-thinking/);
@@ -965,17 +1084,18 @@ test("integration: review --background preserves qwen runtime options and stored
     });
     assert.equal(stored.code, 0, stored.stderr);
     const payload = JSON.parse(stored.stdout);
-    assert.equal(payload.result.response, "BACKGROUND_QWEN_OK");
-    assert.equal(payload.result.stdout, undefined);
-    assert.equal(payload.result.stderr, undefined);
-    assert.equal(payload.result.events, undefined);
-    assert.equal(typeof payload.result.stdoutBytes, "number");
+    assert.equal(payload.response, "BACKGROUND_QWEN_OK");
+    assert.equal(payload.job.jobId, started.job.jobId);
+    assert.equal(payload.stdout, undefined);
+    assert.equal(payload.stderr, undefined);
+    assert.equal(payload.events, undefined);
+    assert.equal(typeof payload.stdoutBytes, "number");
     assert.equal(
-      payload.result.stderrBytes === undefined || typeof payload.result.stderrBytes === "number",
+      payload.stderrBytes === undefined || typeof payload.stderrBytes === "number",
       true
     );
     assert.equal(
-      payload.result.eventCount === undefined || typeof payload.result.eventCount === "number",
+      payload.eventCount === undefined || typeof payload.eventCount === "number",
       true
     );
 
@@ -1019,10 +1139,11 @@ test("integration: qwen result-only review still records timing text and preview
     });
     assert.equal(stored.code, 0, stored.stderr);
     const payload = JSON.parse(stored.stdout);
-    assert.equal(payload.result.response, "RESULT_ONLY_QWEN_OK");
-    assert.equal(payload.result.timing.metrics.ttft.status, "measured");
-    assert.equal(payload.result.timing.metrics.gen.status, "measured");
-    assert.equal(payload.result.timing.metrics.tail.status, "measured");
+    assert.equal(payload.response, "RESULT_ONLY_QWEN_OK");
+    assert.equal(payload.job.jobId, started.job.jobId);
+    assert.equal(payload.timing.metrics.ttft.status, "measured");
+    assert.equal(payload.timing.metrics.gen.status, "measured");
+    assert.equal(payload.timing.metrics.tail.status, "measured");
 
     const logText = fs.readFileSync(started.job.logFile, "utf8");
     assert.match(logText, /RESULT_ONLY_QWEN_OK/);
@@ -1058,7 +1179,8 @@ test("integration: kimi string-content review still records preview text", async
     });
     assert.equal(stored.code, 0, stored.stderr);
     const payload = JSON.parse(stored.stdout);
-    assert.equal(payload.result.response, "STRING_KIMI_OK");
+    assert.equal(payload.response, "STRING_KIMI_OK");
+    assert.equal(payload.job.jobId, started.job.jobId);
 
     const logText = fs.readFileSync(started.job.logFile, "utf8");
     assert.match(logText, /STRING_KIMI_OK/);
@@ -1443,7 +1565,9 @@ test("integration: rescue --background can be polled and fetched via result", as
     assert.equal(stored.code, 0, stored.stderr);
     const parsed = JSON.parse(stored.stdout);
     assert.equal(parsed.job.jobId, started.job.jobId);
-    assert.equal(parsed.result.response, "PONG");
+    assert.equal(parsed.response, "PONG");
+    assert.equal(parsed.ok, true);
+    assert.ok(parsed.timing);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
