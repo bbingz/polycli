@@ -120,6 +120,7 @@ export function parsePiStreamText(text) {
     if (!sessionId && typeof event.session?.id === "string") sessionId = event.session.id;
     if (!model && typeof event.model === "string") model = event.model;
     if (!model && typeof event.session?.model === "string") model = event.session.model;
+    if (!model && typeof event.result?.model === "string") model = event.result.model;
     if (event.type === "agent_end") {
       resultEvent = event;
     }
@@ -156,7 +157,7 @@ function buildPiAuthStatus(result) {
     return {
       loggedIn: true,
       detail: "authenticated",
-      model: result.model ?? null,
+      model: result.model ?? DEFAULT_PI_MODEL,
     };
   }
 
@@ -165,7 +166,7 @@ function buildPiAuthStatus(result) {
     return { loggedIn: false, detail };
   }
   if (PI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
-    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? DEFAULT_PI_MODEL };
   }
   return { loggedIn: false, detail };
 }
@@ -188,6 +189,7 @@ export function runPiPrompt({
   resumeSessionId = null,
   continueLast = false,
   noSession = false,
+  defaultModel = null,
   bin = PI_BIN,
 } = {}) {
   const invocation = buildPiInvocation({
@@ -227,7 +229,7 @@ export function runPiPrompt({
     response: parsed.response,
     events: parsed.events,
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-    model: parsed.model,
+    model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
     error: result.status === 0
       ? (resultError || (hasVisibleText ? null : "pi produced no visible text"))
       : (result.stderr.trim() || `pi exited with code ${result.status}`),
@@ -244,6 +246,7 @@ export function runPiPromptStreaming({
   resumeSessionId = null,
   continueLast = false,
   noSession = false,
+  defaultModel = null,
   onEvent = () => {},
   bin = PI_BIN,
   spawnImpl,
@@ -288,6 +291,7 @@ export function runPiPromptStreaming({
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok
         ? (resultError || (hasVisibleText ? null : "pi produced no visible text"))

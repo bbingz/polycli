@@ -6,6 +6,7 @@ import { spawnStreamingCommand } from "./spawn.js";
 const OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const SESSION_EXPORT_TIMEOUT_MS = 30_000;
 const OPENCODE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 const OPENCODE_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 
@@ -52,6 +53,62 @@ function getOpenCodeResultError(event) {
     return `opencode exited with code ${event.status}`;
   }
   return null;
+}
+
+function formatOpenCodeModel(info) {
+  if (!info || typeof info !== "object") return null;
+  const providerID = typeof info.providerID === "string" ? info.providerID : null;
+  const modelID = typeof info.modelID === "string" ? info.modelID : null;
+  if (providerID && modelID) return `${providerID}/${modelID}`;
+  if (modelID) return modelID;
+  return null;
+}
+
+function findOpenCodeExportModel(value) {
+  if (!value || typeof value !== "object") return null;
+
+  const direct = formatOpenCodeModel(value);
+  if (direct) return direct;
+
+  if (typeof value.model === "string" && value.model.trim()) return value.model;
+  const nested = formatOpenCodeModel(value.model);
+  if (nested) return nested;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findOpenCodeExportModel(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  for (const item of Object.values(value)) {
+    const found = findOpenCodeExportModel(item);
+    if (found) return found;
+  }
+  return null;
+}
+
+function extractOpenCodeExportModel(text) {
+  const raw = String(text ?? "");
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  try {
+    return findOpenCodeExportModel(JSON.parse(raw.slice(start)));
+  } catch {
+    return null;
+  }
+}
+
+function resolveOpenCodeSessionModel(sessionId, { cwd, env, bin = OPENCODE_BIN } = {}) {
+  if (!sessionId) return null;
+  const result = runCommand(bin, ["export", sessionId], {
+    cwd,
+    env,
+    timeout: SESSION_EXPORT_TIMEOUT_MS,
+  });
+  if (result.error || result.status !== 0) return null;
+  return extractOpenCodeExportModel(result.stdout);
 }
 
 export function buildOpenCodeInvocation({
@@ -147,7 +204,7 @@ export function parseOpenCodeStreamText(text) {
   return { events, response, sessionId, model, resultEvent };
 }
 
-export function parseOpenCodeJsonResult(stdout, stderr, status) {
+export function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
   const parsed = parseOpenCodeStreamText(stdout);
   const resolvedSession = resolveSessionId({
     stdout,
@@ -162,7 +219,7 @@ export function parseOpenCodeJsonResult(stdout, stderr, status) {
     response: parsed.response,
     events: parsed.events,
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-    model: parsed.model,
+    model: parsed.model ?? defaultModel,
     status,
     error: status === 0
       ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
@@ -214,6 +271,7 @@ export function runOpenCodePrompt({
   agent = null,
   variant = null,
   skipPermissions = true,
+  defaultModel = null,
   bin = OPENCODE_BIN,
 } = {}) {
   const invocation = buildOpenCodeInvocation({
@@ -239,7 +297,14 @@ export function runOpenCodePrompt({
     };
   }
 
-  return parseOpenCodeJsonResult(result.stdout, result.stderr, result.status);
+  const parsed = parseOpenCodeJsonResult(result.stdout, result.stderr, result.status, {
+    defaultModel: model ?? defaultModel,
+  });
+  if (parsed.ok && !parsed.model && parsed.sessionId) {
+    const exportedModel = resolveOpenCodeSessionModel(parsed.sessionId, { cwd, env, bin });
+    if (exportedModel) return { ...parsed, model: exportedModel };
+  }
+  return parsed;
 }
 
 export function runOpenCodePromptStreaming({
@@ -254,6 +319,7 @@ export function runOpenCodePromptStreaming({
   agent = null,
   variant = null,
   skipPermissions = true,
+  defaultModel = null,
   onEvent = () => {},
   bin = OPENCODE_BIN,
   spawnImpl,
@@ -294,11 +360,17 @@ export function runOpenCodePromptStreaming({
     });
     const resultError = getOpenCodeResultError(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
+    let resolvedModel = parsed.model ?? model ?? defaultModel;
+    const ok = result.ok && !resultError && hasVisibleText;
+    if (ok && !resolvedModel) {
+      resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? resolvedSession.sessionId, { cwd, env, bin });
+    }
     return {
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-      ok: result.ok && !resultError && hasVisibleText,
+      model: resolvedModel,
+      ok,
       error: result.ok
         ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
         : result.error,

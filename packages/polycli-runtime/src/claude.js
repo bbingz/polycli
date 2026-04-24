@@ -123,6 +123,7 @@ export function parseClaudeStreamText(text) {
   const events = [];
   let response = "";
   let sessionId = null;
+  let model = null;
   let resultEvent = null;
 
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
@@ -138,8 +139,17 @@ export function parseClaudeStreamText(text) {
     if (!sessionId && typeof event.sessionId === "string") {
       sessionId = event.sessionId;
     }
+    if (!model && typeof event.model === "string") {
+      model = event.model;
+    }
+    if (!model && typeof event.session?.model === "string") {
+      model = event.session.model;
+    }
     if (event.type === "result") {
       resultEvent = event;
+      if (typeof event.model === "string") {
+        model = event.model;
+      }
       if (!response.trim()) {
         response += extractClaudeText(event);
       }
@@ -153,11 +163,12 @@ export function parseClaudeStreamText(text) {
     events,
     response,
     sessionId,
+    model,
     resultEvent,
   };
 }
 
-export function parseClaudeJsonResult(stdout, stderr, status) {
+export function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
   const text = String(stdout ?? "");
   const jsonStart = text.indexOf("{");
   if (jsonStart < 0) {
@@ -186,6 +197,7 @@ export function parseClaudeJsonResult(stdout, stderr, status) {
       ok: status === 0 && !isClaudeErrorResultEvent(parsed),
       response,
       sessionId,
+      model: parsed.model ?? defaultModel,
       durationMs: parsed.duration_ms ?? null,
       totalCostUsd: parsed.total_cost_usd ?? null,
       status,
@@ -227,6 +239,7 @@ export function runClaudePrompt({
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   bin = CLAUDE_BIN,
 } = {}) {
   const invocation = buildClaudeInvocation({
@@ -255,7 +268,9 @@ export function runClaudePrompt({
     };
   }
 
-  return parseClaudeJsonResult(result.stdout, result.stderr, result.status);
+  return parseClaudeJsonResult(result.stdout, result.stderr, result.status, {
+    defaultModel: model ?? defaultModel,
+  });
 }
 
 export function runClaudePromptStreaming({
@@ -267,6 +282,7 @@ export function runClaudePromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   onEvent = () => {},
   bin = CLAUDE_BIN,
   spawnImpl,
@@ -319,6 +335,7 @@ export function runClaudePromptStreaming({
       ...parsed,
       timedOut: completed ? false : result.timedOut,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      model: parsed.model ?? model ?? defaultModel,
       ok: completed && !resultError && hasVisibleText,
       error: completed
         ? (resultError || (hasVisibleText ? null : "claude produced no visible text"))

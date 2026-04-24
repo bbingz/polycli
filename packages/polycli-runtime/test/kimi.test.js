@@ -54,11 +54,12 @@ test("parseKimiStreamText keeps assistant text and tool events separate", () => 
     [
       '{"role":"assistant","content":[{"type":"text","text":"hello"},{"type":"think","text":"hidden"}]}',
       '{"role":"tool","name":"bash","content":[{"type":"text","text":"ran"}]}',
-      '{"role":"assistant","content":[{"type":"text","text":" world"}]}',
+      '{"role":"assistant","content":[{"type":"text","text":" world"}],"model":"kimi-k2"}',
     ].join("\n")
   );
 
   assert.equal(parsed.response, "hello world");
+  assert.equal(parsed.model, "kimi-k2");
   assert.equal(parsed.events.length, 3);
   assert.equal(parsed.toolEvents.length, 1);
   assert.equal(extractKimiText({ role: "assistant", content: [{ type: "text", text: "ok" }] }), "ok");
@@ -82,11 +83,13 @@ process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "text
       const result = runKimiPrompt({
         prompt: "ping",
         cwd: root,
+        defaultModel: "kimi-fallback",
         bin,
       });
 
       assert.equal(result.ok, true);
       assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
+      assert.equal(result.model, "kimi-fallback");
     }
   );
 });

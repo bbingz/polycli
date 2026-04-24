@@ -69,6 +69,7 @@ test("runMiniMaxPrompt returns a structured failure on spawn error", async () =>
 
   const result = await runMiniMaxPrompt({
     prompt: "ping",
+    defaultModel: "minimax-fallback",
     spawnImpl() {
       queueMicrotask(() => {
         const error = new Error("spawn mini-agent ENOENT");
@@ -81,6 +82,7 @@ test("runMiniMaxPrompt returns a structured failure on spawn error", async () =>
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+  assert.equal(result.model, "minimax-fallback");
 });
 
 test("minimax helpers replay a captured real cli fixture", () => {

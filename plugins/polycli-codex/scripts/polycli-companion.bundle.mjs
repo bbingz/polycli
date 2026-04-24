@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 // plugins/polycli/scripts/polycli-companion.mjs
-import fs8 from "node:fs";
+import fs9 from "node:fs";
+import path7 from "node:path";
 import process5 from "node:process";
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { spawn as spawn2 } from "node:child_process";
@@ -547,6 +548,7 @@ function parseClaudeStreamText(text) {
   const events = [];
   let response = "";
   let sessionId = null;
+  let model = null;
   let resultEvent = null;
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
     const parsed = parseStreamJsonLine(rawLine, { allowPrefix: true });
@@ -559,8 +561,17 @@ function parseClaudeStreamText(text) {
     if (!sessionId && typeof event.sessionId === "string") {
       sessionId = event.sessionId;
     }
+    if (!model && typeof event.model === "string") {
+      model = event.model;
+    }
+    if (!model && typeof event.session?.model === "string") {
+      model = event.session.model;
+    }
     if (event.type === "result") {
       resultEvent = event;
+      if (typeof event.model === "string") {
+        model = event.model;
+      }
       if (!response.trim()) {
         response += extractClaudeText(event);
       }
@@ -572,10 +583,11 @@ function parseClaudeStreamText(text) {
     events,
     response,
     sessionId,
+    model,
     resultEvent
   };
 }
-function parseClaudeJsonResult(stdout, stderr, status) {
+function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
   const text = String(stdout ?? "");
   const jsonStart = text.indexOf("{");
   if (jsonStart < 0) {
@@ -600,6 +612,7 @@ function parseClaudeJsonResult(stdout, stderr, status) {
       ok: status === 0 && !isClaudeErrorResultEvent(parsed),
       response,
       sessionId,
+      model: parsed.model ?? defaultModel,
       durationMs: parsed.duration_ms ?? null,
       totalCostUsd: parsed.total_cost_usd ?? null,
       status,
@@ -636,6 +649,7 @@ function runClaudePrompt({
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   bin = CLAUDE_BIN
 } = {}) {
   const invocation = buildClaudeInvocation({
@@ -659,7 +673,9 @@ function runClaudePrompt({
       error: result.error.code === "ETIMEDOUT" ? `claude timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
     };
   }
-  return parseClaudeJsonResult(result.stdout, result.stderr, result.status);
+  return parseClaudeJsonResult(result.stdout, result.stderr, result.status, {
+    defaultModel: model ?? defaultModel
+  });
 }
 function runClaudePromptStreaming({
   prompt,
@@ -670,6 +686,7 @@ function runClaudePromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   onEvent = () => {
   },
   bin = CLAUDE_BIN,
@@ -720,6 +737,7 @@ function runClaudePromptStreaming({
       ...parsed,
       timedOut: completed ? false : result.timedOut,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      model: parsed.model ?? model ?? defaultModel,
       ok: completed && !resultError && hasVisibleText,
       error: completed ? resultError || (hasVisibleText ? null : "claude produced no visible text") : result.error
     };
@@ -1032,6 +1050,7 @@ function parseGeminiStreamText(text) {
   let response = "";
   let sessionId = null;
   let stats = null;
+  let model = null;
   let resultEvent = null;
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
     const parsed = parseStreamJsonLine(rawLine, { allowPrefix: true });
@@ -1039,9 +1058,14 @@ function parseGeminiStreamText(text) {
     const event = parsed.event;
     events.push(event);
     if (!sessionId && event.session_id) sessionId = event.session_id;
+    if (!model && typeof event.model === "string") model = event.model;
+    if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (event.type === "result") {
       resultEvent = event;
-      if (event.stats) stats = event.stats;
+      if (event.stats) {
+        stats = event.stats;
+        model = model ?? Object.keys(event.stats.models ?? {})[0] ?? null;
+      }
       if (!response.trim()) {
         response += extractGeminiText(event);
       }
@@ -1049,9 +1073,9 @@ function parseGeminiStreamText(text) {
     }
     response += extractGeminiText(event);
   }
-  return { events, response, sessionId, stats, resultEvent };
+  return { events, response, sessionId, stats, model, resultEvent };
 }
-function parseGeminiJsonResult(stdout, stderr, status) {
+function parseGeminiJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
   const text = String(stdout ?? "");
   const jsonStart = text.indexOf("{");
   if (jsonStart < 0) {
@@ -1081,6 +1105,7 @@ function parseGeminiJsonResult(stdout, stderr, status) {
       response: parsed.response ?? "",
       sessionId: parsed.session_id ?? resolvedSession.sessionId ?? null,
       stats: parsed.stats ?? null,
+      model: Object.keys(parsed.stats?.models ?? {})[0] || defaultModel,
       status
     };
   } catch (error) {
@@ -1123,6 +1148,7 @@ function runGeminiPrompt({
   timeout = DEFAULT_TIMEOUT_MS3,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   bin = GEMINI_BIN
 } = {}) {
   const invocation = buildGeminiInvocation({
@@ -1145,7 +1171,9 @@ function runGeminiPrompt({
       error: result.error.code === "ETIMEDOUT" ? `gemini timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
     };
   }
-  return parseGeminiJsonResult(result.stdout, result.stderr, result.status);
+  return parseGeminiJsonResult(result.stdout, result.stderr, result.status, {
+    defaultModel: model ?? defaultModel
+  });
 }
 function runGeminiPromptStreaming({
   prompt,
@@ -1155,6 +1183,7 @@ function runGeminiPromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS3,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   onEvent = () => {
   },
   bin = GEMINI_BIN,
@@ -1199,6 +1228,7 @@ function runGeminiPromptStreaming({
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      model: parsed.model ?? model ?? defaultModel,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok ? resultError || (hasVisibleText ? null : "gemini produced no visible text") : result.error
     };
@@ -1206,12 +1236,25 @@ function runGeminiPromptStreaming({
 }
 
 // packages/polycli-runtime/src/kimi.js
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 var KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
 var DEFAULT_TIMEOUT_MS4 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS4 = 3e4;
 var PROMPT_STDIN_THRESHOLD_BYTES = 1e5;
 var KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var KIMI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
+var KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path.join(os.homedir(), ".kimi", "config.toml");
+function readKimiDefaultModel() {
+  try {
+    const text = fs.readFileSync(KIMI_CONFIG_PATH, "utf8");
+    const match = text.match(/^default_model\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/m);
+    return match ? match[1] ?? match[2] ?? match[3] ?? null : null;
+  } catch {
+    return null;
+  }
+}
 function buildKimiInvocation({
   prompt,
   model = null,
@@ -1262,24 +1305,28 @@ function parseKimiStreamText(text) {
   const events = [];
   const toolEvents = [];
   let response = "";
+  let model = null;
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
     const event = parseKimiEventLine(rawLine);
     if (!event) continue;
     events.push(event);
     if (event.role === "tool") toolEvents.push(event);
+    if (!model && typeof event.model === "string") model = event.model;
+    if (!model && typeof event.message?.model === "string") model = event.message.model;
     response += extractKimiText(event);
   }
-  return { events, toolEvents, response };
+  return { events, toolEvents, response, model };
 }
 function getKimiAvailability(cwd) {
   return binaryAvailable(KIMI_BIN, ["-V"], { cwd });
 }
 function buildKimiAuthStatus(result) {
+  const configModel = readKimiDefaultModel();
   if (result.ok) {
     return {
       loggedIn: true,
       detail: "authenticated",
-      model: result.model ?? null
+      model: result.model ?? configModel
     };
   }
   const detail = String(result.error ?? "").trim() || "kimi auth probe failed";
@@ -1287,7 +1334,7 @@ function buildKimiAuthStatus(result) {
     return { loggedIn: false, detail };
   }
   if (KIMI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
-    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? configModel };
   }
   return { loggedIn: false, detail };
 }
@@ -1307,6 +1354,7 @@ function runKimiPrompt({
   timeout = DEFAULT_TIMEOUT_MS4,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   bin = KIMI_BIN
 } = {}) {
   const invocation = buildKimiInvocation({
@@ -1343,7 +1391,7 @@ function runKimiPrompt({
     events: parsed.events,
     toolEvents: parsed.toolEvents,
     sessionId: session.sessionId,
-    model,
+    model: parsed.model ?? model ?? defaultModel,
     error: parsed.response.trim() ? null : "kimi produced no visible text"
   };
 }
@@ -1354,6 +1402,7 @@ function runKimiPromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS4,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   onEvent = () => {
   },
   bin = KIMI_BIN,
@@ -1395,6 +1444,7 @@ function runKimiPromptStreaming({
       ...result,
       ...parsed,
       sessionId: session.sessionId,
+      model: parsed.model ?? model ?? defaultModel,
       ok: result.ok && hasVisibleText,
       error: result.ok ? hasVisibleText ? null : "kimi produced no visible text" : result.error
     };
@@ -1755,17 +1805,17 @@ function runQwenPromptStreaming({
 }
 
 // packages/polycli-runtime/src/minimax.js
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import fs2 from "node:fs";
+import os2 from "node:os";
+import path2 from "node:path";
 var MINI_AGENT_BIN = process.env.MINI_AGENT_BIN || "mini-agent";
-var MINI_AGENT_LOG_DIR = process.env.MINI_AGENT_LOG_DIR || path.join(os.homedir(), ".mini-agent", "log");
-var MINI_AGENT_CONFIG_PATH = process.env.MINI_AGENT_CONFIG_PATH || path.join(os.homedir(), ".mini-agent", "config", "config.yaml");
+var MINI_AGENT_LOG_DIR = process.env.MINI_AGENT_LOG_DIR || path2.join(os2.homedir(), ".mini-agent", "log");
+var MINI_AGENT_CONFIG_PATH = process.env.MINI_AGENT_CONFIG_PATH || path2.join(os2.homedir(), ".mini-agent", "config", "config.yaml");
 var DEFAULT_TIMEOUT_MS6 = 12e4;
 var AUTH_CHECK_TIMEOUT_MS6 = 3e4;
 function readMiniMaxConfig() {
   try {
-    const text = fs.readFileSync(MINI_AGENT_CONFIG_PATH, "utf8");
+    const text = fs2.readFileSync(MINI_AGENT_CONFIG_PATH, "utf8");
     const read = (key) => {
       const match = text.match(new RegExp(`^${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^#\\n]+))`, "m"));
       return match ? match[1] ?? match[2] ?? match[3]?.trim() ?? null : null;
@@ -1863,10 +1913,12 @@ function extractMiniMaxResponseFromLogText(logText) {
   if (!picked?.json) {
     return { response: "", finishReason: null, toolCalls: [] };
   }
+  const model = picked.json.model ?? picked.json.meta?.model ?? null;
   return {
     response: typeof picked.json.content === "string" ? picked.json.content : "",
     finishReason: picked.json.finish_reason ?? null,
-    toolCalls: Array.isArray(picked.json.tool_calls) ? picked.json.tool_calls : []
+    toolCalls: Array.isArray(picked.json.tool_calls) ? picked.json.tool_calls : [],
+    ...model ? { model } : {}
   };
 }
 function extractMiniMaxEventText(event) {
@@ -1881,18 +1933,18 @@ function extractMiniMaxEventText(event) {
 }
 function snapshotLogDir(logDir) {
   try {
-    return new Set(fs.readdirSync(logDir).filter((name) => name.endsWith(".log")));
+    return new Set(fs2.readdirSync(logDir).filter((name) => name.endsWith(".log")));
   } catch {
     return /* @__PURE__ */ new Set();
   }
 }
 function diffLogSnapshot(beforeSet, logDir) {
   try {
-    const current = fs.readdirSync(logDir).filter((name) => name.endsWith(".log"));
+    const current = fs2.readdirSync(logDir).filter((name) => name.endsWith(".log"));
     const novel = current.filter((name) => !beforeSet.has(name));
     if (novel.length === 0) return null;
     novel.sort();
-    return path.join(logDir, novel[novel.length - 1]);
+    return path2.join(logDir, novel[novel.length - 1]);
   } catch {
     return null;
   }
@@ -1922,6 +1974,7 @@ function runMiniMaxPrompt({
   cwd,
   timeout = DEFAULT_TIMEOUT_MS6,
   extraArgs = [],
+  defaultModel = null,
   env = process.env,
   onProgressLine,
   bin = MINI_AGENT_BIN,
@@ -1952,11 +2005,12 @@ function runMiniMaxPrompt({
       onStdoutLine: handleStdoutLine
     }).then((result) => {
       const effectiveLogPath = logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR);
-      const parsed = effectiveLogPath && fs.existsSync(effectiveLogPath) ? extractMiniMaxResponseFromLogText(fs.readFileSync(effectiveLogPath, "utf8")) : { response: "", finishReason: null, toolCalls: [] };
+      const parsed = effectiveLogPath && fs2.existsSync(effectiveLogPath) ? extractMiniMaxResponseFromLogText(fs2.readFileSync(effectiveLogPath, "utf8")) : { response: "", finishReason: null, toolCalls: [] };
       resolve({
         ...result,
         logPath: effectiveLogPath,
         ...parsed,
+        model: parsed.model ?? defaultModel,
         ok: result.ok && Boolean(parsed.response.trim()),
         error: result.ok && parsed.response.trim() ? null : result.error
       });
@@ -1968,6 +2022,7 @@ async function runMiniMaxPromptStreaming({
   cwd,
   timeout = DEFAULT_TIMEOUT_MS6,
   extraArgs = [],
+  defaultModel = null,
   env = process.env,
   onEvent = () => {
   },
@@ -1979,6 +2034,7 @@ async function runMiniMaxPromptStreaming({
     cwd,
     timeout,
     extraArgs,
+    defaultModel,
     env,
     bin,
     spawnImpl,
@@ -1994,7 +2050,8 @@ async function runMiniMaxPromptStreaming({
         type: "result",
         response: result.response,
         finishReason: result.finishReason,
-        toolCalls: result.toolCalls
+        toolCalls: result.toolCalls,
+        model: result.model ?? null
       });
     } catch {
     }
@@ -2006,6 +2063,7 @@ async function runMiniMaxPromptStreaming({
 var OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
 var DEFAULT_TIMEOUT_MS7 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS7 = 3e4;
+var SESSION_EXPORT_TIMEOUT_MS = 3e4;
 var OPENCODE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var OPENCODE_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
 function collectOpenCodeContentText(content) {
@@ -2046,6 +2104,54 @@ function getOpenCodeResultError(event) {
     return `opencode exited with code ${event.status}`;
   }
   return null;
+}
+function formatOpenCodeModel(info) {
+  if (!info || typeof info !== "object") return null;
+  const providerID = typeof info.providerID === "string" ? info.providerID : null;
+  const modelID = typeof info.modelID === "string" ? info.modelID : null;
+  if (providerID && modelID) return `${providerID}/${modelID}`;
+  if (modelID) return modelID;
+  return null;
+}
+function findOpenCodeExportModel(value) {
+  if (!value || typeof value !== "object") return null;
+  const direct = formatOpenCodeModel(value);
+  if (direct) return direct;
+  if (typeof value.model === "string" && value.model.trim()) return value.model;
+  const nested = formatOpenCodeModel(value.model);
+  if (nested) return nested;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findOpenCodeExportModel(item);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const item of Object.values(value)) {
+    const found = findOpenCodeExportModel(item);
+    if (found) return found;
+  }
+  return null;
+}
+function extractOpenCodeExportModel(text) {
+  const raw = String(text ?? "");
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  try {
+    return findOpenCodeExportModel(JSON.parse(raw.slice(start)));
+  } catch {
+    return null;
+  }
+}
+function resolveOpenCodeSessionModel(sessionId, { cwd, env, bin = OPENCODE_BIN } = {}) {
+  if (!sessionId) return null;
+  const result = runCommand(bin, ["export", sessionId], {
+    cwd,
+    env,
+    timeout: SESSION_EXPORT_TIMEOUT_MS
+  });
+  if (result.error || result.status !== 0) return null;
+  return extractOpenCodeExportModel(result.stdout);
 }
 function buildOpenCodeInvocation({
   prompt,
@@ -2127,7 +2233,7 @@ function parseOpenCodeStreamText(text) {
   }
   return { events, response, sessionId, model, resultEvent };
 }
-function parseOpenCodeJsonResult(stdout, stderr, status) {
+function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
   const parsed = parseOpenCodeStreamText(stdout);
   const resolvedSession = resolveSessionId({
     stdout,
@@ -2141,7 +2247,7 @@ function parseOpenCodeJsonResult(stdout, stderr, status) {
     response: parsed.response,
     events: parsed.events,
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-    model: parsed.model,
+    model: parsed.model ?? defaultModel,
     status,
     error: status === 0 ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : String(stderr ?? "").trim() || `opencode exited with code ${status}`
   };
@@ -2186,6 +2292,7 @@ function runOpenCodePrompt({
   agent = null,
   variant = null,
   skipPermissions = true,
+  defaultModel = null,
   bin = OPENCODE_BIN
 } = {}) {
   const invocation = buildOpenCodeInvocation({
@@ -2207,7 +2314,14 @@ function runOpenCodePrompt({
       error: result.error.code === "ETIMEDOUT" ? `opencode timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
     };
   }
-  return parseOpenCodeJsonResult(result.stdout, result.stderr, result.status);
+  const parsed = parseOpenCodeJsonResult(result.stdout, result.stderr, result.status, {
+    defaultModel: model ?? defaultModel
+  });
+  if (parsed.ok && !parsed.model && parsed.sessionId) {
+    const exportedModel = resolveOpenCodeSessionModel(parsed.sessionId, { cwd, env, bin });
+    if (exportedModel) return { ...parsed, model: exportedModel };
+  }
+  return parsed;
 }
 function runOpenCodePromptStreaming({
   prompt,
@@ -2221,6 +2335,7 @@ function runOpenCodePromptStreaming({
   agent = null,
   variant = null,
   skipPermissions = true,
+  defaultModel = null,
   onEvent = () => {
   },
   bin = OPENCODE_BIN,
@@ -2262,11 +2377,17 @@ function runOpenCodePromptStreaming({
     });
     const resultError = getOpenCodeResultError(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
+    let resolvedModel = parsed.model ?? model ?? defaultModel;
+    const ok = result.ok && !resultError && hasVisibleText;
+    if (ok && !resolvedModel) {
+      resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? resolvedSession.sessionId, { cwd, env, bin });
+    }
     return {
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-      ok: result.ok && !resultError && hasVisibleText,
+      model: resolvedModel,
+      ok,
       error: result.ok ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : result.error
     };
   });
@@ -2368,6 +2489,7 @@ function parsePiStreamText(text) {
     if (!sessionId && typeof event.session?.id === "string") sessionId = event.session.id;
     if (!model && typeof event.model === "string") model = event.model;
     if (!model && typeof event.session?.model === "string") model = event.session.model;
+    if (!model && typeof event.result?.model === "string") model = event.result.model;
     if (event.type === "agent_end") {
       resultEvent = event;
     }
@@ -2398,7 +2520,7 @@ function buildPiAuthStatus(result) {
     return {
       loggedIn: true,
       detail: "authenticated",
-      model: result.model ?? null
+      model: result.model ?? DEFAULT_PI_MODEL
     };
   }
   const detail = String(result.error ?? "").trim() || "pi auth probe failed";
@@ -2406,7 +2528,7 @@ function buildPiAuthStatus(result) {
     return { loggedIn: false, detail };
   }
   if (PI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
-    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? DEFAULT_PI_MODEL };
   }
   return { loggedIn: false, detail };
 }
@@ -2427,6 +2549,7 @@ function runPiPrompt({
   resumeSessionId = null,
   continueLast = false,
   noSession = false,
+  defaultModel = null,
   bin = PI_BIN
 } = {}) {
   const invocation = buildPiInvocation({
@@ -2459,7 +2582,7 @@ function runPiPrompt({
     response: parsed.response,
     events: parsed.events,
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-    model: parsed.model,
+    model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
     error: result.status === 0 ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.stderr.trim() || `pi exited with code ${result.status}`,
     status: result.status
   };
@@ -2473,6 +2596,7 @@ function runPiPromptStreaming({
   resumeSessionId = null,
   continueLast = false,
   noSession = false,
+  defaultModel = null,
   onEvent = () => {
   },
   bin = PI_BIN,
@@ -2516,6 +2640,7 @@ function runPiPromptStreaming({
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.error
     };
@@ -3005,6 +3130,7 @@ async function runProviderPromptStreaming({
   kind = "prompt",
   measurementScope = "request",
   meta = null,
+  defaultModel = null,
   onEvent,
   ...options
 }) {
@@ -3015,6 +3141,7 @@ async function runProviderPromptStreaming({
   const toolState = { pendingTools: /* @__PURE__ */ new Map(), toolMs: null };
   const result = await getProviderRuntime(provider).runPromptStreaming({
     ...options,
+    defaultModel,
     onEvent(event) {
       const now = Date.now();
       const eventText = extractProviderEventText(provider, event);
@@ -3033,8 +3160,9 @@ async function runProviderPromptStreaming({
     }
   });
   const finishedAt = Date.now();
-  const runtimePersistence = inferRuntimePersistence(provider, result);
-  return attachPromptTiming(result, {
+  const resultWithModel = result.model || !defaultModel ? result : { ...result, model: defaultModel };
+  const runtimePersistence = inferRuntimePersistence(provider, resultWithModel);
+  return attachPromptTiming(resultWithModel, {
     provider,
     kind,
     runtimePersistence,
@@ -3049,19 +3177,19 @@ async function runProviderPromptStreaming({
 }
 
 // plugins/polycli/scripts/lib/job-control.mjs
-import fs4 from "node:fs";
+import fs5 from "node:fs";
 import process4 from "node:process";
 
 // plugins/polycli/scripts/lib/state.mjs
 import crypto2 from "node:crypto";
-import fs3 from "node:fs";
-import os2 from "node:os";
-import path3 from "node:path";
+import fs4 from "node:fs";
+import os3 from "node:os";
+import path4 from "node:path";
 
 // packages/polycli-utils/src/atomic-save.js
 import crypto from "node:crypto";
-import fs2 from "node:fs";
-import path2 from "node:path";
+import fs3 from "node:fs";
+import path3 from "node:path";
 import process3 from "node:process";
 var LockfileTimeoutError = class extends Error {
   constructor(lockPath, timeoutMs) {
@@ -3076,7 +3204,7 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function ensureParentDir(filePath) {
-  fs2.mkdirSync(path2.dirname(filePath), { recursive: true });
+  fs3.mkdirSync(path3.dirname(filePath), { recursive: true });
 }
 function normalizeWriteOptions(options) {
   if (typeof options === "string") {
@@ -3104,23 +3232,23 @@ function writeFileAtomicSync(filePath, contents, options = {}) {
   ensureParentDir(filePath);
   const tmpPath = `${filePath}.tmp.${process3.pid}.${Date.now()}.${crypto.randomUUID()}`;
   const { flag, mode, writeOptions } = normalizeWriteOptions(options);
-  const fd = fs2.openSync(tmpPath, flag, mode);
+  const fd = fs3.openSync(tmpPath, flag, mode);
   try {
-    fs2.writeFileSync(fd, contents, writeOptions);
-    fs2.fsyncSync(fd);
+    fs3.writeFileSync(fd, contents, writeOptions);
+    fs3.fsyncSync(fd);
   } finally {
-    fs2.closeSync(fd);
+    fs3.closeSync(fd);
   }
-  fs2.renameSync(tmpPath, filePath);
-  const dirFd = fs2.openSync(path2.dirname(filePath), "r");
+  fs3.renameSync(tmpPath, filePath);
+  const dirFd = fs3.openSync(path3.dirname(filePath), "r");
   try {
-    fs2.fsyncSync(dirFd);
+    fs3.fsyncSync(dirFd);
   } catch (error) {
     if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
       throw error;
     }
   } finally {
-    fs2.closeSync(dirFd);
+    fs3.closeSync(dirFd);
   }
 }
 function writeFileAtomic(filePath, contents, options = {}) {
@@ -3136,22 +3264,22 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const fd = fs2.openSync(
+      const fd = fs3.openSync(
         lockPath,
-        fs2.constants.O_CREAT | fs2.constants.O_EXCL | fs2.constants.O_WRONLY,
+        fs3.constants.O_CREAT | fs3.constants.O_EXCL | fs3.constants.O_WRONLY,
         384
       );
       try {
-        fs2.writeFileSync(fd, JSON.stringify({ pid: process3.pid, acquiredAt: Date.now() }), "utf8");
-        fs2.fsyncSync(fd);
+        fs3.writeFileSync(fd, JSON.stringify({ pid: process3.pid, acquiredAt: Date.now() }), "utf8");
+        fs3.fsyncSync(fd);
       } finally {
-        fs2.closeSync(fd);
+        fs3.closeSync(fd);
       }
       try {
         return fn();
       } finally {
         try {
-          fs2.unlinkSync(lockPath);
+          fs3.unlinkSync(lockPath);
         } catch {
         }
       }
@@ -3160,7 +3288,7 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
         throw error;
       }
       try {
-        const lock = JSON.parse(fs2.readFileSync(lockPath, "utf8"));
+        const lock = JSON.parse(fs3.readFileSync(lockPath, "utf8"));
         const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
         const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
         const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
@@ -3171,7 +3299,7 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
             ownerAlive = true;
           } catch (killError) {
             if (killError.code === "ESRCH") {
-              fs2.unlinkSync(lockPath);
+              fs3.unlinkSync(lockPath);
               continue;
             }
             if (killError.code !== "EPERM") {
@@ -3181,7 +3309,7 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
           }
         }
         if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
-          fs2.unlinkSync(lockPath);
+          fs3.unlinkSync(lockPath);
           continue;
         }
       } catch {
@@ -3199,9 +3327,9 @@ var STATE_FILE_NAME = "state.json";
 var JOBS_DIR_NAME = "jobs";
 var MAX_JOBS = 100;
 var PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
-var FALLBACK_STATE_ROOT = path3.join(os2.tmpdir(), "polycli-companion");
+var FALLBACK_STATE_ROOT = path4.join(os3.tmpdir(), "polycli-companion");
 function computeWorkspaceSlug(workspaceRoot) {
-  const base = path3.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
+  const base = path4.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
   const hash = crypto2.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
   return `${base}-${hash}`;
 }
@@ -3217,50 +3345,50 @@ function buildCorruptBackupPath(stateFile) {
 }
 function backupCorruptStateFile(stateFile) {
   try {
-    fs3.renameSync(stateFile, buildCorruptBackupPath(stateFile));
+    fs4.renameSync(stateFile, buildCorruptBackupPath(stateFile));
   } catch {
   }
 }
 function stateRootDir() {
   const pluginData = process.env[PLUGIN_DATA_ENV];
   if (pluginData) {
-    return path3.join(pluginData, "state");
+    return path4.join(pluginData, "state");
   }
   return FALLBACK_STATE_ROOT;
 }
 function resolveWorkspaceRoot(cwd = process.cwd()) {
   const result = runCommand("git", ["rev-parse", "--show-toplevel"], { cwd });
   if (result.status === 0 && result.stdout.trim()) {
-    return path3.resolve(result.stdout.trim());
+    return path4.resolve(result.stdout.trim());
   }
-  return path3.resolve(cwd);
+  return path4.resolve(cwd);
 }
 function resolveStateDir(workspaceRoot) {
-  return path3.join(stateRootDir(), computeWorkspaceSlug(workspaceRoot));
+  return path4.join(stateRootDir(), computeWorkspaceSlug(workspaceRoot));
 }
 function resolveStateFile(workspaceRoot) {
-  return path3.join(resolveStateDir(workspaceRoot), STATE_FILE_NAME);
+  return path4.join(resolveStateDir(workspaceRoot), STATE_FILE_NAME);
 }
 function resolveJobsDir(workspaceRoot) {
-  return path3.join(resolveStateDir(workspaceRoot), JOBS_DIR_NAME);
+  return path4.join(resolveStateDir(workspaceRoot), JOBS_DIR_NAME);
 }
 function resolveJobFile(workspaceRoot, jobId) {
-  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.json`);
+  return path4.join(resolveJobsDir(workspaceRoot), `${jobId}.json`);
 }
 function resolveJobLogFile(workspaceRoot, jobId) {
-  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.log`);
+  return path4.join(resolveJobsDir(workspaceRoot), `${jobId}.log`);
 }
 function resolveJobConfigFile(workspaceRoot, jobId) {
-  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
+  return path4.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
 }
 function ensureStateDir(workspaceRoot) {
-  fs3.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
+  fs4.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
 }
 function loadState(workspaceRoot) {
   const stateFile = resolveStateFile(workspaceRoot);
   let raw;
   try {
-    raw = fs3.readFileSync(stateFile, "utf8");
+    raw = fs4.readFileSync(stateFile, "utf8");
   } catch {
     return defaultState();
   }
@@ -3360,7 +3488,7 @@ function writeJobFile(workspaceRoot, jobId, payload) {
 }
 function readJobFile(jobFile) {
   try {
-    return JSON.parse(fs3.readFileSync(jobFile, "utf8"));
+    return JSON.parse(fs4.readFileSync(jobFile, "utf8"));
   } catch {
     return null;
   }
@@ -3372,14 +3500,14 @@ function writeJobConfigFile(workspaceRoot, jobId, payload) {
 }
 function readJobConfigFile(configFile) {
   try {
-    return JSON.parse(fs3.readFileSync(configFile, "utf8"));
+    return JSON.parse(fs4.readFileSync(configFile, "utf8"));
   } catch {
     return null;
   }
 }
 function removeJobConfigFile(workspaceRoot, jobId) {
   try {
-    fs3.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
+    fs4.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
   } catch {
   }
 }
@@ -3403,7 +3531,7 @@ function sortJobsNewestFirst(jobs) {
 function readProgressPreview(logFile, maxLines = 4) {
   if (!logFile) return "";
   try {
-    const lines = fs4.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const lines = fs5.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return lines.slice(-maxLines).join("\n");
   } catch {
     return "";
@@ -3596,9 +3724,9 @@ function resolveProvider({ provider, positionals = [] } = {}) {
 }
 
 // plugins/polycli/scripts/lib/review.mjs
-import fs5 from "node:fs";
-import os3 from "node:os";
-import path4 from "node:path";
+import fs6 from "node:fs";
+import os4 from "node:os";
+import path5 from "node:path";
 import { randomUUID } from "node:crypto";
 var DEFAULT_MAX_DIFF_BYTES = 2e5;
 var REVIEW_SCOPES = /* @__PURE__ */ new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
@@ -3640,13 +3768,13 @@ function git(cwd, args) {
   return runCommand("git", args, { cwd });
 }
 function writeReviewTempFile(prefix, extension, text) {
-  const root = fs5.mkdtempSync(path4.join(os3.tmpdir(), `polycli-review-${prefix}-`));
-  const filePath = path4.join(root, `${prefix}-${randomUUID()}${extension}`);
-  fs5.writeFileSync(filePath, text, "utf8");
+  const root = fs6.mkdtempSync(path5.join(os4.tmpdir(), `polycli-review-${prefix}-`));
+  const filePath = path5.join(root, `${prefix}-${randomUUID()}${extension}`);
+  fs6.writeFileSync(filePath, text, "utf8");
   return filePath;
 }
 function makeReviewTempDir(prefix) {
-  return fs5.mkdtempSync(path4.join(os3.tmpdir(), `polycli-review-${prefix}-`));
+  return fs6.mkdtempSync(path5.join(os4.tmpdir(), `polycli-review-${prefix}-`));
 }
 function readYamlScalar(text, key) {
   const match = String(text ?? "").match(new RegExp(`^${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^#\\n]+))`, "m"));
@@ -3668,10 +3796,10 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   }
 }
 function buildMiniMaxReviewEnv(parentEnv = process.env) {
-  const baseConfigPath = parentEnv.MINI_AGENT_CONFIG_PATH || path4.join(os3.homedir(), ".mini-agent", "config", "config.yaml");
+  const baseConfigPath = parentEnv.MINI_AGENT_CONFIG_PATH || path5.join(os4.homedir(), ".mini-agent", "config", "config.yaml");
   let baseConfigText = "";
   try {
-    baseConfigText = fs5.readFileSync(baseConfigPath, "utf8");
+    baseConfigText = fs6.readFileSync(baseConfigPath, "utf8");
   } catch {
   }
   const lines = [];
@@ -3886,10 +4014,10 @@ function buildReviewPrompt({
 }
 
 // plugins/polycli/scripts/lib/timing.mjs
-import path5 from "node:path";
+import path6 from "node:path";
 
 // packages/polycli-utils/src/ndjson.js
-import fs6 from "node:fs";
+import fs7 from "node:fs";
 function safeParseLine(line) {
   try {
     return JSON.parse(line);
@@ -3900,7 +4028,7 @@ function safeParseLine(line) {
 function readNdjson(filePath) {
   let text;
   try {
-    text = fs6.readFileSync(filePath, "utf8");
+    text = fs7.readFileSync(filePath, "utf8");
   } catch {
     return [];
   }
@@ -3921,14 +4049,14 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
     ensureParentDir(filePath);
     let needsLeadingNewline = false;
     try {
-      const stat = fs6.statSync(filePath);
+      const stat = fs7.statSync(filePath);
       if (stat.size > 0) {
-        const fd = fs6.openSync(filePath, "r");
+        const fd = fs7.openSync(filePath, "r");
         const lastByte = Buffer.alloc(1);
         try {
-          fs6.readSync(fd, lastByte, 0, 1, stat.size - 1);
+          fs7.readSync(fd, lastByte, 0, 1, stat.size - 1);
         } finally {
-          fs6.closeSync(fd);
+          fs7.closeSync(fd);
         }
         needsLeadingNewline = lastByte[0] !== 10;
       }
@@ -3936,11 +4064,11 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
     }
     const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}
 `;
-    fs6.appendFileSync(filePath, line, "utf8");
+    fs7.appendFileSync(filePath, line, "utf8");
     if (maxBytes != null) {
-      const stat = fs6.statSync(filePath);
+      const stat = fs7.statSync(filePath);
       if (stat.size > maxBytes) {
-        const lines = fs6.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
+        const lines = fs7.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
         const valid = lines.filter((entry) => safeParseLine(entry) != null);
         const keepFrom = Math.floor(valid.length * (1 - keepRatio));
         const kept = valid.slice(keepFrom);
@@ -3956,7 +4084,7 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
 var TIMING_FILE_NAME = "timings.ndjson";
 var MAX_TIMING_BYTES = 2e6;
 function resolveTimingHistoryFile(workspaceRoot) {
-  return path5.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
+  return path6.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
 }
 function appendTimingRecord(workspaceRoot, record) {
   const validation = validateTimingRecord(record);
@@ -3982,7 +4110,7 @@ function summarizeTimingRecords(records) {
 }
 
 // plugins/polycli/scripts/lib/preview.mjs
-import fs7 from "node:fs";
+import fs8 from "node:fs";
 var PREVIEW_MAX_LINES = 10;
 var PREVIEW_TAIL_CACHE = /* @__PURE__ */ new Map();
 function collapseWhitespace(text) {
@@ -4066,7 +4194,7 @@ function summarizeEventText(provider, event) {
   }
   return "";
 }
-function appendPreview(logFile, provider, event, { fsImpl = fs7, tailCache = PREVIEW_TAIL_CACHE } = {}) {
+function appendPreview(logFile, provider, event, { fsImpl = fs8, tailCache = PREVIEW_TAIL_CACHE } = {}) {
   const text = summarizeEventText(provider, event);
   if (!text) return;
   const lines = String(text).split(/\r?\n/).map((line) => collapseWhitespace(line)).filter(Boolean).slice(0, PREVIEW_MAX_LINES);
@@ -4151,11 +4279,37 @@ function output(value, asJson) {
 ` : `${JSON.stringify(value, null, 2)}
 `);
 }
+function resolveProviderModelCacheFile(workspaceRoot) {
+  return path7.join(resolveStateDir(workspaceRoot), "provider-models.json");
+}
+function readProviderModelCache(workspaceRoot) {
+  try {
+    const parsed = JSON.parse(fs9.readFileSync(resolveProviderModelCacheFile(workspaceRoot), "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function readCachedProviderModel(workspaceRoot, provider) {
+  const cached = readProviderModelCache(workspaceRoot)[provider];
+  return typeof cached === "string" && cached.trim() ? cached : null;
+}
+function cacheProviderModel(workspaceRoot, provider, model) {
+  if (typeof model !== "string" || !model.trim()) return;
+  const cacheFile = resolveProviderModelCacheFile(workspaceRoot);
+  fs9.mkdirSync(path7.dirname(cacheFile), { recursive: true });
+  fs9.writeFileSync(
+    cacheFile,
+    `${JSON.stringify({ ...readProviderModelCache(workspaceRoot), [provider]: model }, null, 2)}
+`,
+    "utf8"
+  );
+}
 async function inspectProvider(provider) {
   const runtime = getProviderRuntime(provider);
   const availability = await Promise.resolve(runtime.getAvailability(process5.cwd()));
   const auth = await Promise.resolve(runtime.getAuthStatus(process5.cwd()));
-  return {
+  const row = {
     provider,
     available: availability.available ?? false,
     availabilityDetail: availability.detail ?? null,
@@ -4164,6 +4318,8 @@ async function inspectProvider(provider) {
     model: auth.model ?? null,
     capabilities: runtime.capabilities
   };
+  cacheProviderModel(resolveWorkspaceRoot(process5.cwd()), provider, row.model);
+  return row;
 }
 async function inspectProviderAvailability(provider) {
   const runtime = getProviderRuntime(provider);
@@ -4194,7 +4350,7 @@ function buildExecutionEnvelope(execution, result) {
   return {
     provider: execution.provider,
     kind: execution.kind,
-    model: execution.model || null,
+    model: execution.model || execution.defaultModel || null,
     promptPreview: previewText(execution.userPrompt || execution.prompt),
     meta: execution.meta || {},
     ...compactProviderResult(result)
@@ -4221,7 +4377,7 @@ function cleanupRuntimeOptions(runtimeOptions = {}) {
   for (const cleanupPath of cleanupPaths) {
     if (typeof cleanupPath !== "string" || cleanupPath.trim() === "") continue;
     try {
-      fs8.rmSync(cleanupPath, { recursive: true, force: true });
+      fs9.rmSync(cleanupPath, { recursive: true, force: true });
     } catch {
     }
   }
@@ -4234,6 +4390,7 @@ async function runForegroundExecution(execution, asJson) {
       provider: execution.provider,
       prompt: execution.prompt,
       model: execution.model || null,
+      defaultModel: execution.defaultModel || null,
       cwd: execution.cwd,
       timeout: execution.timeout,
       kind: execution.kind,
@@ -4249,6 +4406,7 @@ async function runForegroundExecution(execution, asJson) {
   if (result.timing) {
     appendTimingRecord(workspaceRoot, result.timing);
   }
+  cacheProviderModel(workspaceRoot, execution.provider, result.model);
   const envelope = buildExecutionEnvelope(execution, result);
   if (asJson) {
     output(envelope, true);
@@ -4273,6 +4431,7 @@ function buildQueuedJob(execution, workspaceRoot) {
     provider: execution.provider,
     kind: execution.kind,
     model: execution.model || null,
+    defaultModel: execution.defaultModel || null,
     status: "queued",
     promptPreview: previewText(execution.userPrompt || execution.prompt),
     logFile: resolveJobLogFile(workspaceRoot, jobId),
@@ -4391,9 +4550,9 @@ async function startBackgroundExecution(execution, asJson) {
     },
     jobId: job.jobId
   });
-  fs8.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
+  fs9.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
 `, "utf8");
-  const logFd = fs8.openSync(job.logFile, "a");
+  const logFd = fs9.openSync(job.logFile, "a");
   const child = spawn2(process5.execPath, [COMPANION_PATH, "_job-worker", resolveJobConfigFile(workspaceRoot, job.jobId)], {
     cwd: execution.cwd,
     env: { ...process5.env },
@@ -4401,7 +4560,7 @@ async function startBackgroundExecution(execution, asJson) {
     detached: true
   });
   child.unref();
-  fs8.closeSync(logFd);
+  fs9.closeSync(logFd);
   const runningJob = upsertJob(workspaceRoot, {
     ...job,
     status: "running",
@@ -4476,6 +4635,7 @@ async function probeProviderHealth({
         provider,
         prompt: `Reply with ${HEALTH_SENTINEL} only.`,
         model,
+        defaultModel: model ? null : readCachedProviderModel(workspaceRoot, provider),
         cwd: process5.cwd(),
         timeout,
         kind: "health",
@@ -4503,6 +4663,7 @@ async function probeProviderHealth({
       };
       report.ok = Boolean(result.ok && responseMatched);
       report.model = result.model ?? report.model;
+      cacheProviderModel(workspaceRoot, provider, report.model);
     } catch (error) {
       report.probe.error = error.message;
     }
@@ -4579,6 +4740,7 @@ function parsePromptExecution(rawArgs, kind) {
     provider: options.provider,
     positionals
   });
+  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
   const userPrompt = remainingPositionals.join(" ").trim();
   if (!userPrompt) {
     throw new Error(`Missing prompt text for ${kind}.`);
@@ -4591,6 +4753,7 @@ function parsePromptExecution(rawArgs, kind) {
       prompt: userPrompt,
       userPrompt,
       model: options.model || null,
+      defaultModel: readCachedProviderModel(workspaceRoot, provider),
       cwd: process5.cwd(),
       timeout: TIMEOUTS_MS[kind],
       meta: {},
@@ -4631,6 +4794,7 @@ function buildReviewExecution(rawArgs, { adversarial }) {
     provider: options.provider,
     positionals
   });
+  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
   const focus = remainingPositionals.join(" ").trim();
   const reviewContext = collectReviewContext({
     cwd: process5.cwd(),
@@ -4657,6 +4821,7 @@ function buildReviewExecution(rawArgs, { adversarial }) {
       }),
       userPrompt: focus || `${adversarial ? "adversarial " : ""}review ${reviewContext.scope}`,
       model: options.model || null,
+      defaultModel: readCachedProviderModel(workspaceRoot, provider),
       cwd: process5.cwd(),
       timeout: TIMEOUTS_MS[adversarial ? "adversarial-review" : "review"],
       meta: {
@@ -4872,6 +5037,7 @@ async function runJobWorker(rawArgs) {
       provider: execution.provider,
       prompt: execution.prompt,
       model: execution.model || null,
+      defaultModel: execution.defaultModel || null,
       cwd: execution.cwd,
       timeout: execution.timeout,
       kind: execution.kind,
@@ -4910,6 +5076,7 @@ async function runJobWorker(rawArgs) {
     if (result.timing) {
       appendTimingRecord(workspaceRoot, result.timing);
     }
+    cacheProviderModel(workspaceRoot, execution.provider, result.model);
     removeJobConfigFile(workspaceRoot, jobId);
   } catch (error) {
     const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {

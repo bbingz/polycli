@@ -127,10 +127,12 @@ export function extractMiniMaxResponseFromLogText(logText) {
     return { response: "", finishReason: null, toolCalls: [] };
   }
 
+  const model = picked.json.model ?? picked.json.meta?.model ?? null;
   return {
     response: typeof picked.json.content === "string" ? picked.json.content : "",
     finishReason: picked.json.finish_reason ?? null,
     toolCalls: Array.isArray(picked.json.tool_calls) ? picked.json.tool_calls : [],
+    ...(model ? { model } : {}),
   };
 }
 
@@ -194,6 +196,7 @@ export function runMiniMaxPrompt({
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
+  defaultModel = null,
   env = process.env,
   onProgressLine,
   bin = MINI_AGENT_BIN,
@@ -231,6 +234,7 @@ export function runMiniMaxPrompt({
         ...result,
         logPath: effectiveLogPath,
         ...parsed,
+        model: parsed.model ?? defaultModel,
         ok: result.ok && Boolean(parsed.response.trim()),
         error: result.ok && parsed.response.trim() ? null : result.error,
       });
@@ -243,6 +247,7 @@ export async function runMiniMaxPromptStreaming({
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
+  defaultModel = null,
   env = process.env,
   onEvent = () => {},
   bin = MINI_AGENT_BIN,
@@ -253,6 +258,7 @@ export async function runMiniMaxPromptStreaming({
     cwd,
     timeout,
     extraArgs,
+    defaultModel,
     env,
     bin,
     spawnImpl,
@@ -266,6 +272,7 @@ export async function runMiniMaxPromptStreaming({
         response: result.response,
         finishReason: result.finishReason,
         toolCalls: result.toolCalls,
+        model: result.model ?? null,
       });
     } catch {}
     return result;

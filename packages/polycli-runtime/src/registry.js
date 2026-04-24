@@ -247,12 +247,16 @@ export async function runProviderPrompt({
   kind = "prompt",
   measurementScope = "request",
   meta = null,
+  defaultModel = null,
   ...options
 }) {
   const startedAt = Date.now();
-  const result = await getProviderRuntime(provider).runPrompt(options);
+  const result = await getProviderRuntime(provider).runPrompt({ ...options, defaultModel });
   const runtimePersistence = inferRuntimePersistence(provider, result);
-  return attachPromptTiming(result, {
+  const resultWithModel = result.model || !defaultModel
+    ? result
+    : { ...result, model: defaultModel };
+  return attachPromptTiming(resultWithModel, {
     provider,
     kind,
     runtimePersistence,
@@ -268,6 +272,7 @@ export async function runProviderPromptStreaming({
   kind = "prompt",
   measurementScope = "request",
   meta = null,
+  defaultModel = null,
   onEvent,
   ...options
 }) {
@@ -279,6 +284,7 @@ export async function runProviderPromptStreaming({
 
   const result = await getProviderRuntime(provider).runPromptStreaming({
     ...options,
+    defaultModel,
     onEvent(event) {
       const now = Date.now();
       const eventText = extractProviderEventText(provider, event);
@@ -298,8 +304,11 @@ export async function runProviderPromptStreaming({
   });
 
   const finishedAt = Date.now();
-  const runtimePersistence = inferRuntimePersistence(provider, result);
-  return attachPromptTiming(result, {
+  const resultWithModel = result.model || !defaultModel
+    ? result
+    : { ...result, model: defaultModel };
+  const runtimePersistence = inferRuntimePersistence(provider, resultWithModel);
+  return attachPromptTiming(resultWithModel, {
     provider,
     kind,
     runtimePersistence,

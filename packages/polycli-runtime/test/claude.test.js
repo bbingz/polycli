@@ -83,6 +83,7 @@ test("parseClaudeStreamText collects session id, result metadata, and assistant 
   );
 
   assert.equal(parsed.sessionId, "claude-1");
+  assert.equal(parsed.model, "claude-sonnet-4");
   assert.equal(parsed.response, "hello world");
   assert.equal(parsed.events.length, 4);
   assert.deepEqual(parsed.resultEvent, {
@@ -319,4 +320,8 @@ test("parseClaudeStreamText replays a captured real cli fixture", () => {
 
   assert.equal(parsed.response, meta.expected.response);
   assert.equal(parsed.sessionId, meta.expected.sessionId);
+  assert.ok(
+    parsed.model && typeof parsed.model === "string" && parsed.model.length > 0,
+    "claude ask result must carry a non-empty model"
+  );
 });

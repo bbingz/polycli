@@ -135,6 +135,35 @@ test("runProviderPromptStreaming ignores duplicate terminal summary text for pro
   }
 });
 
+test("runProviderPromptStreaming passes defaultModel as final model fallback", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+  child.unref = () => {};
+
+  const result = await runProviderPromptStreaming({
+    provider: "gemini",
+    prompt: "ping",
+    cwd: process.cwd(),
+    timeout: 5_000,
+    defaultModel: "fallback-model",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"init","session_id":"gemini-fallback"}\n');
+        child.stdout.emit("data", '{"type":"message","role":"assistant","content":"pong"}\n');
+        child.stdout.emit("data", '{"type":"result","stats":{"turns":1}}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.model, "fallback-model");
+});
+
 test("runProviderPrompt marks supported sync-only metrics as missing instead of unsupported", async () => {
   const runtime = getProviderRuntime("gemini");
   const originalRunPrompt = runtime.runPrompt;

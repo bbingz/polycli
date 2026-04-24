@@ -86,6 +86,7 @@ test("parseGeminiStreamText collects session id, stats, and assistant text", () 
   );
 
   assert.equal(parsed.sessionId, "gem-1");
+  assert.equal(parsed.model, "gemini-2.5-pro");
   assert.equal(parsed.response, "hello world");
   assert.deepEqual(parsed.stats, { turns: 1 });
   assert.equal(parsed.events.length, 5);
@@ -198,4 +199,8 @@ test("parseGeminiStreamText replays a captured real cli fixture", () => {
 
   assert.equal(parsed.response, meta.expected.response);
   assert.equal(parsed.sessionId, meta.expected.sessionId);
+  assert.ok(
+    parsed.model && typeof parsed.model === "string" && parsed.model.length > 0,
+    "gemini ask result must carry a non-empty model"
+  );
 });

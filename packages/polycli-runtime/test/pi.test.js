@@ -88,6 +88,7 @@ test("parsePiStreamText collects session id and streaming deltas from json mode"
   );
 
   assert.equal(parsed.sessionId, "pi-1");
+  assert.equal(parsed.model, "pi-test");
   assert.equal(parsed.response, "hello world");
   assert.equal(parsed.events.length, 4);
   assert.equal(
@@ -206,11 +207,32 @@ process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: "hello 
       const result = runPiPrompt({
         prompt: "ping",
         cwd: root,
+        defaultModel: "pi-fallback",
         bin,
       });
 
       assert.equal(result.ok, true);
       assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
+      assert.equal(result.model, "pi-fallback");
+    }
+  );
+});
+
+test("runPiPrompt reports the default pi model when events omit model metadata", () => {
+  withFakePiBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello world" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: "hello world" } }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runPiPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.model, "openai-codex/gpt-5.4");
     }
   );
 });

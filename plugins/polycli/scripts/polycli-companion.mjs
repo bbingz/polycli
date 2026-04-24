@@ -30,6 +30,7 @@ import {
   resolveJobConfigFile,
   resolveJobFile,
   resolveJobLogFile,
+  resolveStateDir,
   resolveWorkspaceRoot,
   updateJobAtomically,
   upsertJob,
@@ -115,11 +116,40 @@ function output(value, asJson) {
   process.stdout.write(typeof value === "string" ? `${value}\n` : `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function resolveProviderModelCacheFile(workspaceRoot) {
+  return path.join(resolveStateDir(workspaceRoot), "provider-models.json");
+}
+
+function readProviderModelCache(workspaceRoot) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(resolveProviderModelCacheFile(workspaceRoot), "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readCachedProviderModel(workspaceRoot, provider) {
+  const cached = readProviderModelCache(workspaceRoot)[provider];
+  return typeof cached === "string" && cached.trim() ? cached : null;
+}
+
+function cacheProviderModel(workspaceRoot, provider, model) {
+  if (typeof model !== "string" || !model.trim()) return;
+  const cacheFile = resolveProviderModelCacheFile(workspaceRoot);
+  fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+  fs.writeFileSync(
+    cacheFile,
+    `${JSON.stringify({ ...readProviderModelCache(workspaceRoot), [provider]: model }, null, 2)}\n`,
+    "utf8"
+  );
+}
+
 async function inspectProvider(provider) {
   const runtime = getProviderRuntime(provider);
   const availability = await Promise.resolve(runtime.getAvailability(process.cwd()));
   const auth = await Promise.resolve(runtime.getAuthStatus(process.cwd()));
-  return {
+  const row = {
     provider,
     available: availability.available ?? false,
     availabilityDetail: availability.detail ?? null,
@@ -128,6 +158,8 @@ async function inspectProvider(provider) {
     model: auth.model ?? null,
     capabilities: runtime.capabilities,
   };
+  cacheProviderModel(resolveWorkspaceRoot(process.cwd()), provider, row.model);
+  return row;
 }
 
 async function inspectProviderAvailability(provider) {
@@ -162,7 +194,7 @@ function buildExecutionEnvelope(execution, result) {
   return {
     provider: execution.provider,
     kind: execution.kind,
-    model: execution.model || null,
+    model: execution.model || execution.defaultModel || null,
     promptPreview: previewText(execution.userPrompt || execution.prompt),
     meta: execution.meta || {},
     ...compactProviderResult(result),
@@ -206,6 +238,7 @@ async function runForegroundExecution(execution, asJson) {
       provider: execution.provider,
       prompt: execution.prompt,
       model: execution.model || null,
+      defaultModel: execution.defaultModel || null,
       cwd: execution.cwd,
       timeout: execution.timeout,
       kind: execution.kind,
@@ -220,6 +253,7 @@ async function runForegroundExecution(execution, asJson) {
   if (result.timing) {
     appendTimingRecord(workspaceRoot, result.timing);
   }
+  cacheProviderModel(workspaceRoot, execution.provider, result.model);
 
   const envelope = buildExecutionEnvelope(execution, result);
   if (asJson) {
@@ -248,6 +282,7 @@ function buildQueuedJob(execution, workspaceRoot) {
     provider: execution.provider,
     kind: execution.kind,
     model: execution.model || null,
+    defaultModel: execution.defaultModel || null,
     status: "queued",
     promptPreview: previewText(execution.userPrompt || execution.prompt),
     logFile: resolveJobLogFile(workspaceRoot, jobId),
@@ -468,6 +503,7 @@ async function probeProviderHealth({
         provider,
         prompt: `Reply with ${HEALTH_SENTINEL} only.`,
         model,
+        defaultModel: model ? null : readCachedProviderModel(workspaceRoot, provider),
         cwd: process.cwd(),
         timeout,
         kind: "health",
@@ -494,6 +530,7 @@ async function probeProviderHealth({
       };
       report.ok = Boolean(result.ok && responseMatched);
       report.model = result.model ?? report.model;
+      cacheProviderModel(workspaceRoot, provider, report.model);
     } catch (error) {
       report.probe.error = error.message;
     }
@@ -581,6 +618,7 @@ function parsePromptExecution(rawArgs, kind) {
     provider: options.provider,
     positionals,
   });
+  const workspaceRoot = resolveWorkspaceRoot(process.cwd());
   const userPrompt = remainingPositionals.join(" ").trim();
   if (!userPrompt) {
     throw new Error(`Missing prompt text for ${kind}.`);
@@ -593,6 +631,7 @@ function parsePromptExecution(rawArgs, kind) {
       prompt: userPrompt,
       userPrompt,
       model: options.model || null,
+      defaultModel: readCachedProviderModel(workspaceRoot, provider),
       cwd: process.cwd(),
       timeout: TIMEOUTS_MS[kind],
       meta: {},
@@ -636,6 +675,7 @@ function buildReviewExecution(rawArgs, { adversarial }) {
     provider: options.provider,
     positionals,
   });
+  const workspaceRoot = resolveWorkspaceRoot(process.cwd());
   const focus = remainingPositionals.join(" ").trim();
   const reviewContext = collectReviewContext({
     cwd: process.cwd(),
@@ -664,6 +704,7 @@ function buildReviewExecution(rawArgs, { adversarial }) {
       }),
       userPrompt: focus || `${adversarial ? "adversarial " : ""}review ${reviewContext.scope}`,
       model: options.model || null,
+      defaultModel: readCachedProviderModel(workspaceRoot, provider),
       cwd: process.cwd(),
       timeout: TIMEOUTS_MS[adversarial ? "adversarial-review" : "review"],
       meta: {
@@ -914,6 +955,7 @@ async function runJobWorker(rawArgs) {
       provider: execution.provider,
       prompt: execution.prompt,
       model: execution.model || null,
+      defaultModel: execution.defaultModel || null,
       cwd: execution.cwd,
       timeout: execution.timeout,
       kind: execution.kind,
@@ -953,6 +995,7 @@ async function runJobWorker(rawArgs) {
     if (result.timing) {
       appendTimingRecord(workspaceRoot, result.timing);
     }
+    cacheProviderModel(workspaceRoot, execution.provider, result.model);
     removeJobConfigFile(workspaceRoot, jobId);
   } catch (error) {
     const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {

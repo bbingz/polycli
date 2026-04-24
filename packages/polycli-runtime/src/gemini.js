@@ -54,6 +54,7 @@ export function parseGeminiStreamText(text) {
   let response = "";
   let sessionId = null;
   let stats = null;
+  let model = null;
   let resultEvent = null;
 
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
@@ -62,9 +63,14 @@ export function parseGeminiStreamText(text) {
     const event = parsed.event;
     events.push(event);
     if (!sessionId && event.session_id) sessionId = event.session_id;
+    if (!model && typeof event.model === "string") model = event.model;
+    if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (event.type === "result") {
       resultEvent = event;
-      if (event.stats) stats = event.stats;
+      if (event.stats) {
+        stats = event.stats;
+        model = model ?? Object.keys(event.stats.models ?? {})[0] ?? null;
+      }
       if (!response.trim()) {
         response += extractGeminiText(event);
       }
@@ -73,10 +79,10 @@ export function parseGeminiStreamText(text) {
     response += extractGeminiText(event);
   }
 
-  return { events, response, sessionId, stats, resultEvent };
+  return { events, response, sessionId, stats, model, resultEvent };
 }
 
-function parseGeminiJsonResult(stdout, stderr, status) {
+function parseGeminiJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
   const text = String(stdout ?? "");
   const jsonStart = text.indexOf("{");
   if (jsonStart < 0) {
@@ -107,6 +113,7 @@ function parseGeminiJsonResult(stdout, stderr, status) {
       response: parsed.response ?? "",
       sessionId: parsed.session_id ?? resolvedSession.sessionId ?? null,
       stats: parsed.stats ?? null,
+      model: Object.keys(parsed.stats?.models ?? {})[0] || defaultModel,
       status,
     };
   } catch (error) {
@@ -154,6 +161,7 @@ export function runGeminiPrompt({
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   bin = GEMINI_BIN,
 } = {}) {
   const invocation = buildGeminiInvocation({
@@ -181,7 +189,9 @@ export function runGeminiPrompt({
     };
   }
 
-  return parseGeminiJsonResult(result.stdout, result.stderr, result.status);
+  return parseGeminiJsonResult(result.stdout, result.stderr, result.status, {
+    defaultModel: model ?? defaultModel,
+  });
 }
 
 export function runGeminiPromptStreaming({
@@ -192,6 +202,7 @@ export function runGeminiPromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   onEvent = () => {},
   bin = GEMINI_BIN,
   spawnImpl,
@@ -235,6 +246,7 @@ export function runGeminiPromptStreaming({
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      model: parsed.model ?? model ?? defaultModel,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok
         ? (resultError || (hasVisibleText ? null : "gemini produced no visible text"))

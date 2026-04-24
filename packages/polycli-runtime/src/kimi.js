@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
@@ -9,6 +13,17 @@ const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const PROMPT_STDIN_THRESHOLD_BYTES = 100_000;
 const KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 const KIMI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
+const KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path.join(os.homedir(), ".kimi", "config.toml");
+
+function readKimiDefaultModel() {
+  try {
+    const text = fs.readFileSync(KIMI_CONFIG_PATH, "utf8");
+    const match = text.match(/^default_model\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/m);
+    return match ? (match[1] ?? match[2] ?? match[3] ?? null) : null;
+  } catch {
+    return null;
+  }
+}
 
 export function buildKimiInvocation({
   prompt,
@@ -70,16 +85,19 @@ export function parseKimiStreamText(text) {
   const events = [];
   const toolEvents = [];
   let response = "";
+  let model = null;
 
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
     const event = parseKimiEventLine(rawLine);
     if (!event) continue;
     events.push(event);
     if (event.role === "tool") toolEvents.push(event);
+    if (!model && typeof event.model === "string") model = event.model;
+    if (!model && typeof event.message?.model === "string") model = event.message.model;
     response += extractKimiText(event);
   }
 
-  return { events, toolEvents, response };
+  return { events, toolEvents, response, model };
 }
 
 export function getKimiAvailability(cwd) {
@@ -87,11 +105,12 @@ export function getKimiAvailability(cwd) {
 }
 
 function buildKimiAuthStatus(result) {
+  const configModel = readKimiDefaultModel();
   if (result.ok) {
     return {
       loggedIn: true,
       detail: "authenticated",
-      model: result.model ?? null,
+      model: result.model ?? configModel,
     };
   }
 
@@ -100,7 +119,7 @@ function buildKimiAuthStatus(result) {
     return { loggedIn: false, detail };
   }
   if (KIMI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
-    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? configModel };
   }
   return { loggedIn: false, detail };
 }
@@ -122,6 +141,7 @@ export function runKimiPrompt({
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   bin = KIMI_BIN,
 } = {}) {
   const invocation = buildKimiInvocation({
@@ -162,7 +182,7 @@ export function runKimiPrompt({
     events: parsed.events,
     toolEvents: parsed.toolEvents,
     sessionId: session.sessionId,
-    model,
+    model: parsed.model ?? model ?? defaultModel,
     error: parsed.response.trim() ? null : "kimi produced no visible text",
   };
 }
@@ -174,6 +194,7 @@ export function runKimiPromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
   resumeSessionId = null,
+  defaultModel = null,
   onEvent = () => {},
   bin = KIMI_BIN,
   spawnImpl,
@@ -212,6 +233,7 @@ export function runKimiPromptStreaming({
       ...result,
       ...parsed,
       sessionId: session.sessionId,
+      model: parsed.model ?? model ?? defaultModel,
       ok: result.ok && hasVisibleText,
       error: result.ok
         ? (hasVisibleText ? null : "kimi produced no visible text")

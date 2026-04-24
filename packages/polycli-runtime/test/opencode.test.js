@@ -74,6 +74,7 @@ test("parseOpenCodeStreamText collects session id and assistant text", () => {
   );
 
   assert.equal(parsed.sessionId, "open-1");
+  assert.equal(parsed.model, "open-test");
   assert.equal(parsed.response, "hello world");
   assert.equal(parsed.events.length, 4);
   assert.equal(
@@ -126,6 +127,21 @@ test("parseOpenCodeJsonResult extracts final response from raw event output", ()
   assert.equal(parsed.sessionId, "open-2");
 });
 
+test("parseOpenCodeJsonResult falls back to default model when events omit one", () => {
+  const parsed = parseOpenCodeJsonResult(
+    [
+      '{"type":"session.start","session":{"id":"open-2"}}',
+      '{"type":"result","text":"pong"}',
+    ].join("\n"),
+    "",
+    0,
+    { defaultModel: "opencode-fallback" }
+  );
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.model, "opencode-fallback");
+});
+
 test("parseOpenCodeJsonResult does not leak stdout on non-zero exit", () => {
   const parsed = parseOpenCodeJsonResult(
     '{"type":"result","text":"secret token"}',
@@ -155,6 +171,35 @@ process.stdout.write(JSON.stringify({ type: "result", text: "hello world" }) + "
       assert.equal(result.response, "hello world");
       assert.equal(result.sessionId, "open-sync-1");
       assert.equal(result.model, "open-test");
+    }
+  );
+});
+
+test("runOpenCodePrompt resolves model from session export when events omit it", () => {
+  withFakeOpenCodeBin(
+    `#!/usr/bin/env node
+if (process.argv[2] === "export") {
+  process.stdout.write(JSON.stringify({
+    messages: [
+      { role: "assistant", info: { providerID: "opencode-go", modelID: "mimo-v2-pro" } }
+    ]
+  }));
+  process.exit(0);
+}
+process.stdout.write(JSON.stringify({ type: "step_start", sessionID: "open-export-1", part: { sessionID: "open-export-1", type: "step-start" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "text", sessionID: "open-export-1", part: { sessionID: "open-export-1", type: "text", text: "hello world" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "step_finish", sessionID: "open-export-1", part: { sessionID: "open-export-1", type: "step-finish", reason: "stop" } }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runOpenCodePrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.sessionId, "open-export-1");
+      assert.equal(result.model, "opencode-go/mimo-v2-pro");
     }
   );
 });

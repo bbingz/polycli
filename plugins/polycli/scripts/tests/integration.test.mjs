@@ -162,11 +162,11 @@ const reply = process.env.KIMI_FIXED_REPLY || (replyMatch ? replyMatch[1] : prom
     return;
   }
   if (process.env.KIMI_CONTENT_MODE === "string") {
-    process.stdout.write(JSON.stringify({ role: "assistant", content: reply }) + "\\n");
+    process.stdout.write(JSON.stringify({ role: "assistant", content: reply, model: "kimi-test" }) + "\\n");
   } else if (process.env.KIMI_EMIT_THINKING === "1" && !noThinking) {
-    process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "think", think: "thinking before final" }, { type: "text", text: reply }] }) + "\\n");
+    process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "think", think: "thinking before final" }, { type: "text", text: reply }], model: "kimi-test" }) + "\\n");
   } else {
-    process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "text", text: reply }] }) + "\\n");
+    process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "text", text: reply }], model: "kimi-test" }) + "\\n");
   }
   if (tailDelay > 0) await sleep(tailDelay);
 })();
@@ -378,8 +378,8 @@ if (args[0] !== "run") {
 const prompt = args[1] || "ping";
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
 const reply = process.env.OPENCODE_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
-process.stdout.write(JSON.stringify({ type: "step_start", sessionID: "open-555", part: { sessionID: "open-555", type: "step-start" } }) + "\\n");
-process.stdout.write(JSON.stringify({ type: "text", sessionID: "open-555", part: { sessionID: "open-555", type: "text", text: reply } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "step_start", sessionID: "open-555", part: { sessionID: "open-555", type: "step-start", model: "opencode-test" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "text", sessionID: "open-555", part: { sessionID: "open-555", type: "text", text: reply, model: "opencode-test" } }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "step_finish", sessionID: "open-555", part: { sessionID: "open-555", type: "step-finish", reason: "stop" } }) + "\\n");
 `,
     { mode: 0o755 }
@@ -502,6 +502,10 @@ async function assertSetupAndAsk(provider, env, prompt = "__reply=PONG") {
   const askPayload = JSON.parse(ask.stdout);
   assert.equal(askPayload.provider, provider);
   assert.equal(askPayload.response, "PONG");
+  assert.ok(
+    askPayload.model && typeof askPayload.model === "string" && askPayload.model.length > 0,
+    `${provider} ask result should include model`
+  );
   assert.ok(askPayload.timing, "ask result should include timing");
   return askPayload;
 }
