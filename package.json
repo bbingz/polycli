@@ -11,7 +11,9 @@
   },
   "scripts": {
     "build:plugins": "node scripts/build-plugin-bundles.mjs",
-    "test": "npm run build:plugins && node --test packages/polycli-utils/test/*.test.js packages/polycli-timing/test/*.test.js packages/polycli-runtime/test/*.test.js plugins/polycli/scripts/tests/*.test.mjs",
+    "test": "npm run build:plugins && node --test packages/polycli-utils/test/*.test.js packages/polycli-timing/test/*.test.js packages/polycli-runtime/test/*.test.js plugins/polycli/scripts/tests/*.test.mjs scripts/tests/*.test.mjs",
+    "validate:bundles": "node scripts/validate-plugin-bundles.mjs",
+    "validate:fixtures": "node scripts/validate-fixture-metadata.mjs",
     "validate:manifests": "node scripts/validate-release-manifests.mjs",
     "validate:host-map": "node scripts/validate-host-command-map.mjs",
     "check:review-drift": "node scripts/check-review-cli-drift.mjs",
@@ -19,7 +21,7 @@
     "pack:opencode": "mkdir -p dist && npm pack ./plugins/polycli-opencode --pack-destination dist",
     "pack:utils": "mkdir -p dist && npm pack ./packages/polycli-utils --pack-destination dist",
     "pack:timing": "mkdir -p dist && npm pack ./packages/polycli-timing --pack-destination dist",
-    "release:check": "npm test && npm run validate:manifests && npm run validate:host-map && claude plugin validate .claude-plugin/marketplace.json && claude plugin validate plugins/polycli/.claude-plugin/plugin.json && { check_publishable() { pkg_dir=\"$1\"; pkg_spec=$(node -e \"const p = require(process.argv[1] + '/package.json'); process.stdout.write(p.name + '@' + p.version);\" \"$pkg_dir\"); if npm view \"$pkg_spec\" version >/dev/null 2>&1; then npm pack \"$pkg_dir\" --dry-run >/dev/null; else npm publish \"$pkg_dir\" --dry-run --access public; fi; }; check_publishable ./plugins/polycli-opencode && check_publishable ./packages/polycli-utils && check_publishable ./packages/polycli-timing; }"
+    "release:check": "npm test && npm run validate:bundles && npm run validate:fixtures && npm run validate:manifests && npm run validate:host-map && claude plugin validate .claude-plugin/marketplace.json && claude plugin validate plugins/polycli/.claude-plugin/plugin.json && { check_publishable() { pkg_dir=\"$1\"; pkg_spec=$(node -e \"const p = require(process.argv[1] + '/package.json'); process.stdout.write(p.name + '@' + p.version);\" \"$pkg_dir\"); if npm view \"$pkg_spec\" version >/dev/null 2>&1; then npm pack \"$pkg_dir\" --dry-run >/dev/null; else npm publish \"$pkg_dir\" --dry-run --access public; fi; }; check_publishable ./plugins/polycli-opencode && check_publishable ./packages/polycli-utils && check_publishable ./packages/polycli-timing; }"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.14.20",

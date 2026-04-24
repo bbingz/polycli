@@ -7,11 +7,12 @@ This repository publishes in two different ways:
 
 ## Current Release State
 
-As of `2026-04-22`, the latest published public release is still:
+As of `2026-04-24`, the latest published public release is:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
-- GitHub release: `v0.3.0`
-- npm package: `@bbingz/polycli-opencode@0.3.0`
+- GitHub release: `v0.6.0`
+- npm package: `@bbingz/polycli-opencode@0.6.0`
+- npm packages: `@bbingz/polycli-utils@1.0.0`, `@bbingz/polycli-timing@1.0.0`
 
 Verified release paths:
 
@@ -24,15 +25,7 @@ Note:
 
 - npm registry read-after-write may briefly lag immediately after the first publish of a new scoped package.
 
-## Current Post-release Work
-
-The public release is still `v0.3.0`, but the local post-release work now extends beyond the original stabilization pass.
-
-Prepared next release line:
-
-- local release target: `v0.4.0`
-- release notes draft: [docs/release-notes-v0.4.0.md](/home/user/-Code-/polycli/docs/release-notes-v0.4.0.md)
-- external steps still pending: local tag, push, GitHub release, npm publish
+## Current Scope
 
 Current runtime scope in-repo:
 
@@ -56,39 +49,16 @@ Model selection behavior remains intentionally simple:
 
 - every provider uses the underlying CLI default model unless `--model` is explicitly passed through runtime options
 
-Latest hardening work fixed issues found by running real provider review / ask flows against the new adapters:
+v0.6.0 absorbed the four legacy provider plugins into the unified `polycli` host surface:
 
-- `claude`
-  - `stream-json` mode now adds `--verbose`, matching the real CLI requirement
-  - JSON-mode success now respects the process exit status and no longer reports `ok: true` on non-zero exits
-  - subtype-only terminal error results are now treated as failures in both sync and streaming paths
-- `copilot`
-  - parser now accepts the real `assistant.message_delta` / `assistant.message` event schema
-  - final answers emitted via `data.content` are preserved instead of being treated as empty output
-- `opencode`
-  - parser now accepts the real `type: "text"` / `part.text` event schema
-  - session IDs emitted as `sessionID` are now captured correctly
-- `timing`
-  - terminal summary events from `claude` / `copilot` / `opencode` / `pi` no longer extend the visible-text window after real streaming output has already started
-- integration fakes
-  - fake provider binaries now model these real event shapes more closely, so regressions are caught in CI instead of only in live runs
-- host plugin hygiene
-  - streamed preview dedupe now uses an in-memory tail cache instead of re-reading the full log file per event
-  - preview text slices by code point so emoji do not get split mid-surrogate pair
-  - auto-scope review now reports git fallback failures as warnings instead of flattening them into plain "no changes"
-- real fixture replay
-  - parser tests now replay saved real stdout for all eight providers
-  - mini-agent replay also includes the captured log body parsed by the runtime
+- Kimi session continuation flags: `--resume-last`, `--resume <uuid>`, `--fresh`
+- Gemini approval and reasoning flags: `--write`, `--effort low|medium|high`
+- Claude Code lifecycle hooks and opt-in stop-time review gate
+- 12 provider guidance skills under the `polycli:` namespace
+- one generic `polycli:polycli-provider-agent` subagent
+- unified namespace UX: `/polycli:<command> --provider <provider>`
 
-Verification status for the current post-release work:
-
-- `npm test`
-  - `184` passed
-  - `0` failed
-- focused runtime replay regression tests:
-  - `rtk node --test packages/polycli-runtime/test/*.test.js`
-  - `101` passed
-  - `0` failed
+The four legacy provider repos are no longer migration targets. They remain reference-only history and should not be edited from this repository.
 
 ## Pre-release
 
@@ -96,6 +66,22 @@ Run the full release checks from the repository root:
 
 ```bash
 npm run release:check
+```
+
+`release:check` includes:
+
+- `npm test`, which rebuilds plugin bundles before running package, runtime, plugin, and release-script tests
+- `npm run validate:bundles`
+- `npm run validate:fixtures`
+- `npm run validate:manifests`
+- `npm run validate:host-map`
+- `claude plugin validate` for the marketplace and Claude host plugin manifests
+- dry-run or pack checks for OpenCode, utils, and timing npm packages
+
+Run the review hard-constraint drift watcher before release candidates that touch review flow:
+
+```bash
+npm run check:review-drift
 ```
 
 Build a distributable OpenCode tarball:
@@ -114,13 +100,13 @@ Create or update the public repository:
 gh repo create bbingz/polycli --public --source=. --remote=origin --push
 ```
 
-For the next release once external publishing is approved:
+For the next release once external publishing is approved, replace `<version>` with the host plugin release version:
 
 ```bash
 git push origin main
-git tag v0.4.0
-git push origin v0.4.0
-gh release create v0.4.0 dist/bbingz-polycli-opencode-0.4.0.tgz --title "v0.4.0"
+git tag v<version>
+git push origin v<version>
+gh release create v<version> --title "v<version>" --notes-file docs/release-notes-v<version>.md
 ```
 
 Consumers install from the repository:

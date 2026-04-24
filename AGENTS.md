@@ -2,12 +2,14 @@
 
 ## Project Overview
 
-`polycli` is a small Node.js monorepo for Path B only:
+`polycli` is a Node.js monorepo for Path B only:
 
 - shared low-semantic-risk utilities
 - an independent timing contract for cross-provider comparison
+- flat provider runtime adapters for the unified plugin surface
+- host plugins for Claude Code, Codex, GitHub Copilot CLI, and OpenCode
 
-It is not a shared runtime, inheritance framework, or provider unification layer.
+It is not a shared runtime base class, inheritance framework, or provider protocol unification layer. The runtime package exists to bundle provider-specific adapters; provider modules stay flat and explicit.
 
 ## Setup And Verification
 
@@ -17,6 +19,9 @@ It is not a shared runtime, inheritance framework, or provider unification layer
 - When touching one package, prefer the focused test command first:
   - `node --test packages/polycli-utils/test/*.test.js`
   - `node --test packages/polycli-timing/test/*.test.js`
+  - `node --test packages/polycli-runtime/test/*.test.js`
+  - `node --test plugins/polycli/scripts/tests/*.test.mjs`
+  - `node --test scripts/tests/*.test.mjs`
 
 ## Repository Map
 
@@ -28,8 +33,24 @@ It is not a shared runtime, inheritance framework, or provider unification layer
   - Timing schema, validation, percentiles, and aggregation.
   - Keep capability-awareness explicit: `measured`, `zero`, `missing`, and `unsupported` are semantically different.
 
+- `packages/polycli-runtime`
+  - Flat provider adapters, registry, availability/auth probes, invocation builders, stream/log parsing, and timing attachment.
+  - Keep provider-specific protocol parsing here; do not promote it into `polycli-utils`.
+  - Runtime remains a bundled internal package, not a public framework.
+
+- `plugins/polycli`
+  - Claude Code host plugin, commands, hooks, provider guidance skills, bundled companion, and host-side job/review orchestration.
+
+- `plugins/polycli-codex`, `plugins/polycli-copilot`, `plugins/polycli-opencode`
+  - Host-specific distribution wrappers around the same bundled companion surface.
+
+- `scripts/`
+  - Release/build validation. Keep release drift checks small, deterministic, and runnable from `npm run release:check`.
+
 - `docs/`
   - `docs/polycli-proposal.md` is the main architecture/product context if present.
+  - `docs/roadmap.md` is the live open-work list.
+  - `docs/release.md` is the release procedure.
   - `docs/session-memory-2026-04-22.md` is handoff context from the earlier Codex session if present.
 
 ## Editing Rules

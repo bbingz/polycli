@@ -66,12 +66,21 @@ Session ids and ordinary request metadata were left intact because they are part
 
 Each `.meta.json` stores:
 
-- provider
-- fixture name
-- capture timestamp
-- CLI version
-- argv used for capture
-- expected parse result used by the replay test
+- `provider`: provider id, matching the fixture directory
+- `name`: fixture name, matching the file stem before `.meta.json`
+- `capturedAt`: ISO timestamp for the real CLI capture
+- `version`: CLI version string observed during capture
+- `argv`: non-empty argv array used for capture
+- `expected.response`: exact visible assistant response expected by replay tests
+- `expected.sessionId`: optional string session id when the provider emits one
+
+The metadata contract is release-checked by:
+
+```bash
+npm run validate:fixtures
+```
+
+Run it after adding or recapturing fixtures. The command does not call provider CLIs; it only validates committed metadata shape.
 
 ## Re-capture Policy
 
@@ -86,4 +95,5 @@ When re-capturing:
 1. overwrite the existing fixture files
 2. inspect the diff for parser-shape changes
 3. re-run `node --test packages/polycli-runtime/test/*.test.js`
-4. call out any fixture-driven parser changes explicitly in the commit message
+4. re-run `npm run validate:fixtures`
+5. call out any fixture-driven parser changes explicitly in the commit message
