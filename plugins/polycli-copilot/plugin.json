@@ -1,7 +1,7 @@
 {
   "name": "polycli-copilot",
   "description": "GitHub Copilot CLI adapter for the shared polycli companion.",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "author": {
     "name": "bing"
   },

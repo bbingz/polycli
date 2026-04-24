@@ -1,6 +1,8 @@
 # Release Notes Draft - v0.6.0
 
-Status: draft covering R8 legacy plugin convergence. Release date target: TBD.
+Status: ready for the external release steps (tag / push / GitHub release / one npm publish).
+
+Release date target: 2026-04-24.
 
 Scope: absorb the four sibling per-provider Claude Code plugins (`gemini-plugin-cc` / `kimi-plugin-cc` / `qwen-plugin-cc` / `minimax-plugin-cc`) into the polycli host plugin surface. Users now install one plugin instead of five for the same functionality. Minor version bump justified by new surface area (per-provider guidance skills, lifecycle hooks, stop-time review gate, and provider-specific flags) and by the deprecation of the legacy namespace UX.
 
