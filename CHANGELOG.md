@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Claude — close roadmap R4 + R7; refresh roadmap for v0.5.0
+
+- Added `docs/host-command-map.md` — capability × host mapping for all 10 polycli commands across Claude Code / Codex / Copilot / OpenCode plus side-by-side invocation examples. Closes roadmap R4.
+- Added `scripts/check-review-cli-drift.mjs` that probes installed provider CLIs and asserts the flags `/review` hard constraints depend on (`--tools` / `--approval-mode` / `--policy` / `--excluded-tools` / `--agent` / `--no-tools`) still exist. Env-var based constraints (MiniMax `MINI_AGENT_CONFIG_PATH`, OpenCode `OPENCODE_CONFIG_CONTENT`) are listed as manual-watch reminders. Wired as `npm run check:review-drift`. Closes roadmap R7.
+- Refreshed `docs/roadmap.md`: removed the completed R1 / R2 / R3 / R4 / R7 entries, updated Current state to v0.4.2 / 250 tests, narrowed v0.5.0 scope to R5 + R6 + optional Q1/Q2/Q3 decisions.
+
+---
+
 ## 2026-04-24 — Claude — v0.4.2 shipped
 
 - Pushed `main` + tag `v0.4.2` (tag at 5c7f709 — R2 runtime fix commit).

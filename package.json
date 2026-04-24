@@ -13,6 +13,7 @@
     "build:plugins": "node scripts/build-plugin-bundles.mjs",
     "test": "npm run build:plugins && node --test packages/polycli-utils/test/*.test.js packages/polycli-timing/test/*.test.js packages/polycli-runtime/test/*.test.js plugins/polycli/scripts/tests/*.test.mjs",
     "validate:manifests": "node scripts/validate-release-manifests.mjs",
+    "check:review-drift": "node scripts/check-review-cli-drift.mjs",
     "pack:codex": "VERSION=$(node -p \"require('./plugins/polycli-codex/.codex-plugin/plugin.json').version\") && mkdir -p dist && tar -czf dist/polycli-codex-$VERSION.tgz -C plugins polycli-codex",
     "pack:opencode": "mkdir -p dist && npm pack ./plugins/polycli-opencode --pack-destination dist",
     "release:check": "npm test && npm run validate:manifests && claude plugin validate .claude-plugin/marketplace.json && claude plugin validate plugins/polycli/.claude-plugin/plugin.json && npm publish ./plugins/polycli-opencode --dry-run --access public"
