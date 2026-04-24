@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Claude — prepare v0.5.0 release
+
+- Bumped the four host plugin release manifests and both host marketplace metadata entries from `0.4.2` to `0.5.0`.
+- Drafted `docs/release-notes-v0.5.0.md` covering R6 (auth-probe regex contracts), P1/Q1 (utils + timing first public npm publish), and R5 (Claude fixture replay pilot).
+- `release:check` passes end-to-end: 256/256 tests, manifest validation, plugin validation, `@bbingz/polycli-opencode@0.5.0` / `@bbingz/polycli-utils@1.0.0` / `@bbingz/polycli-timing@1.0.0` dry-run publishes all succeed.
+
+---
+
 ## 2026-04-24 — Codex — pilot claude host integration fixture replay
 
 - Added captured real Claude CLI stream fixtures for host-level `/ask` and `/health` success coverage.

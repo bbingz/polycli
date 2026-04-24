@@ -1,6 +1,6 @@
 {
   "name": "@bbingz/polycli-opencode",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
