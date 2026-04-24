@@ -26,6 +26,11 @@ function assertLocalPluginEntry(marketplace, expected) {
   assert.equal(fs.existsSync(path.join(REPO_ROOT, expected.path)), true);
 }
 
+function assertNoPluginEntry(marketplace, name) {
+  const plugin = marketplace.plugins.find((candidate) => candidate.name === name);
+  assert.equal(plugin, undefined, `unexpected marketplace entry for ${name}`);
+}
+
 test("host marketplace files exist and are valid JSON", () => {
   const codexMarketplace = readJson(".agents/plugins/marketplace.json");
   const copilotMarketplace = readJson(".github/plugin/marketplace.json");
@@ -38,7 +43,7 @@ test("host marketplace files exist and are valid JSON", () => {
   assertLocalPluginEntry(codexMarketplace, { name: "polycli-codex", path: "./plugins/polycli-codex" });
   assertLocalPluginEntry(copilotMarketplace, { name: "polycli-copilot", source: "./plugins/polycli-copilot" });
   assertLocalPluginEntry(claudeMarketplace, { name: "polycli", source: "./plugins/polycli" });
-  assertLocalPluginEntry(claudeMarketplace, { name: "polycli-copilot", source: "./plugins/polycli-copilot" });
+  assertNoPluginEntry(claudeMarketplace, "polycli-copilot");
 });
 
 test("host plugin manifests exist", () => {
@@ -61,11 +66,10 @@ test("release-facing marketplace versions stay aligned with host manifests", () 
   assert.equal(copilotMarketplace.metadata.version, copilotManifest.version);
 
   const claudePlugin = claudeMarketplace.plugins.find((candidate) => candidate.name === "polycli");
-  const claudeCopilotPlugin = claudeMarketplace.plugins.find((candidate) => candidate.name === "polycli-copilot");
   const copilotPlugin = copilotMarketplace.plugins.find((candidate) => candidate.name === "polycli-copilot");
 
   assert.equal(claudePlugin?.version, claudeManifest.version);
-  assert.equal(claudeCopilotPlugin?.version, copilotManifest.version);
+  assertNoPluginEntry(claudeMarketplace, "polycli-copilot");
   assert.equal(copilotPlugin?.version, copilotManifest.version);
 });
 

@@ -26,6 +26,11 @@ const codexManifest = readJson("plugins/polycli-codex/.codex-plugin/plugin.json"
 const claudeManifest = readJson("plugins/polycli/.claude-plugin/plugin.json");
 const copilotManifest = readJson("plugins/polycli-copilot/plugin.json");
 const opencodeManifest = readJson("plugins/polycli-opencode/package.json");
+const internalPackages = [
+  readJson("packages/polycli-utils/package.json"),
+  readJson("packages/polycli-timing/package.json"),
+  readJson("packages/polycli-runtime/package.json"),
+];
 
 assertPluginEntry(codexMarketplace, {
   name: codexManifest.name,
@@ -45,6 +50,10 @@ assertPluginEntry(copilotMarketplace, {
 assert.equal(codexManifest.version, claudeManifest.version);
 assert.equal(copilotManifest.version, claudeManifest.version);
 assert.equal(opencodeManifest.version, claudeManifest.version);
+for (const internalPackage of internalPackages) {
+  assert.equal(internalPackage.private, true, `${internalPackage.name} must remain private`);
+  assert.equal(internalPackage.version, "1.0.0", `${internalPackage.name} must stay on the internal 1.0.0 line`);
+}
 assert.equal(Array.isArray(codexMarketplace.plugins), true);
 assert.equal(Array.isArray(claudeMarketplace.plugins), true);
 assert.equal(Array.isArray(copilotMarketplace.plugins), true);

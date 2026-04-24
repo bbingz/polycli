@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Codex — prepare v0.4.1 release
+
+- Bumped the four host plugin release manifests and host marketplace metadata from `0.4.0` to `0.4.1`, while keeping internal workspace packages on the `1.0.0` line.
+- Marked `@bbingz/polycli-utils` and `@bbingz/polycli-timing` as private internal bundler inputs, matching `@bbingz/polycli-runtime`.
+- Removed the Copilot adapter from the Claude marketplace now that Copilot has its own marketplace, and kept release manifest validation wired into `release:check`.
+
 ## 2026-04-24 — Codex — fix pi duplicate terminal text and pin default model
 
 - Fixed the pi JSON stream parser so visible assistant text is sourced from `text_delta` when present, with terminal `message_end` / `turn_end` / `agent_end` text only used as a fallback; this removes the repeated final-answer concatenation seen in live pi runs and saved fixtures.
