@@ -4,7 +4,8 @@ Claude Code 专属补丁。基础规则见 [AGENTS.md](AGENTS.md)，此处只列
 
 ## Must-read before editing
 - [AGENTS.md](AGENTS.md) — repo map、editing rules、delivery expectations
-- [docs/polycli-v1-public-surface.md](docs/polycli-v1-public-surface.md) — 已冻结的对外 API 面
+- [docs/roadmap.md](docs/roadmap.md) — 当前待做 / design questions / explicit non-goals
+- [docs/polycli-v1-public-surface.md](docs/polycli-v1-public-surface.md) — v0.3 快照（已 superseded；仅作历史参考，不要当作活约束引用）
 - [docs/session-memory-2026-04-22.md](docs/session-memory-2026-04-22.md) — 最近一次 Codex handoff；包含 release state
 
 ## Architecture boundary（硬约束）

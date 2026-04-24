@@ -1,6 +1,17 @@
 # polycli v1 Public Surface
 
-## Status
+> **Superseded — v0.3 snapshot.** This document describes the v1 scope as it stood in the `@bbingz/polycli-utils` + `@bbingz/polycli-timing` utility-only era. From v0.4.x onward the repo also ships `@bbingz/polycli-runtime` with eight provider adapters (claude / copilot / gemini / kimi / qwen / minimax / opencode / pi). The "v1 does not ship provider adapters" language below is accurate for v0.3 and historical for everything after it.
+>
+> For the current surface see:
+> - `README.md` — provider capability matrix + usage
+> - `packages/polycli-runtime/src/registry.js` — the live `RUNTIMES` table
+> - `packages/polycli-runtime/src/timing.js` — per-provider timing capability
+> - `CHANGELOG.md` — 0.3.0 → 0.4.1 delta and beyond
+> - `docs/roadmap.md` R3 — when and how this doc will be rewritten vs. retired
+>
+> Kept here because `AGENTS.md` and earlier review docs still cite it as the frozen reference point for what the utility packages promised at v1.
+
+## Status (v0.3 snapshot)
 
 `polycli` v1 is a package-and-contract repo, not a provider implementation repo.
 

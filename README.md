@@ -135,6 +135,28 @@ rescue --provider <provider> ...
 
 `setup --provider <provider>` 是更便宜的诊断命令，只检查安装和认证状态，不发送模型请求。需要长任务时再用 `--background` 配合 `status/result`，最后用 `timing` 看记录是否已经落库。
 
+## Provider Capability Matrix
+
+不同 provider 底层 CLI 能力不同，`polycli` 如实暴露差异而不做假统一。下表来自 `packages/polycli-runtime/src/registry.js` 的 `RUNTIMES` + `TIMING_SUPPORT`。`✓` = 支持；`—` = 设计上不支持（会在 timing 里报 `unsupported`，不会 fake 成 `missing` 或 0）。
+
+| provider | streaming | sessionResume | structuredOutput | ttft | gen | tail | tool |
+|----------|:---------:|:-------------:|:----------------:|:----:|:---:|:----:|:----:|
+| claude   | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| copilot  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| gemini   | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| kimi     | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| qwen     | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| minimax  | ✓ | — | — | — | — | — | — |
+| opencode | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| pi       | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+
+说明：
+
+- `cold` / `retry` 两项对所有 provider 都是 `unsupported`（上游 CLI 无稳定信号，刻意不测，见 `CLAUDE.md`）。`total` 对所有 provider 都是 `measured`。未列入表。
+- `minimax` 走日志回放协议，不支持 session resume / 结构化输出 / 细粒度 streaming timing — 这是 provider 固有限制，不是 polycli 的 bug。`total` 仍会正确测量。
+- 只有 `qwen` 声明 `tool: true` — 这意味着 `qwen` 未触发 tool 调用时 `tool` 报 `missing`（可观测但未发生），其余 provider 报 `unsupported`（能力上不跟踪）。两个状态语义不同，不要合并。
+- `ask` 响应的顶层 `model` 字段在 v0.4.1 后对 8 个 provider 都填值；见 `docs/release-notes-v0.4.1.md` 的 live smoke 结果。
+
 ## Background Jobs
 
 `ask` / `rescue` / `review` / `adversarial-review` 支持 `--background`。
