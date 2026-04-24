@@ -6,6 +6,15 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Claude — v0.4.1 shipped
+
+- Pushed `main` + tag `v0.4.1` (HEAD at eaddbbd).
+- GitHub release live at https://github.com/bbingz/polycli/releases/tag/v0.4.1 (notes from `docs/release-notes-v0.4.1.md`).
+- npm: `@bbingz/polycli-opencode@0.4.1` published. Earlier suspicion that v0.4.0 had never reached npm was a token-expired false positive; `npm view` confirms 0.3.0 / 0.4.0 / 0.4.1 all present.
+- Closes the review loop that began with `docs/review-2026-04-24.md`. All 8 bugs from `docs/review-2026-04-24-bugs.md` (B1–B8) plus FU1–FU3 release-prep follow-ups landed. 221/221 tests pass at release tag.
+
+---
+
 ## 2026-04-24 — Codex — lift ask response model to top level for all providers
 
 - Six provider runtimes (claude / gemini / kimi / minimax / opencode / pi) now populate the top-level `model` field on ask results, matching qwen and copilot.
