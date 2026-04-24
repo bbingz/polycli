@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Codex — prepare v0.5.1 release
+
+- Bumped the four host plugin manifests and Claude/Copilot marketplace metadata from `0.5.0` to `0.5.1`.
+- Drafted `docs/release-notes-v0.5.1.md` for the Q2/Q3 guardrail patch release.
+- Release scope is host/plugin line only: publish `@bbingz/polycli-opencode@0.5.1`; keep utils/timing at `1.0.0` and runtime private.
+
+---
+
 ## 2026-04-24 — Codex — close Q2 and Q3 with guardrails
 
 - Closed Q2 by documenting the model fallback policy and adding a host integration test that proves cached setup model metadata is used only as the final `defaultModel` fallback when a provider stream omits model fields.
