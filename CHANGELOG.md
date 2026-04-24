@@ -6,6 +6,15 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Claude — v0.6.0 shipped
+
+- Pushed `main` and tag `v0.6.0` (tag at `a95e3d8`).
+- GitHub release live at https://github.com/bbingz/polycli/releases/tag/v0.6.0 with notes from `docs/release-notes-v0.6.0.md`; no tarball asset attached (OpenCode users install from npm).
+- Published `@bbingz/polycli-opencode@0.6.0` to npm; confirmed via `npm view @bbingz/polycli-opencode versions`.
+- Closes roadmap R8a-R8f. R8g (legacy repo archival) deliberately skipped per user direction ("不用 archive"); four legacy plugin repos remain as read-only references on GitHub without archival status. `@bbingz/polycli-utils@1.0.0` and `@bbingz/polycli-timing@1.0.0` unchanged from v0.5.0; runtime stays private.
+
+---
+
 ## 2026-04-24 — Claude — draft v0.6.0 release notes for R8 convergence
 
 - Added `docs/release-notes-v0.6.0.md` covering R8a-R8e deliverables with a full legacy → polycli migration table (slash commands, kimi session flags, gemini approval/effort flags, subagent types, guidance skills, hooks).
