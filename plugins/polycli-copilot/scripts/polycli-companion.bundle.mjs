@@ -1144,7 +1144,9 @@ var DEFAULT_TIMEOUT_MS3 = 3e5;
 var AUTH_CHECK_TIMEOUT_MS3 = 3e4;
 var PROMPT_STDIN_THRESHOLD2 = 1e5;
 var GEMINI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var GEMINI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
 function buildGeminiInvocation({
   prompt,
   model = null,
@@ -1261,7 +1263,7 @@ function buildGeminiAuthStatus(test) {
   if (GEMINI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (GEMINI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: null };
   }
   return { loggedIn: false, detail };
@@ -1378,7 +1380,9 @@ var DEFAULT_TIMEOUT_MS4 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS4 = 3e4;
 var PROMPT_STDIN_THRESHOLD_BYTES = 1e5;
 var KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var KIMI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS2 = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
 var KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path.join(os.homedir(), ".kimi", "config.toml");
 function readKimiDefaultModel() {
   try {
@@ -1467,7 +1471,7 @@ function buildKimiAuthStatus(result) {
   if (KIMI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (KIMI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS2.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? configModel };
   }
   return { loggedIn: false, detail };
@@ -1593,7 +1597,9 @@ var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PROXY_KEYS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
 var NO_PROXY_DEFAULTS = ["localhost", "127.0.0.1"];
 var QWEN_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var QWEN_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS3 = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
 var ENV_ALLOW_EXACT = /* @__PURE__ */ new Set([
   "PATH",
   "HOME",
@@ -1801,7 +1807,7 @@ function buildQwenAuthStatus(pingResult) {
   if (QWEN_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (QWEN_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS3.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: pingResult.model ?? null };
   }
   return { loggedIn: false, detail };
@@ -2229,7 +2235,9 @@ var DEFAULT_TIMEOUT_MS7 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS7 = 3e4;
 var SESSION_EXPORT_TIMEOUT_MS = 3e4;
 var OPENCODE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var OPENCODE_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS4 = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
 function collectOpenCodeContentText(content) {
   if (typeof content === "string") {
     return content;
@@ -2431,7 +2439,7 @@ function buildOpenCodeAuthStatus(result) {
   if (OPENCODE_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (OPENCODE_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS4.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
   }
   return { loggedIn: false, detail };
@@ -2563,7 +2571,9 @@ var DEFAULT_PI_MODEL = "openai-codex/gpt-5.4";
 var DEFAULT_TIMEOUT_MS8 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS8 = 3e4;
 var PI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var PI_TRANSIENT_PROBE_ERROR_RE = /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS5 = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
 function collectPiContentText(content) {
   if (typeof content === "string") {
     return content;
@@ -2691,7 +2701,7 @@ function buildPiAuthStatus(result) {
   if (PI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (PI_TRANSIENT_PROBE_ERROR_RE.test(detail)) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS5.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? DEFAULT_PI_MODEL };
   }
   return { loggedIn: false, detail };
