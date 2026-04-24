@@ -21,7 +21,7 @@ test("normalizeReviewScope defaults to auto and rejects bad values", () => {
 test("buildReviewPrompt includes adversarial and truncation guidance", () => {
   const prompt = buildReviewPrompt({
     provider: "gemini",
-    diff: "diff --git a/a b/a",
+    diff: "diff --git a/a b/a\n@@ -1 +1 @@\n+import x from \"@scope/pkg\";",
     focus: "auth",
     adversarial: true,
     truncated: true,
@@ -32,9 +32,21 @@ test("buildReviewPrompt includes adversarial and truncation guidance", () => {
   assert.match(prompt, /Extra focus from user: auth/);
   assert.match(prompt, /Diff truncated to 100 bytes/);
   assert.match(prompt, /diff --git a\/a b\/a/);
+  assert.match(prompt, /\\@\\@ -1 \+1 \\@\\@/);
+  assert.match(prompt, /"\\@scope\/pkg"/);
   assert.match(prompt, /must contain a visible final answer/i);
   assert.match(prompt, /No issues found\./);
   assert.match(prompt, /Do not run tools, commands, or tests/i);
+});
+
+test("buildReviewPrompt leaves non-gemini diff at signs unescaped", () => {
+  const prompt = buildReviewPrompt({
+    provider: "qwen",
+    diff: "@@ -1 +1 @@\n+import x from \"@scope/pkg\";",
+  });
+
+  assert.match(prompt, /@@ -1 \+1 @@/);
+  assert.match(prompt, /"@scope\/pkg"/);
 });
 
 test("buildReviewRuntimeOptions applies claude hard constraints", () => {
@@ -46,19 +58,23 @@ test("buildReviewRuntimeOptions applies claude hard constraints", () => {
   assert.deepEqual(options.extraArgs, ["--max-turns", "1", "--tools", ""]);
 });
 
-test("buildReviewRuntimeOptions applies gemini deny-all policy", () => {
+test("buildReviewRuntimeOptions isolates gemini review without policy", () => {
   const options = buildReviewRuntimeOptions({
     provider: "gemini",
     cwd: process.cwd(),
   });
 
   assert.equal(options.approvalMode, "plan");
-  const policyIndex = options.extraArgs.indexOf("--policy");
-  assert.notEqual(policyIndex, -1);
-  const policyPath = options.extraArgs[policyIndex + 1];
-  const policyText = fs.readFileSync(policyPath, "utf8");
-  assert.match(policyText, /toolName = "\*"/);
-  assert.match(policyText, /decision = "deny"/);
+  assert.notEqual(options.cwd, process.cwd());
+  assert.equal(fs.statSync(options.cwd).isDirectory(), true);
+  assert.deepEqual(options.cleanupPaths, [options.cwd]);
+  const extensionsIndex = options.extraArgs.indexOf("--extensions");
+  assert.notEqual(extensionsIndex, -1);
+  assert.equal(options.extraArgs[extensionsIndex + 1], "");
+  const mcpIndex = options.extraArgs.indexOf("--allowed-mcp-server-names");
+  assert.notEqual(mcpIndex, -1);
+  assert.equal(options.extraArgs[mcpIndex + 1], "__polycli_review_no_mcp__");
+  assert.equal(options.extraArgs.includes("--policy"), false);
 });
 
 test("buildReviewRuntimeOptions applies copilot tool-exclusion hard constraints", () => {

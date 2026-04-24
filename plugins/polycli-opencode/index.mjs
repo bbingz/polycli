@@ -17,7 +17,7 @@ function runCompanion(argv) {
 export const PolycliPlugin = async () => ({
   tool: {
     polycli_run: tool({
-      description: "Run a polycli companion subcommand such as setup, ask, rescue, review, status, result, cancel, or timing.",
+      description: "Run a polycli companion subcommand such as setup, health, ask, rescue, review, status, result, cancel, or timing.",
       args: {
         argv: tool.schema.array(tool.schema.string()),
       },

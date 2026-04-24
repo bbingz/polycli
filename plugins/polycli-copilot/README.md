@@ -14,12 +14,11 @@ copilot plugin install polycli-copilot@polycli-hosts
 Invoke the installed `polycli` skill with:
 
 ```text
-polycli setup --provider qwen
-polycli ask --provider qwen Reply with OK only.
+polycli health
 polycli timing --provider qwen --json
 ```
 
-If the first command shows the provider is unavailable or unauthenticated, fix that provider CLI first. The Copilot host adapter only wraps the shared companion.
+Run `health` once after install, login, or provider config changes. With no provider it probes every integrated provider and reports `healthyProviders`; use `--provider` only for single-provider diagnosis. Normal `ask`, `review`, and `rescue` calls should run directly with `--provider`. If `health` shows the provider is unavailable or the probe fails, fix that provider CLI first. The Copilot host adapter only wraps the shared companion.
 
 ## What It Exposes
 
@@ -30,6 +29,7 @@ The skill runs the bundled companion at `scripts/polycli-companion.bundle.mjs`, 
 ## Supported Subcommands
 
 - `setup`
+- `health`
 - `ask`
 - `rescue`
 - `review`
@@ -43,6 +43,7 @@ The skill runs the bundled companion at `scripts/polycli-companion.bundle.mjs`, 
 
 ```text
 polycli setup --provider gemini
+polycli health
 polycli ask --provider kimi Explain this stack trace
 polycli rescue --provider qwen --background Audit the flaky test and explain the root cause
 polycli review --provider gemini --scope staged

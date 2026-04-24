@@ -20,8 +20,9 @@ export function buildGeminiInvocation({
   extraArgs = [],
   bin = GEMINI_BIN,
 } = {}) {
-  const useStdin = String(prompt ?? "").length > PROMPT_STDIN_THRESHOLD;
-  const args = ["-p", useStdin ? "" : String(prompt ?? ""), "-o", outputFormat];
+  const promptText = String(prompt ?? "");
+  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD;
+  const args = ["-p", useStdin ? "" : promptText, "-o", outputFormat];
 
   if (model) args.push("-m", model);
   args.push("--approval-mode", approvalMode);
@@ -31,7 +32,7 @@ export function buildGeminiInvocation({
   return {
     bin,
     args,
-    input: useStdin ? String(prompt ?? "") : undefined,
+    input: useStdin ? promptText : undefined,
     useStdin,
   };
 }

@@ -307,13 +307,20 @@ export function runClaudePromptStreaming({
     const resultError = isClaudeErrorResultEvent(parsed.resultEvent)
       ? getClaudeErrorText(parsed.resultEvent)
       : null;
+    const hasSuccessfulResult = Boolean(
+      parsed.resultEvent
+      && parsed.resultEvent.type === "result"
+      && !isClaudeErrorResultEvent(parsed.resultEvent)
+    );
+    const completed = result.ok || (result.timedOut && hasSuccessfulResult);
 
     return {
       ...result,
       ...parsed,
+      timedOut: completed ? false : result.timedOut,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-      ok: result.ok && !resultError && hasVisibleText,
-      error: result.ok
+      ok: completed && !resultError && hasVisibleText,
+      error: completed
         ? (resultError || (hasVisibleText ? null : "claude produced no visible text"))
         : result.error,
     };

@@ -10,7 +10,7 @@
     "Reply with exactly HELLO_PI_FIXTURE and nothing else."
   ],
   "expected": {
-    "response": "HELLO_PI_FIXTUREHELLO_PI_FIXTUREHELLO_PI_FIXTUREHELLO_PI_FIXTURE",
+    "response": "HELLO_PI_FIXTURE",
     "sessionId": "019db537-563f-779e-beb0-0cf79e81e5c8"
   }
 }

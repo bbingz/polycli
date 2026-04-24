@@ -146,6 +146,10 @@ test("extractQwenText ignores error result events", () => {
     extractQwenText({ type: "result", subtype: "error", is_error: true, result: "permission denied" }),
     ""
   );
+  assert.equal(
+    extractQwenText({ type: "result", subtype: "error", result: "permission denied" }),
+    ""
+  );
 });
 
 test("parseQwenStreamText does not treat error result text as a successful response", () => {
@@ -163,6 +167,22 @@ test("parseQwenStreamText does not treat error result text as a successful respo
     type: "result",
     subtype: "error",
     is_error: true,
+    result: "permission denied",
+  });
+});
+
+test("parseQwenStreamText treats subtype-only result errors as failures", () => {
+  const parsed = parseQwenStreamText(
+    [
+      '{"type":"system","subtype":"init","session_id":"q-subtype-err","model":"qwen-max"}',
+      '{"type":"result","subtype":"error","result":"permission denied"}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "");
+  assert.deepEqual(parsed.resultEvent, {
+    type: "result",
+    subtype: "error",
     result: "permission denied",
   });
 });
@@ -192,6 +212,26 @@ test("runQwenPrompt surfaces result-only errors", () => {
     `#!/usr/bin/env node
 process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "q-sync-2", model: "qwen-test" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "result", subtype: "error", result: "permission denied", is_error: true }) + "\\n");
+`,
+    ({ root, env }) => {
+      const result = runQwenPrompt({
+        prompt: "ping",
+        cwd: root,
+        env,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.response, "");
+      assert.equal(result.error, "permission denied");
+    }
+  );
+});
+
+test("runQwenPrompt surfaces subtype-only result errors", () => {
+  withFakeQwenBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "q-sync-subtype-err", model: "qwen-test" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "error", result: "permission denied" }) + "\\n");
 `,
     ({ root, env }) => {
       const result = runQwenPrompt({
@@ -352,6 +392,30 @@ test("runQwenPromptStreaming surfaces result-event errors when the process exits
       queueMicrotask(() => {
         child.stdout.emit("data", '{"type":"system","subtype":"init","session_id":"q-4","model":"qwen-test"}\n');
         child.stdout.emit("data", '{"type":"result","subtype":"error","is_error":true,"result":"permission denied"}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "permission denied");
+});
+
+test("runQwenPromptStreaming surfaces subtype-only result errors", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+  child.unref = () => {};
+
+  const result = await runQwenPromptStreaming({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"system","subtype":"init","session_id":"q-4b","model":"qwen-test"}\n');
+        child.stdout.emit("data", '{"type":"result","subtype":"error","result":"permission denied"}\n');
         child.emit("close", 0, null);
       });
       return child;

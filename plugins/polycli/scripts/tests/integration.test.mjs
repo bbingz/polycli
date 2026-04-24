@@ -31,7 +31,7 @@ if (process.env.QWEN_ARGV_LOG) {
 }
 const prompt = args.at(-1) || "";
 const delayMatch = prompt.match(/__delay=(\\d+)/);
-const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : 0;
+const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : Number.parseInt(process.env.QWEN_DELAY_MS || "0", 10);
 const tailDelayMatch = prompt.match(/__tail=(\\d+)/);
 const tailDelay = tailDelayMatch ? Number.parseInt(tailDelayMatch[1], 10) : 0;
 const toolDelayMatch = prompt.match(/__toolDelay=(\\d+)/);
@@ -39,6 +39,8 @@ const toolDelay = toolDelayMatch ? Number.parseInt(toolDelayMatch[1], 10) : 0;
 const useTool = prompt.includes("__tool=1");
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
 const reply = process.env.QWEN_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
+const appendSystemIndex = args.indexOf("--append-system-prompt");
+const hasAppendSystem = appendSystemIndex >= 0 && Boolean(args[appendSystemIndex + 1]);
 (async () => {
   process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "11111111-1111-1111-1111-111111111111", model: "qwen-test" }) + "\\n");
   if (delay > 0) await sleep(delay);
@@ -46,6 +48,14 @@ const reply = process.env.QWEN_FIXED_REPLY || (replyMatch ? replyMatch[1] : prom
     process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "tool-1", name: "shell", input: { cmd: "pwd" } }] } }) + "\\n");
     if (toolDelay > 0) await sleep(toolDelay);
     process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_result", tool_use_id: "tool-1", content: "ok", is_error: false }] } }) + "\\n");
+  }
+  if (process.env.QWEN_REQUIRE_APPEND_SYSTEM === "1" && !hasAppendSystem) {
+    process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "thinking", thinking: "missing final-answer constraint" }] } }) + "\\n");
+    process.stdout.write(JSON.stringify({ type: "result", result: "", is_error: false, permission_denials: [] }) + "\\n");
+    return;
+  }
+  if (process.env.QWEN_EMIT_THINKING === "1") {
+    process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "thinking", thinking: "thinking before final" }] } }) + "\\n");
   }
   if (process.env.QWEN_RESULT_ONLY !== "1") {
     process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: reply }] } }) + "\\n");
@@ -81,7 +91,7 @@ const args = process.argv.slice(2);
     process.exit(0);
   }
   if (process.env.GEMINI_ARGV_LOG) {
-    fs.writeFileSync(process.env.GEMINI_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
+    fs.writeFileSync(process.env.GEMINI_ARGV_LOG, JSON.stringify({ argv: args, cwd: process.cwd() }) + "\\n");
   }
   const outputFormat = args[args.indexOf("-o") + 1] || "json";
   const prompt = args[args.indexOf("-p") + 1] || "";
@@ -137,8 +147,9 @@ if (process.env.KIMI_ARGV_LOG) {
 }
 const promptIndex = args.indexOf("-p");
 const prompt = promptIndex >= 0 ? (args[promptIndex + 1] || "") : "ping";
+const noThinking = args.includes("--no-thinking");
 const delayMatch = prompt.match(/__delay=(\\d+)/);
-const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : 0;
+const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : Number.parseInt(process.env.KIMI_DELAY_MS || "0", 10);
 const tailDelayMatch = prompt.match(/__tail=(\\d+)/);
 const tailDelay = tailDelayMatch ? Number.parseInt(tailDelayMatch[1], 10) : 0;
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
@@ -146,8 +157,14 @@ const reply = process.env.KIMI_FIXED_REPLY || (replyMatch ? replyMatch[1] : prom
 (async () => {
   process.stderr.write("To resume: kimi -r 33333333-3333-4333-8333-333333333333\\n");
   if (delay > 0) await sleep(delay);
+  if (process.env.KIMI_REQUIRE_NO_THINKING === "1" && !noThinking) {
+    process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "think", think: "missing no-thinking constraint" }] }) + "\\n");
+    return;
+  }
   if (process.env.KIMI_CONTENT_MODE === "string") {
     process.stdout.write(JSON.stringify({ role: "assistant", content: reply }) + "\\n");
+  } else if (process.env.KIMI_EMIT_THINKING === "1" && !noThinking) {
+    process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "think", think: "thinking before final" }, { type: "text", text: reply }] }) + "\\n");
   } else {
     process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "text", text: reply }] }) + "\\n");
   }
@@ -513,6 +530,241 @@ test("integration: setup reports qwen as available when fake binary is configure
   }
 });
 
+test("integration: health verifies qwen with an end-to-end probe and records timing", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeQwenBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+      QWEN_FIXED_REPLY: "POLYCLI_HEALTH_OK",
+    });
+    const health = await runCompanion(["health", "--json", "--provider", "qwen"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(health.code, 0, health.stderr);
+    const payload = JSON.parse(health.stdout);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.anyHealthy, true);
+    assert.equal(payload.allHealthy, true);
+    assert.deepEqual(payload.healthyProviders, ["qwen"]);
+    assert.deepEqual(payload.unhealthyProviders, []);
+    assert.equal(payload.results.length, 1);
+    const report = payload.results[0];
+    assert.equal(report.provider, "qwen");
+    assert.equal(report.available, true);
+    assert.equal(report.loggedIn, null);
+    assert.equal(report.authDetail, "not checked by health");
+    assert.equal(report.probe.ok, true);
+    assert.equal(report.probe.responseMatched, true);
+    assert.equal(report.probe.responsePreview, "POLYCLI_HEALTH_OK");
+    assert.ok(report.probe.timing, "health result should include timing");
+
+    const timing = await runCompanion(["timing", "--json", "--provider", "qwen", "--history", "1"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(timing.code, 0, timing.stderr);
+    const timingPayload = JSON.parse(timing.stdout);
+    assert.equal(timingPayload.records.length, 1);
+    assert.equal(timingPayload.records[0].kind, "health");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: health exits nonzero when the provider probe does not match", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeQwenBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+      QWEN_FIXED_REPLY: "WRONG",
+    });
+    const health = await runCompanion(["health", "--json", "--provider", "qwen"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(health.code, 2);
+    const payload = JSON.parse(health.stdout);
+    assert.equal(payload.ok, false);
+    assert.equal(payload.anyHealthy, false);
+    assert.equal(payload.allHealthy, false);
+    assert.deepEqual(payload.healthyProviders, []);
+    assert.deepEqual(payload.unhealthyProviders, ["qwen"]);
+    const report = payload.results[0];
+    assert.equal(report.probe.ok, true);
+    assert.equal(report.probe.responseMatched, false);
+    assert.equal(report.probe.responsePreview, "WRONG");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: health does not wait for a provider auth probe", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeGeminiBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      GEMINI_CLI_BIN: fake.bin,
+      GEMINI_FIXED_REPLY: "POLYCLI_HEALTH_OK",
+      GEMINI_PING_DELAY_MS: "31000",
+    });
+    const startedAt = Date.now();
+    const health = await runCompanion(["health", "--json", "--provider", "gemini"], {
+      cwd: process.cwd(),
+      env,
+      timeout: 5_000,
+    });
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(health.code, 0, health.stderr);
+    assert.equal(elapsedMs < 5_000, true, `health waited for auth probe, took ${elapsedMs}ms`);
+    const payload = JSON.parse(health.stdout);
+    assert.equal(payload.ok, true);
+    const report = payload.results[0];
+    assert.equal(report.loggedIn, null);
+    assert.equal(report.authDetail, "not checked by health");
+    assert.equal(report.probe.ok, true);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: health rejects --model without a single provider", async () => {
+  const health = await runCompanion(["health", "--json", "--model", "provider-specific-model"], {
+    cwd: process.cwd(),
+  });
+
+  assert.equal(health.code, 1);
+  assert.match(health.stderr, /--model requires --provider/i);
+});
+
+test("integration: health without provider returns every healthy provider", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fakeQwen = createFakeQwenBin();
+  const fakeKimi = createFakeKimiBin();
+  const missingBin = path.join(pluginData, "missing-provider-bin");
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      CLAUDE_CLI_BIN: missingBin,
+      COPILOT_CLI_BIN: missingBin,
+      GEMINI_CLI_BIN: missingBin,
+      KIMI_CLI_BIN: fakeKimi.bin,
+      MINI_AGENT_BIN: missingBin,
+      OPENCODE_CLI_BIN: missingBin,
+      PI_CLI_BIN: missingBin,
+      QWEN_CLI_BIN: fakeQwen.bin,
+      QWEN_FIXED_REPLY: "POLYCLI_HEALTH_OK",
+      KIMI_FIXED_REPLY: "WRONG",
+    });
+    const health = await runCompanion(["health", "--json"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(health.code, 0, health.stderr);
+    const payload = JSON.parse(health.stdout);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.anyHealthy, true);
+    assert.equal(payload.allHealthy, false);
+    assert.deepEqual(payload.healthyProviders, ["qwen"]);
+    assert.deepEqual(payload.unhealthyProviders.sort(), ["claude", "copilot", "gemini", "kimi", "minimax", "opencode", "pi"].sort());
+    assert.equal(payload.results.length, 8);
+    assert.equal(payload.results.find((result) => result.provider === "qwen").ok, true);
+    assert.equal(payload.results.find((result) => result.provider === "kimi").ok, false);
+    assert.equal(payload.results.find((result) => result.provider === "kimi").probe.responseMatched, false);
+  } finally {
+    fakeQwen.cleanup();
+    fakeKimi.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: health without provider probes providers concurrently", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fakeQwen = createFakeQwenBin();
+  const fakeKimi = createFakeKimiBin();
+  const missingBin = path.join(pluginData, "missing-provider-bin");
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      CLAUDE_CLI_BIN: missingBin,
+      COPILOT_CLI_BIN: missingBin,
+      GEMINI_CLI_BIN: missingBin,
+      KIMI_CLI_BIN: fakeKimi.bin,
+      MINI_AGENT_BIN: missingBin,
+      OPENCODE_CLI_BIN: missingBin,
+      PI_CLI_BIN: missingBin,
+      QWEN_CLI_BIN: fakeQwen.bin,
+      QWEN_FIXED_REPLY: "POLYCLI_HEALTH_OK",
+      KIMI_FIXED_REPLY: "POLYCLI_HEALTH_OK",
+      QWEN_DELAY_MS: "600",
+      KIMI_DELAY_MS: "600",
+    });
+    const startedAt = Date.now();
+    const health = await runCompanion(["health", "--json"], {
+      cwd: process.cwd(),
+      env,
+    });
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(health.code, 0, health.stderr);
+    assert.equal(elapsedMs < 3_000, true, `expected concurrent probes, took ${elapsedMs}ms`);
+
+    const timing = await runCompanion(["timing", "--json", "--history", "10"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(timing.code, 0, timing.stderr);
+    const timingPayload = JSON.parse(timing.stdout);
+    const healthProviders = timingPayload.records
+      .filter((record) => record.kind === "health")
+      .map((record) => record.provider)
+      .sort();
+    assert.deepEqual(healthProviders, ["kimi", "qwen"]);
+  } finally {
+    fakeQwen.cleanup();
+    fakeKimi.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: ask constrains qwen to emit a visible final answer", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "qwen-ask-argv.jsonl");
+  const fake = createFakeQwenBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+      QWEN_ARGV_LOG: argLog,
+      QWEN_REQUIRE_APPEND_SYSTEM: "1",
+      QWEN_EMIT_THINKING: "1",
+      QWEN_FIXED_REPLY: "QWEN_ASK_OK",
+    });
+    const ask = await runCompanion(
+      ["ask", "--provider", "qwen", "--json", "__reply=PONG"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(ask.code, 0, ask.stderr);
+    const payload = JSON.parse(ask.stdout);
+    assert.equal(payload.response, "QWEN_ASK_OK");
+
+    const logged = readJsonLine(argLog);
+    const argv = logged.argv.join(" ");
+    assert.match(argv, /--max-session-turns 1/);
+    assert.match(argv, /--append-system-prompt/);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
 test("integration: setup and ask succeed for gemini via bundled companion", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   const fake = createFakeGeminiBin();
@@ -582,6 +834,36 @@ test("integration: setup and ask succeed for kimi via bundled companion", async 
     assert.equal(askPayload.timing.metrics.gen.status, "measured");
     assert.equal(askPayload.timing.metrics.tail.status, "measured");
     assert.equal(askPayload.timing.metrics.tool.status, "unsupported");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: ask constrains kimi to a visible non-thinking answer", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "kimi-ask-argv.jsonl");
+  const fake = createFakeKimiBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      KIMI_CLI_BIN: fake.bin,
+      KIMI_ARGV_LOG: argLog,
+      KIMI_REQUIRE_NO_THINKING: "1",
+      KIMI_FIXED_REPLY: "KIMI_ASK_OK",
+    });
+    const ask = await runCompanion(
+      ["ask", "--provider", "kimi", "--json", "__reply=PONG"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(ask.code, 0, ask.stderr);
+    const payload = JSON.parse(ask.stdout);
+    assert.equal(payload.response, "KIMI_ASK_OK");
+
+    const logged = readJsonLine(argLog);
+    const argv = logged.argv.join(" ");
+    assert.match(argv, /--no-thinking/);
+    assert.match(argv, /--max-steps-per-turn 1/);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
@@ -684,6 +966,18 @@ test("integration: review --background preserves qwen runtime options and stored
     assert.equal(stored.code, 0, stored.stderr);
     const payload = JSON.parse(stored.stdout);
     assert.equal(payload.result.response, "BACKGROUND_QWEN_OK");
+    assert.equal(payload.result.stdout, undefined);
+    assert.equal(payload.result.stderr, undefined);
+    assert.equal(payload.result.events, undefined);
+    assert.equal(typeof payload.result.stdoutBytes, "number");
+    assert.equal(
+      payload.result.stderrBytes === undefined || typeof payload.result.stderrBytes === "number",
+      true
+    );
+    assert.equal(
+      payload.result.eventCount === undefined || typeof payload.result.eventCount === "number",
+      true
+    );
 
     const logged = JSON.parse(fs.readFileSync(argLog, "utf8").trim());
     const argv = logged.argv.join(" ");
@@ -804,7 +1098,7 @@ test("integration: review constrains claude to one turn with no tools", async ()
   }
 });
 
-test("integration: review constrains gemini with a deny-all policy file", async () => {
+test("integration: review constrains gemini with isolated cwd and disabled extensions/mcp", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   const argLog = path.join(pluginData, "gemini-review-argv.jsonl");
   const fake = createFakeGeminiBin();
@@ -824,12 +1118,16 @@ test("integration: review constrains gemini with a deny-all policy file", async 
     assert.equal(payload.response, "GEMINI_REVIEW_OK");
 
     const logged = readJsonLine(argLog);
+    assert.notEqual(logged.cwd, process.cwd());
+    assert.equal(fs.existsSync(logged.cwd), false);
     assert.match(logged.argv.join(" "), /--approval-mode plan/);
-    const policyIndex = logged.argv.indexOf("--policy");
-    assert.notEqual(policyIndex, -1);
-    const policyText = fs.readFileSync(logged.argv[policyIndex + 1], "utf8");
-    assert.match(policyText, /toolName = "\*"/);
-    assert.match(policyText, /decision = "deny"/);
+    const extensionsIndex = logged.argv.indexOf("--extensions");
+    assert.notEqual(extensionsIndex, -1);
+    assert.equal(logged.argv[extensionsIndex + 1], "");
+    const mcpIndex = logged.argv.indexOf("--allowed-mcp-server-names");
+    assert.notEqual(mcpIndex, -1);
+    assert.equal(logged.argv[mcpIndex + 1], "__polycli_review_no_mcp__");
+    assert.equal(logged.argv.includes("--policy"), false);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });

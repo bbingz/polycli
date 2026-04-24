@@ -10,6 +10,7 @@ const REVIEW_SCOPES = new Set(["auto", "staged", "unstaged", "working-tree", "br
 const REVIEW_APPEND_SYSTEM =
   "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
 const REVIEW_CONSTRAINT_ERROR = "non-overridable review hard constraints";
+const GEMINI_REVIEW_DISABLED_MCP_NAME = "__polycli_review_no_mcp__";
 const COPILOT_REVIEW_EXCLUDED_TOOLS = [
   "bash",
   "read_bash",
@@ -54,6 +55,10 @@ function writeReviewTempFile(prefix, extension, text) {
   return filePath;
 }
 
+function makeReviewTempDir(prefix) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), `polycli-review-${prefix}-`));
+}
+
 function readYamlScalar(text, key) {
   const match = String(text ?? "").match(new RegExp(`^${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^#\\n]+))`, "m"));
   return match ? (match[1] ?? match[2] ?? match[3]?.trim() ?? null) : null;
@@ -73,17 +78,6 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   if (provider === "qwen" && runtimeOptions.maxSteps !== undefined && runtimeOptions.maxSteps !== 1) {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
-}
-
-function buildGeminiReviewPolicy() {
-  return writeReviewTempFile("gemini-policy", ".toml", [
-    "[[rule]]",
-    'toolName = "*"',
-    'decision = "deny"',
-    "priority = 999",
-    "interactive = false",
-    "",
-  ].join("\n"));
 }
 
 function buildMiniMaxReviewEnv(parentEnv = process.env) {
@@ -131,9 +125,12 @@ const REVIEW_HARD_CONSTRAINTS = {
     return { extraArgs: ["--max-turns", "1", "--tools", ""] };
   },
   gemini() {
+    const cwd = makeReviewTempDir("gemini-cwd");
     return {
       approvalMode: "plan",
-      extraArgs: ["--policy", buildGeminiReviewPolicy()],
+      cwd,
+      cleanupPaths: [cwd],
+      extraArgs: ["--extensions", "", "--allowed-mcp-server-names", GEMINI_REVIEW_DISABLED_MCP_NAME],
     };
   },
   copilot() {
@@ -289,6 +286,10 @@ export function collectReviewContext({ cwd, scope = "auto", baseRef = null, maxD
   };
 }
 
+function escapeGeminiAtCommandSyntax(text) {
+  return String(text ?? "").replace(/(?<!\\)@/g, "\\@");
+}
+
 export function buildReviewPrompt({
   provider,
   diff,
@@ -304,6 +305,9 @@ export function buildReviewPrompt({
   const truncationText = truncated
     ? `Important: ${truncationNotice || "The diff was truncated before review."}`
     : "The diff was not truncated.";
+  const promptDiff = provider === "gemini"
+    ? escapeGeminiAtCommandSyntax(diff || "(empty diff)")
+    : diff || "(empty diff)";
 
   return [
     `You are acting as ${provider} inside polycli.`,
@@ -321,6 +325,6 @@ export function buildReviewPrompt({
     truncationText,
     "",
     "Git diff:",
-    diff || "(empty diff)",
+    promptDiff,
   ].join("\n");
 }

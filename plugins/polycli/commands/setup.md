@@ -16,3 +16,4 @@ Rules:
 - Do not paraphrase provider state into vague prose.
 - If a provider is unavailable or unauthenticated, report its `authDetail` / `availabilityDetail`.
 - Do not auto-install anything.
+- This is a diagnostic command, not a required preflight before every prompt-bearing command.

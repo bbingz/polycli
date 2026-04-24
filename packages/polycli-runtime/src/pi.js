@@ -4,6 +4,7 @@ import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const PI_BIN = process.env.PI_CLI_BIN || "pi";
+const DEFAULT_PI_MODEL = "openai-codex/gpt-5.4";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const PI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
@@ -34,8 +35,9 @@ export function buildPiInvocation({
   bin = PI_BIN,
 } = {}) {
   const args = ["--print", "--mode", mode];
+  const effectiveModel = model ?? DEFAULT_PI_MODEL;
 
-  if (model) args.push("--model", model);
+  if (effectiveModel) args.push("--model", effectiveModel);
   if (resumeSessionId) args.push("--session", resumeSessionId);
   else if (continueLast) args.push("--continue");
   if (noSession) args.push("--no-session");
@@ -65,9 +67,38 @@ export function extractPiText(event) {
   return collectPiContentText(event.content ?? event.message?.content);
 }
 
+function extractPiStreamDelta(event) {
+  if (event.assistantMessageEvent?.type === "text_delta" && typeof event.assistantMessageEvent.delta === "string") {
+    return event.assistantMessageEvent.delta;
+  }
+  return "";
+}
+
+function extractPiTerminalText(event) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+
+  if (event.type === "agent_end" && typeof event.result?.text === "string") {
+    return event.result.text;
+  }
+
+  if (event.type !== "message_end" && event.type !== "turn_end" && event.type !== "agent_end") {
+    return "";
+  }
+
+  const role = event.role ?? event.message?.role ?? null;
+  if (role && role !== "assistant") {
+    return "";
+  }
+
+  return collectPiContentText(event.content ?? event.message?.content);
+}
+
 export function parsePiStreamText(text) {
   const events = [];
-  let response = "";
+  let streamedResponse = "";
+  let terminalResponse = "";
   let sessionId = null;
   let model = null;
   let resultEvent = null;
@@ -91,16 +122,29 @@ export function parsePiStreamText(text) {
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (event.type === "agent_end") {
       resultEvent = event;
-      if (!response.trim()) {
-        response += extractPiText(event);
-      }
+    }
+
+    const streamDelta = extractPiStreamDelta(event);
+    if (streamDelta) {
+      streamedResponse += streamDelta;
       continue;
     }
 
-    response += extractPiText(event);
+    const terminalText = extractPiTerminalText(event);
+    if (terminalText) {
+      terminalResponse = terminalText;
+    }
   }
 
-  return { events, response, sessionId, model, resultEvent };
+  const response = terminalResponse || streamedResponse;
+
+  return {
+    events,
+    response,
+    sessionId,
+    model,
+    resultEvent,
+  };
 }
 
 export function getPiAvailability(cwd) {

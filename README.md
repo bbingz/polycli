@@ -54,8 +54,7 @@ claude plugin install polycli@polycli-hosts
 第一次验证：
 
 ```text
-/polycli:setup --provider qwen
-/polycli:ask --provider qwen Reply with OK only.
+/polycli:health
 /polycli:timing --provider qwen
 ```
 
@@ -70,8 +69,7 @@ codex plugin marketplace add bbingz/polycli
 第一次验证：
 
 ```text
-/polycli-codex:polycli setup --provider qwen
-/polycli-codex:polycli ask --provider qwen "Reply with OK only."
+/polycli-codex:polycli health
 /polycli-codex:polycli timing --provider qwen --json
 ```
 
@@ -87,8 +85,7 @@ copilot plugin install polycli-copilot@polycli-hosts
 第一次验证：
 
 ```text
-polycli setup --provider qwen
-polycli ask --provider qwen Reply with OK only.
+polycli health
 polycli timing --provider qwen --json
 ```
 
@@ -102,8 +99,7 @@ opencode plugin @bbingz/polycli-opencode
 
 第一次验证思路：
 
-- 运行 `polycli_run`，参数传 `["setup","--provider","qwen","--json"]`
-- 再运行 `polycli_run`，参数传 `["ask","--provider","qwen","Reply with OK only.","--json"]`
+- 运行 `polycli_run`，参数传 `["health","--json"]`
 - 或直接运行 `polycli_timing` 读取 timing 记录
 
 ## User Mental Model
@@ -111,6 +107,7 @@ opencode plugin @bbingz/polycli-opencode
 无论宿主是什么，`polycli` 都是同一套命令面：
 
 - `setup`: 检查 provider CLI 是否安装、是否已登录
+- `health`: 对 provider 做端到端短 prompt 探测，返回 `healthyProviders`，并写入 timing
 - `ask`: 单次提问
 - `rescue`: 长一点的排障/分析任务
 - `review`: 基于当前 git diff 做代码审查
@@ -120,12 +117,23 @@ opencode plugin @bbingz/polycli-opencode
 - `cancel`: 取消后台 job
 - `timing`: 查看 timing 历史和聚合
 
-第一次上手时，推荐顺序固定为：
+第一次接入某个 provider、登录状态变化、或 provider 命令失败时，跑一次：
 
-1. `setup --provider <provider>`
-2. `ask --provider <provider> ...`
-3. 需要长任务时再用 `--background` 配合 `status/result`
-4. 最后用 `timing` 看记录是否已经落库
+```text
+health
+```
+
+它会检查所有 integrated provider。只诊断单个 provider 时再传 `health --provider <provider>`。
+
+日常使用不需要每次先跑 `setup` 或 `health`。provider 已出现在 `healthyProviders` 后，直接运行：
+
+```text
+ask --provider <provider> ...
+review --provider <provider> ...
+rescue --provider <provider> ...
+```
+
+`setup --provider <provider>` 是更便宜的诊断命令，只检查安装和认证状态，不发送模型请求。需要长任务时再用 `--background` 配合 `status/result`，最后用 `timing` 看记录是否已经落库。
 
 ## Background Jobs
 

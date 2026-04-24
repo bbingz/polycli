@@ -30,13 +30,7 @@ Both tools execute the bundled companion. `polycli_run` is the general entrypoin
 Run `polycli_run` with:
 
 ```json
-{"argv":["setup","--provider","qwen","--json"]}
-```
-
-Then:
-
-```json
-{"argv":["ask","--provider","qwen","Reply with OK only.","--json"]}
+{"argv":["health","--json"]}
 ```
 
 Then either:
@@ -49,6 +43,7 @@ Then either:
 `polycli_run` accepts the same subcommands as the other hosts:
 
 - `setup`
+- `health`
 - `ask`
 - `rescue`
 - `review`
@@ -61,5 +56,6 @@ Then either:
 ## Operator Notes
 
 - `--provider` is still required on prompt-bearing commands.
-- `setup` is the fastest way to separate package/plugin problems from provider CLI problems.
+- `health` is the canonical end-to-end provider check after install, login, or provider config changes. With no provider it probes every integrated provider and reports `healthyProviders`; use `--provider` only for single-provider diagnosis. Do not run `setup` or `health` before every normal provider call.
+- `setup` is the cheaper way to separate package/plugin problems from provider CLI problems when you do not want to spend a model request.
 - `minimax` is currently the one integrated provider without session resume support.

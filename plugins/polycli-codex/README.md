@@ -13,8 +13,7 @@ codex plugin marketplace add bbingz/polycli
 Use the installed skill directly:
 
 ```text
-/polycli-codex:polycli setup --provider qwen
-/polycli-codex:polycli ask --provider qwen "Reply with OK only."
+/polycli-codex:polycli health
 /polycli-codex:polycli timing --provider qwen --json
 ```
 
@@ -22,8 +21,10 @@ That sequence verifies:
 
 - the Codex plugin is installed
 - the bundled companion executes correctly
-- the target provider CLI is available and authenticated
+- the target provider CLI can complete a real short prompt
 - timing records are being persisted
+
+Run `health` once after install, login, or provider config changes. With no provider it probes every integrated provider and reports `healthyProviders`; use `--provider` only for single-provider diagnosis. Normal `ask`, `review`, and `rescue` calls should run directly with `--provider`; do not run `setup` before every call.
 
 ## What It Exposes
 
@@ -34,6 +35,7 @@ The skill runs `scripts/polycli-companion.bundle.mjs`, so the plugin remains sel
 ## Supported Subcommands
 
 - `setup`
+- `health`
 - `ask`
 - `rescue`
 - `review`
@@ -47,6 +49,7 @@ The skill runs `scripts/polycli-companion.bundle.mjs`, so the plugin remains sel
 
 ```text
 /polycli-codex:polycli setup --provider gemini
+/polycli-codex:polycli health
 /polycli-codex:polycli ask --provider kimi "Summarize this stack trace"
 /polycli-codex:polycli rescue --provider gemini --background "audit flaky tests"
 /polycli-codex:polycli review --provider qwen --scope staged
@@ -58,5 +61,5 @@ The skill runs `scripts/polycli-companion.bundle.mjs`, so the plugin remains sel
 ## Operator Notes
 
 - Always pass `--provider` on prompt-bearing commands.
-- `setup` is the fastest way to distinguish plugin issues from upstream provider CLI issues.
+- `health` is the canonical end-to-end provider check; `setup` is the cheaper install/auth diagnostic.
 - `status`, `result`, `cancel`, and `timing` are safe read/control commands after a background run.

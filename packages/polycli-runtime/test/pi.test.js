@@ -46,6 +46,37 @@ test("buildPiInvocation targets print json mode with model and session support",
   ]);
 });
 
+test("buildPiInvocation defaults pi to openai-codex/gpt-5.4", () => {
+  const invocation = buildPiInvocation({
+    prompt: "ping",
+  });
+
+  assert.deepEqual(invocation.args, [
+    "--print",
+    "--mode",
+    "json",
+    "--model",
+    "openai-codex/gpt-5.4",
+    "ping",
+  ]);
+});
+
+test("buildPiInvocation defaults pi when model is explicitly null", () => {
+  const invocation = buildPiInvocation({
+    prompt: "ping",
+    model: null,
+  });
+
+  assert.deepEqual(invocation.args, [
+    "--print",
+    "--mode",
+    "json",
+    "--model",
+    "openai-codex/gpt-5.4",
+    "ping",
+  ]);
+});
+
 test("parsePiStreamText collects session id and streaming deltas from json mode", () => {
   const parsed = parsePiStreamText(
     [
@@ -88,6 +119,57 @@ test("parsePiStreamText ignores unrelated text fields", () => {
 
   assert.equal(parsed.response, "done");
   assert.equal(extractPiText({ type: "tool_result", text: "ignore me" }), "");
+});
+
+test("parsePiStreamText does not duplicate repeated terminal assistant summaries", () => {
+  const parsed = parsePiStreamText(
+    [
+      '{"type":"session","id":"pi-live-1","version":3}',
+      '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"OK"}}',
+      '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]}}',
+      '{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]}}',
+      '{"type":"agent_end","result":{"text":"OK"},"messages":[{"role":"assistant","content":[{"type":"text","text":"OK"}]}]}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "OK");
+});
+
+test("parsePiStreamText uses the latest terminal assistant text when there are no deltas", () => {
+  const parsed = parsePiStreamText(
+    [
+      '{"type":"session","id":"pi-terminal-1","version":3}',
+      '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"partial"}]}}',
+      '{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"complete"}]}}',
+      '{"type":"agent_end","result":{"text":"complete final"}}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "complete final");
+});
+
+test("parsePiStreamText prefers a longer terminal result when streaming is partial", () => {
+  const parsed = parsePiStreamText(
+    [
+      '{"type":"session","id":"pi-terminal-2","version":3}',
+      '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"part"}}',
+      '{"type":"agent_end","result":{"text":"partial final"}}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "partial final");
+});
+
+test("parsePiStreamText treats terminal result as authoritative even when shorter than streamed deltas", () => {
+  const parsed = parsePiStreamText(
+    [
+      '{"type":"session","id":"pi-terminal-3","version":3}',
+      '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"draft answer with transient text"}}',
+      '{"type":"agent_end","result":{"text":"final"}}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "final");
 });
 
 test("runPiPrompt returns parsed success payloads", () => {

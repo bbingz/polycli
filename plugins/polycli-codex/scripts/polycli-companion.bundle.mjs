@@ -704,12 +704,17 @@ function runClaudePromptStreaming({
     });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultError = isClaudeErrorResultEvent(parsed.resultEvent) ? getClaudeErrorText(parsed.resultEvent) : null;
+    const hasSuccessfulResult = Boolean(
+      parsed.resultEvent && parsed.resultEvent.type === "result" && !isClaudeErrorResultEvent(parsed.resultEvent)
+    );
+    const completed = result.ok || result.timedOut && hasSuccessfulResult;
     return {
       ...result,
       ...parsed,
+      timedOut: completed ? false : result.timedOut,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-      ok: result.ok && !resultError && hasVisibleText,
-      error: result.ok ? resultError || (hasVisibleText ? null : "claude produced no visible text") : result.error
+      ok: completed && !resultError && hasVisibleText,
+      error: completed ? resultError || (hasVisibleText ? null : "claude produced no visible text") : result.error
     };
   });
 }
@@ -990,8 +995,9 @@ function buildGeminiInvocation({
   extraArgs = [],
   bin = GEMINI_BIN
 } = {}) {
-  const useStdin = String(prompt ?? "").length > PROMPT_STDIN_THRESHOLD2;
-  const args = ["-p", useStdin ? "" : String(prompt ?? ""), "-o", outputFormat];
+  const promptText = String(prompt ?? "");
+  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD2;
+  const args = ["-p", useStdin ? "" : promptText, "-o", outputFormat];
   if (model) args.push("-m", model);
   args.push("--approval-mode", approvalMode);
   if (resumeSessionId) args.push("--resume", resumeSessionId);
@@ -999,7 +1005,7 @@ function buildGeminiInvocation({
   return {
     bin,
     args,
-    input: useStdin ? String(prompt ?? "") : void 0,
+    input: useStdin ? promptText : void 0,
     useStdin
   };
 }
@@ -2261,6 +2267,7 @@ function runOpenCodePromptStreaming({
 
 // packages/polycli-runtime/src/pi.js
 var PI_BIN = process.env.PI_CLI_BIN || "pi";
+var DEFAULT_PI_MODEL = "openai-codex/gpt-5.4";
 var DEFAULT_TIMEOUT_MS8 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS8 = 3e4;
 var PI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
@@ -2285,7 +2292,8 @@ function buildPiInvocation({
   bin = PI_BIN
 } = {}) {
   const args = ["--print", "--mode", mode];
-  if (model) args.push("--model", model);
+  const effectiveModel = model ?? DEFAULT_PI_MODEL;
+  if (effectiveModel) args.push("--model", effectiveModel);
   if (resumeSessionId) args.push("--session", resumeSessionId);
   else if (continueLast) args.push("--continue");
   if (noSession) args.push("--no-session");
@@ -2309,9 +2317,32 @@ function extractPiText(event) {
   }
   return collectPiContentText(event.content ?? event.message?.content);
 }
+function extractPiStreamDelta(event) {
+  if (event.assistantMessageEvent?.type === "text_delta" && typeof event.assistantMessageEvent.delta === "string") {
+    return event.assistantMessageEvent.delta;
+  }
+  return "";
+}
+function extractPiTerminalText(event) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+  if (event.type === "agent_end" && typeof event.result?.text === "string") {
+    return event.result.text;
+  }
+  if (event.type !== "message_end" && event.type !== "turn_end" && event.type !== "agent_end") {
+    return "";
+  }
+  const role = event.role ?? event.message?.role ?? null;
+  if (role && role !== "assistant") {
+    return "";
+  }
+  return collectPiContentText(event.content ?? event.message?.content);
+}
 function parsePiStreamText(text) {
   const events = [];
-  let response = "";
+  let streamedResponse = "";
+  let terminalResponse = "";
   let sessionId = null;
   let model = null;
   let resultEvent = null;
@@ -2332,14 +2363,25 @@ function parsePiStreamText(text) {
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (event.type === "agent_end") {
       resultEvent = event;
-      if (!response.trim()) {
-        response += extractPiText(event);
-      }
+    }
+    const streamDelta = extractPiStreamDelta(event);
+    if (streamDelta) {
+      streamedResponse += streamDelta;
       continue;
     }
-    response += extractPiText(event);
+    const terminalText = extractPiTerminalText(event);
+    if (terminalText) {
+      terminalResponse = terminalText;
+    }
   }
-  return { events, response, sessionId, model, resultEvent };
+  const response = terminalResponse || streamedResponse;
+  return {
+    events,
+    response,
+    sessionId,
+    model,
+    resultEvent
+  };
 }
 function getPiAvailability(cwd) {
   return binaryAvailable(PI_BIN, ["--version"], { cwd });
@@ -3504,6 +3546,32 @@ async function cancelJob(workspaceRoot, jobId) {
   return { cancelled: true, jobId };
 }
 
+// plugins/polycli/scripts/lib/prompt-runtime.mjs
+var PROMPT_FINAL_ANSWER_APPEND_SYSTEM = "Always emit a visible final answer in assistant text. Never finish with reasoning blocks only.";
+function buildPromptRuntimeOptions({
+  provider,
+  kind,
+  runtimeOptions = {}
+} = {}) {
+  if (kind === "ask" && provider === "kimi") {
+    return {
+      ...runtimeOptions,
+      extraArgs: [...runtimeOptions.extraArgs || [], "--no-thinking", "--max-steps-per-turn", "1"]
+    };
+  }
+  if (provider === "qwen") {
+    const merged = {
+      ...runtimeOptions,
+      appendSystem: runtimeOptions.appendSystem || PROMPT_FINAL_ANSWER_APPEND_SYSTEM
+    };
+    if (kind === "ask") {
+      merged.maxSteps = 1;
+    }
+    return merged;
+  }
+  return runtimeOptions;
+}
+
 // plugins/polycli/scripts/lib/providers.mjs
 function resolveProvider({ provider, positionals = [] } = {}) {
   const explicit = provider?.trim();
@@ -3529,6 +3597,7 @@ var DEFAULT_MAX_DIFF_BYTES = 2e5;
 var REVIEW_SCOPES = /* @__PURE__ */ new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
 var REVIEW_APPEND_SYSTEM = "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
 var REVIEW_CONSTRAINT_ERROR = "non-overridable review hard constraints";
+var GEMINI_REVIEW_DISABLED_MCP_NAME = "__polycli_review_no_mcp__";
 var COPILOT_REVIEW_EXCLUDED_TOOLS = [
   "bash",
   "read_bash",
@@ -3569,6 +3638,9 @@ function writeReviewTempFile(prefix, extension, text) {
   fs5.writeFileSync(filePath, text, "utf8");
   return filePath;
 }
+function makeReviewTempDir(prefix) {
+  return fs5.mkdtempSync(path4.join(os3.tmpdir(), `polycli-review-${prefix}-`));
+}
 function readYamlScalar(text, key) {
   const match = String(text ?? "").match(new RegExp(`^${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^#\\n]+))`, "m"));
   return match ? match[1] ?? match[2] ?? match[3]?.trim() ?? null : null;
@@ -3587,16 +3659,6 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   if (provider === "qwen" && runtimeOptions.maxSteps !== void 0 && runtimeOptions.maxSteps !== 1) {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
-}
-function buildGeminiReviewPolicy() {
-  return writeReviewTempFile("gemini-policy", ".toml", [
-    "[[rule]]",
-    'toolName = "*"',
-    'decision = "deny"',
-    "priority = 999",
-    "interactive = false",
-    ""
-  ].join("\n"));
 }
 function buildMiniMaxReviewEnv(parentEnv = process.env) {
   const baseConfigPath = parentEnv.MINI_AGENT_CONFIG_PATH || path4.join(os3.homedir(), ".mini-agent", "config", "config.yaml");
@@ -3640,9 +3702,12 @@ var REVIEW_HARD_CONSTRAINTS = {
     return { extraArgs: ["--max-turns", "1", "--tools", ""] };
   },
   gemini() {
+    const cwd = makeReviewTempDir("gemini-cwd");
     return {
       approvalMode: "plan",
-      extraArgs: ["--policy", buildGeminiReviewPolicy()]
+      cwd,
+      cleanupPaths: [cwd],
+      extraArgs: ["--extensions", "", "--allowed-mcp-server-names", GEMINI_REVIEW_DISABLED_MCP_NAME]
     };
   },
   copilot() {
@@ -3778,6 +3843,9 @@ function collectReviewContext({ cwd, scope = "auto", baseRef = null, maxDiffByte
     truncationNotice: truncated ? `Diff truncated to ${maxDiffBytes} bytes before sending to provider.` : null
   };
 }
+function escapeGeminiAtCommandSyntax(text) {
+  return String(text ?? "").replace(/(?<!\\)@/g, "\\@");
+}
 function buildReviewPrompt({
   provider,
   diff,
@@ -3789,6 +3857,7 @@ function buildReviewPrompt({
   const modeText = adversarial ? "Run an adversarial code review. Challenge the implementation approach, assumptions, hidden failure modes, and architectural tradeoffs." : "Run a code review. Focus on concrete bugs, regressions, risky behavior changes, and missing tests.";
   const focusText = focus ? `Extra focus from user: ${focus}` : "No extra focus from user.";
   const truncationText = truncated ? `Important: ${truncationNotice || "The diff was truncated before review."}` : "The diff was not truncated.";
+  const promptDiff = provider === "gemini" ? escapeGeminiAtCommandSyntax(diff || "(empty diff)") : diff || "(empty diff)";
   return [
     `You are acting as ${provider} inside polycli.`,
     modeText,
@@ -3805,7 +3874,7 @@ function buildReviewPrompt({
     truncationText,
     "",
     "Git diff:",
-    diff || "(empty diff)"
+    promptDiff
   ].join("\n");
 }
 
@@ -4015,14 +4084,17 @@ var JOB_PREFIXES = {
 var TIMEOUTS_MS = {
   ask: 12e4,
   rescue: 6e5,
-  review: 18e4,
-  "adversarial-review": 18e4
+  review: 3e5,
+  "adversarial-review": 3e5,
+  health: 6e4
 };
+var HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
 function printUsage() {
   console.log(
     [
       "Usage:",
       "  polycli-companion.mjs setup [--provider <provider>] [--json]",
+      "  polycli-companion.mjs health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
       "  polycli-companion.mjs rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>",
       "  polycli-companion.mjs review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--json] [focus ...]",
@@ -4044,6 +4116,33 @@ function output(value, asJson) {
 ` : `${JSON.stringify(value, null, 2)}
 `);
 }
+async function inspectProvider(provider) {
+  const runtime = getProviderRuntime(provider);
+  const availability = await Promise.resolve(runtime.getAvailability(process5.cwd()));
+  const auth = await Promise.resolve(runtime.getAuthStatus(process5.cwd()));
+  return {
+    provider,
+    available: availability.available ?? false,
+    availabilityDetail: availability.detail ?? null,
+    loggedIn: auth.loggedIn ?? false,
+    authDetail: auth.detail ?? auth.reason ?? null,
+    model: auth.model ?? null,
+    capabilities: runtime.capabilities
+  };
+}
+async function inspectProviderAvailability(provider) {
+  const runtime = getProviderRuntime(provider);
+  const availability = await Promise.resolve(runtime.getAvailability(process5.cwd()));
+  return {
+    provider,
+    available: availability.available ?? false,
+    availabilityDetail: availability.detail ?? null,
+    loggedIn: null,
+    authDetail: "not checked by health",
+    model: null,
+    capabilities: runtime.capabilities
+  };
+}
 function createJobId(kind) {
   const prefix = JOB_PREFIXES[kind] || "pj";
   return `${prefix}-${randomUUID2().slice(0, 8)}`;
@@ -4063,24 +4162,55 @@ function buildExecutionEnvelope(execution, result) {
     model: execution.model || null,
     promptPreview: previewText(execution.userPrompt || execution.prompt),
     meta: execution.meta || {},
-    ...result
+    ...compactProviderResult(result)
   };
+}
+function compactProviderResult(result = {}) {
+  const compact = { ...result };
+  if (typeof result.stdout === "string") {
+    compact.stdoutBytes = Buffer.byteLength(result.stdout, "utf8");
+    delete compact.stdout;
+  }
+  if (typeof result.stderr === "string") {
+    compact.stderrBytes = Buffer.byteLength(result.stderr, "utf8");
+    delete compact.stderr;
+  }
+  if (Array.isArray(result.events)) {
+    compact.eventCount = result.events.length;
+    delete compact.events;
+  }
+  return compact;
+}
+function cleanupRuntimeOptions(runtimeOptions = {}) {
+  const cleanupPaths = Array.isArray(runtimeOptions.cleanupPaths) ? runtimeOptions.cleanupPaths : [];
+  for (const cleanupPath of cleanupPaths) {
+    if (typeof cleanupPath !== "string" || cleanupPath.trim() === "") continue;
+    try {
+      fs8.rmSync(cleanupPath, { recursive: true, force: true });
+    } catch {
+    }
+  }
 }
 async function runForegroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
-  const result = await runProviderPromptStreaming({
-    provider: execution.provider,
-    prompt: execution.prompt,
-    model: execution.model || null,
-    cwd: execution.cwd,
-    timeout: execution.timeout,
-    kind: execution.kind,
-    measurementScope: execution.measurementScope || "request",
-    meta: execution.meta || null,
-    ...execution.runtimeOptions || {},
-    onEvent() {
-    }
-  });
+  let result;
+  try {
+    result = await runProviderPromptStreaming({
+      provider: execution.provider,
+      prompt: execution.prompt,
+      model: execution.model || null,
+      cwd: execution.cwd,
+      timeout: execution.timeout,
+      kind: execution.kind,
+      measurementScope: execution.measurementScope || "request",
+      meta: execution.meta || null,
+      ...execution.runtimeOptions || {},
+      onEvent() {
+      }
+    });
+  } finally {
+    cleanupRuntimeOptions(execution.runtimeOptions);
+  }
   if (result.timing) {
     appendTimingRecord(workspaceRoot, result.timing);
   }
@@ -4236,18 +4366,7 @@ async function runSetup(rawArgs) {
   }
   const results = [];
   for (const provider of providers) {
-    const runtime = getProviderRuntime(provider);
-    const availability = await Promise.resolve(runtime.getAvailability(process5.cwd()));
-    const auth = await Promise.resolve(runtime.getAuthStatus(process5.cwd()));
-    results.push({
-      provider,
-      available: availability.available ?? false,
-      availabilityDetail: availability.detail ?? null,
-      loggedIn: auth.loggedIn ?? false,
-      authDetail: auth.detail ?? auth.reason ?? null,
-      model: auth.model ?? null,
-      capabilities: runtime.capabilities
-    });
+    results.push(await inspectProvider(provider));
   }
   if (options.json) {
     output(results, true);
@@ -4267,6 +4386,126 @@ async function runSetup(rawArgs) {
     );
   }
   output(lines.join("\n"), false);
+}
+async function probeProviderHealth({
+  provider,
+  model = null,
+  timeout,
+  workspaceRoot
+}) {
+  const inspection = await inspectProviderAvailability(provider);
+  const report = {
+    ...inspection,
+    ok: false,
+    probe: {
+      ok: false,
+      responseMatched: false,
+      expected: HEALTH_SENTINEL,
+      responsePreview: null,
+      error: null,
+      timing: null
+    }
+  };
+  if (!inspection.available) {
+    report.probe.error = inspection.availabilityDetail || "provider CLI is unavailable";
+  } else {
+    try {
+      const result = await runProviderPromptStreaming({
+        provider,
+        prompt: `Reply with ${HEALTH_SENTINEL} only.`,
+        model,
+        cwd: process5.cwd(),
+        timeout,
+        kind: "health",
+        measurementScope: "request",
+        meta: { health: true },
+        ...buildPromptRuntimeOptions({
+          provider,
+          kind: "ask"
+        }),
+        onEvent() {
+        }
+      });
+      if (result.timing) {
+        appendTimingRecord(workspaceRoot, result.timing);
+      }
+      const response = result.response || "";
+      const responseMatched = response.trim() === HEALTH_SENTINEL;
+      report.probe = {
+        ok: result.ok,
+        responseMatched,
+        expected: HEALTH_SENTINEL,
+        responsePreview: previewText(response, 180),
+        error: result.error ?? null,
+        timing: result.timing ?? null
+      };
+      report.ok = Boolean(result.ok && responseMatched);
+      report.model = result.model ?? report.model;
+    } catch (error) {
+      report.probe.error = error.message;
+    }
+  }
+  return report;
+}
+function renderHealthReport(report) {
+  const lines = [
+    `[${report.provider}] health=${report.ok ? "ok" : "failed"}`,
+    `available=${report.available ? "yes" : "no"}`,
+    `auth=${report.loggedIn == null ? "not_checked" : report.loggedIn ? "yes" : "no"}`
+  ];
+  if (report.model) lines.push(`model=${report.model}`);
+  if (report.availabilityDetail) lines.push(`version=${report.availabilityDetail}`);
+  if (report.authDetail) lines.push(`detail=${report.authDetail}`);
+  lines.push(`probe=${report.probe.ok ? "ok" : "failed"}`);
+  lines.push(`matched=${report.probe.responseMatched ? "yes" : "no"}`);
+  if (report.probe.responsePreview) lines.push(`response=${report.probe.responsePreview}`);
+  if (report.probe.error) lines.push(`error=${report.probe.error}`);
+  return lines.join(" ");
+}
+function buildHealthPayload(results) {
+  const healthyProviders = results.filter((result) => result.ok).map((result) => result.provider);
+  const unhealthyProviders = results.filter((result) => !result.ok).map((result) => result.provider);
+  return {
+    ok: healthyProviders.length > 0,
+    anyHealthy: healthyProviders.length > 0,
+    allHealthy: results.length > 0 && unhealthyProviders.length === 0,
+    healthyProviders,
+    unhealthyProviders,
+    results
+  };
+}
+async function runHealth(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, {
+    booleanOptions: ["json"],
+    valueOptions: ["provider", "model", "timeout-ms"],
+    aliasMap: { m: "model" }
+  });
+  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const timeoutMs = options["timeout-ms"] ? Number.parseInt(options["timeout-ms"], 10) : TIMEOUTS_MS.health;
+  const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : TIMEOUTS_MS.health;
+  const hasSingleProvider = Boolean(options.provider || positionals[0]);
+  if (options.model && !hasSingleProvider) {
+    throw new Error("--model requires --provider for health; provider model names are not portable.");
+  }
+  const providers = hasSingleProvider ? [resolveProvider({ provider: options.provider, positionals }).provider] : listProviderRuntimes().map((runtime) => runtime.id);
+  const results = await Promise.all(providers.map((provider) => probeProviderHealth({
+    provider,
+    model: options.model || null,
+    timeout,
+    workspaceRoot
+  })));
+  const payload = buildHealthPayload(results);
+  if (!payload.anyHealthy) {
+    process5.exitCode = 2;
+  }
+  output(
+    options.json ? payload : [
+      `Healthy providers: ${payload.healthyProviders.length > 0 ? payload.healthyProviders.join(", ") : "none"}`,
+      `All healthy: ${payload.allHealthy ? "yes" : "no"}`,
+      ...results.map((result) => renderHealthReport(result))
+    ].join("\n"),
+    options.json
+  );
 }
 function parsePromptExecution(rawArgs, kind) {
   const { options, positionals } = parseArgs(rawArgs, {
@@ -4294,7 +4533,11 @@ function parsePromptExecution(rawArgs, kind) {
       timeout: TIMEOUTS_MS[kind],
       meta: {},
       jobMeta: {},
-      measurementScope: "request"
+      measurementScope: "request",
+      runtimeOptions: buildPromptRuntimeOptions({
+        provider,
+        kind
+      })
     }
   };
 }
@@ -4586,7 +4829,7 @@ async function runJobWorker(rawArgs) {
         job: finishedJob,
         envelope: {
           job: finishedJob,
-          result
+          result: compactProviderResult(result)
         }
       };
     });
@@ -4625,6 +4868,8 @@ async function runJobWorker(rawArgs) {
     }
     removeJobConfigFile(workspaceRoot, jobId);
     throw error;
+  } finally {
+    cleanupRuntimeOptions(execution.runtimeOptions);
   }
 }
 async function main() {
@@ -4635,6 +4880,10 @@ async function main() {
   }
   if (command === "setup") {
     await runSetup(rawArgs);
+    return;
+  }
+  if (command === "health") {
+    await runHealth(rawArgs);
     return;
   }
   if (command === "ask") {

@@ -19,6 +19,7 @@ import {
   resolveLatestTerminalJob,
   waitForJob,
 } from "./lib/job-control.mjs";
+import { buildPromptRuntimeOptions } from "./lib/prompt-runtime.mjs";
 import { resolveProvider } from "./lib/providers.mjs";
 import { buildReviewPrompt, buildReviewRuntimeOptions, collectReviewContext } from "./lib/review.mjs";
 import {
@@ -52,15 +53,18 @@ const JOB_PREFIXES = {
 const TIMEOUTS_MS = {
   ask: 120_000,
   rescue: 600_000,
-  review: 180_000,
-  "adversarial-review": 180_000,
+  review: 300_000,
+  "adversarial-review": 300_000,
+  health: 60_000,
 };
+const HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
 
 function printUsage() {
   console.log(
     [
       "Usage:",
       "  polycli-companion.mjs setup [--provider <provider>] [--json]",
+      "  polycli-companion.mjs health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
       "  polycli-companion.mjs rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>",
       "  polycli-companion.mjs review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--json] [focus ...]",
@@ -79,6 +83,35 @@ function output(value, asJson) {
     return;
   }
   process.stdout.write(typeof value === "string" ? `${value}\n` : `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function inspectProvider(provider) {
+  const runtime = getProviderRuntime(provider);
+  const availability = await Promise.resolve(runtime.getAvailability(process.cwd()));
+  const auth = await Promise.resolve(runtime.getAuthStatus(process.cwd()));
+  return {
+    provider,
+    available: availability.available ?? false,
+    availabilityDetail: availability.detail ?? null,
+    loggedIn: auth.loggedIn ?? false,
+    authDetail: auth.detail ?? auth.reason ?? null,
+    model: auth.model ?? null,
+    capabilities: runtime.capabilities,
+  };
+}
+
+async function inspectProviderAvailability(provider) {
+  const runtime = getProviderRuntime(provider);
+  const availability = await Promise.resolve(runtime.getAvailability(process.cwd()));
+  return {
+    provider,
+    available: availability.available ?? false,
+    availabilityDetail: availability.detail ?? null,
+    loggedIn: null,
+    authDetail: "not checked by health",
+    model: null,
+    capabilities: runtime.capabilities,
+  };
 }
 
 function createJobId(kind) {
@@ -102,24 +135,58 @@ function buildExecutionEnvelope(execution, result) {
     model: execution.model || null,
     promptPreview: previewText(execution.userPrompt || execution.prompt),
     meta: execution.meta || {},
-    ...result,
+    ...compactProviderResult(result),
   };
+}
+
+function compactProviderResult(result = {}) {
+  const compact = { ...result };
+  if (typeof result.stdout === "string") {
+    compact.stdoutBytes = Buffer.byteLength(result.stdout, "utf8");
+    delete compact.stdout;
+  }
+  if (typeof result.stderr === "string") {
+    compact.stderrBytes = Buffer.byteLength(result.stderr, "utf8");
+    delete compact.stderr;
+  }
+  if (Array.isArray(result.events)) {
+    compact.eventCount = result.events.length;
+    delete compact.events;
+  }
+  return compact;
+}
+
+function cleanupRuntimeOptions(runtimeOptions = {}) {
+  const cleanupPaths = Array.isArray(runtimeOptions.cleanupPaths)
+    ? runtimeOptions.cleanupPaths
+    : [];
+  for (const cleanupPath of cleanupPaths) {
+    if (typeof cleanupPath !== "string" || cleanupPath.trim() === "") continue;
+    try {
+      fs.rmSync(cleanupPath, { recursive: true, force: true });
+    } catch {}
+  }
 }
 
 async function runForegroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
-  const result = await runProviderPromptStreaming({
-    provider: execution.provider,
-    prompt: execution.prompt,
-    model: execution.model || null,
-    cwd: execution.cwd,
-    timeout: execution.timeout,
-    kind: execution.kind,
-    measurementScope: execution.measurementScope || "request",
-    meta: execution.meta || null,
-    ...(execution.runtimeOptions || {}),
-    onEvent() {},
-  });
+  let result;
+  try {
+    result = await runProviderPromptStreaming({
+      provider: execution.provider,
+      prompt: execution.prompt,
+      model: execution.model || null,
+      cwd: execution.cwd,
+      timeout: execution.timeout,
+      kind: execution.kind,
+      measurementScope: execution.measurementScope || "request",
+      meta: execution.meta || null,
+      ...(execution.runtimeOptions || {}),
+      onEvent() {},
+    });
+  } finally {
+    cleanupRuntimeOptions(execution.runtimeOptions);
+  }
   if (result.timing) {
     appendTimingRecord(workspaceRoot, result.timing);
   }
@@ -291,18 +358,7 @@ async function runSetup(rawArgs) {
 
   const results = [];
   for (const provider of providers) {
-    const runtime = getProviderRuntime(provider);
-    const availability = await Promise.resolve(runtime.getAvailability(process.cwd()));
-    const auth = await Promise.resolve(runtime.getAuthStatus(process.cwd()));
-    results.push({
-      provider,
-      available: availability.available ?? false,
-      availabilityDetail: availability.detail ?? null,
-      loggedIn: auth.loggedIn ?? false,
-      authDetail: auth.detail ?? auth.reason ?? null,
-      model: auth.model ?? null,
-      capabilities: runtime.capabilities,
-    });
+    results.push(await inspectProvider(provider));
   }
 
   if (options.json) {
@@ -324,6 +380,137 @@ async function runSetup(rawArgs) {
     );
   }
   output(lines.join("\n"), false);
+}
+
+async function probeProviderHealth({
+  provider,
+  model = null,
+  timeout,
+  workspaceRoot,
+}) {
+  const inspection = await inspectProviderAvailability(provider);
+  const report = {
+    ...inspection,
+    ok: false,
+    probe: {
+      ok: false,
+      responseMatched: false,
+      expected: HEALTH_SENTINEL,
+      responsePreview: null,
+      error: null,
+      timing: null,
+    },
+  };
+
+  if (!inspection.available) {
+    report.probe.error = inspection.availabilityDetail || "provider CLI is unavailable";
+  } else {
+    try {
+      const result = await runProviderPromptStreaming({
+        provider,
+        prompt: `Reply with ${HEALTH_SENTINEL} only.`,
+        model,
+        cwd: process.cwd(),
+        timeout,
+        kind: "health",
+        measurementScope: "request",
+        meta: { health: true },
+        ...buildPromptRuntimeOptions({
+          provider,
+          kind: "ask",
+        }),
+        onEvent() {},
+      });
+      if (result.timing) {
+        appendTimingRecord(workspaceRoot, result.timing);
+      }
+      const response = result.response || "";
+      const responseMatched = response.trim() === HEALTH_SENTINEL;
+      report.probe = {
+        ok: result.ok,
+        responseMatched,
+        expected: HEALTH_SENTINEL,
+        responsePreview: previewText(response, 180),
+        error: result.error ?? null,
+        timing: result.timing ?? null,
+      };
+      report.ok = Boolean(result.ok && responseMatched);
+      report.model = result.model ?? report.model;
+    } catch (error) {
+      report.probe.error = error.message;
+    }
+  }
+
+  return report;
+}
+
+function renderHealthReport(report) {
+  const lines = [
+    `[${report.provider}] health=${report.ok ? "ok" : "failed"}`,
+    `available=${report.available ? "yes" : "no"}`,
+    `auth=${report.loggedIn == null ? "not_checked" : (report.loggedIn ? "yes" : "no")}`,
+  ];
+  if (report.model) lines.push(`model=${report.model}`);
+  if (report.availabilityDetail) lines.push(`version=${report.availabilityDetail}`);
+  if (report.authDetail) lines.push(`detail=${report.authDetail}`);
+  lines.push(`probe=${report.probe.ok ? "ok" : "failed"}`);
+  lines.push(`matched=${report.probe.responseMatched ? "yes" : "no"}`);
+  if (report.probe.responsePreview) lines.push(`response=${report.probe.responsePreview}`);
+  if (report.probe.error) lines.push(`error=${report.probe.error}`);
+  return lines.join(" ");
+}
+
+function buildHealthPayload(results) {
+  const healthyProviders = results.filter((result) => result.ok).map((result) => result.provider);
+  const unhealthyProviders = results.filter((result) => !result.ok).map((result) => result.provider);
+  return {
+    ok: healthyProviders.length > 0,
+    anyHealthy: healthyProviders.length > 0,
+    allHealthy: results.length > 0 && unhealthyProviders.length === 0,
+    healthyProviders,
+    unhealthyProviders,
+    results,
+  };
+}
+
+async function runHealth(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, {
+    booleanOptions: ["json"],
+    valueOptions: ["provider", "model", "timeout-ms"],
+    aliasMap: { m: "model" },
+  });
+  const workspaceRoot = resolveWorkspaceRoot(process.cwd());
+  const timeoutMs = options["timeout-ms"] ? Number.parseInt(options["timeout-ms"], 10) : TIMEOUTS_MS.health;
+  const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : TIMEOUTS_MS.health;
+  const hasSingleProvider = Boolean(options.provider || positionals[0]);
+  if (options.model && !hasSingleProvider) {
+    throw new Error("--model requires --provider for health; provider model names are not portable.");
+  }
+  const providers = hasSingleProvider
+    ? [resolveProvider({ provider: options.provider, positionals }).provider]
+    : listProviderRuntimes().map((runtime) => runtime.id);
+
+  const results = await Promise.all(providers.map((provider) => probeProviderHealth({
+      provider,
+      model: options.model || null,
+      timeout,
+      workspaceRoot,
+    })));
+
+  const payload = buildHealthPayload(results);
+  if (!payload.anyHealthy) {
+    process.exitCode = 2;
+  }
+  output(
+    options.json
+      ? payload
+      : [
+        `Healthy providers: ${payload.healthyProviders.length > 0 ? payload.healthyProviders.join(", ") : "none"}`,
+        `All healthy: ${payload.allHealthy ? "yes" : "no"}`,
+        ...results.map((result) => renderHealthReport(result)),
+      ].join("\n"),
+    options.json
+  );
 }
 
 function parsePromptExecution(rawArgs, kind) {
@@ -353,6 +540,10 @@ function parsePromptExecution(rawArgs, kind) {
       meta: {},
       jobMeta: {},
       measurementScope: "request",
+      runtimeOptions: buildPromptRuntimeOptions({
+        provider,
+        kind,
+      }),
     },
   };
 }
@@ -682,7 +873,7 @@ async function runJobWorker(rawArgs) {
         job: finishedJob,
         envelope: {
           job: finishedJob,
-          result,
+          result: compactProviderResult(result),
         },
       };
     });
@@ -721,6 +912,8 @@ async function runJobWorker(rawArgs) {
     }
     removeJobConfigFile(workspaceRoot, jobId);
     throw error;
+  } finally {
+    cleanupRuntimeOptions(execution.runtimeOptions);
   }
 }
 
@@ -733,6 +926,10 @@ async function main() {
 
   if (command === "setup") {
     await runSetup(rawArgs);
+    return;
+  }
+  if (command === "health") {
+    await runHealth(rawArgs);
     return;
   }
   if (command === "ask") {

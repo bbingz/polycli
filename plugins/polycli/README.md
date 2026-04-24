@@ -14,16 +14,16 @@ claude plugin install polycli@polycli-hosts
 Use one provider end to end before trying review flows:
 
 ```text
-/polycli:setup --provider qwen
-/polycli:ask --provider qwen Reply with OK only.
+/polycli:health
 /polycli:timing --provider qwen
 ```
 
-If `setup` reports `available=false` or `loggedIn=false`, fix the underlying provider CLI first. `polycli` does not install provider CLIs for you.
+Run `health` once after install, login, or provider config changes. With no provider it probes every integrated provider and reports `healthyProviders`; use `--provider` only for single-provider diagnosis. Normal `ask`, `review`, and `rescue` calls do not need a `setup` preflight. If `health` reports `available=false` or the probe fails, fix the underlying provider CLI first. `polycli` does not install provider CLIs for you.
 
 ## Commands
 
 - `/polycli:setup`
+- `/polycli:health`
 - `/polycli:ask`
 - `/polycli:rescue`
 - `/polycli:review`
@@ -37,6 +37,7 @@ If `setup` reports `available=false` or `loggedIn=false`, fix the underlying pro
 
 ```text
 /polycli:setup --provider gemini
+/polycli:health
 /polycli:ask --provider kimi Explain this stack trace
 /polycli:rescue --provider qwen --background Audit the flaky test and explain the root cause
 /polycli:review --provider gemini --scope staged

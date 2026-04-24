@@ -257,6 +257,62 @@ test("runClaudePromptStreaming treats subtype-only error results as failures", a
   assert.equal(result.error, "permission denied");
 });
 
+test("runClaudePromptStreaming treats a successful final result before timeout as completed", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {
+    queueMicrotask(() => child.emit("close", 143, null));
+  };
+
+  const result = await runClaudePromptStreaming({
+    prompt: "ping",
+    timeout: 5,
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"system","subtype":"init","session_id":"claude-stream-timeout"}\n');
+        child.stdout.emit("data", '{"type":"content_block_delta","delta":{"type":"text_delta","text":"review complete"}}\n');
+        child.stdout.emit("data", '{"type":"result","subtype":"success","is_error":false,"result":"review complete","session_id":"claude-stream-timeout"}\n');
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.response, "review complete");
+  assert.equal(result.error, null);
+  assert.equal(result.sessionId, "claude-stream-timeout");
+});
+
+test("runClaudePromptStreaming still fails timeout recovery when no visible text exists", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {
+    queueMicrotask(() => child.emit("close", 143, null));
+  };
+
+  const result = await runClaudePromptStreaming({
+    prompt: "ping",
+    timeout: 5,
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"system","subtype":"init","session_id":"claude-empty-timeout"}\n');
+        child.stdout.emit("data", '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"claude-empty-timeout"}\n');
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.response, "");
+  assert.equal(result.error, "claude produced no visible text");
+});
+
 test("parseClaudeStreamText replays a captured real cli fixture", () => {
   const { stream, meta } = loadStreamFixture("claude", "stream-success");
   const parsed = parseClaudeStreamText(stream);

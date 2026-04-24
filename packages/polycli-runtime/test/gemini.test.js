@@ -53,6 +53,27 @@ test("buildGeminiInvocation uses stdin for large prompts and preserves approval 
   ]);
 });
 
+test("buildGeminiInvocation switches to stdin by UTF-8 byte length", () => {
+  const prompt = "你".repeat(40_000);
+  const invocation = buildGeminiInvocation({ prompt });
+
+  assert.equal(prompt.length < 100_000, true);
+  assert.equal(Buffer.byteLength(prompt, "utf8") > 100_000, true);
+  assert.equal(invocation.useStdin, true);
+  assert.equal(invocation.input, prompt);
+  assert.deepEqual(invocation.args.slice(0, 2), ["-p", ""]);
+});
+
+test("buildGeminiInvocation keeps byte-small CJK prompts inline", () => {
+  const prompt = "你".repeat(30_000);
+  const invocation = buildGeminiInvocation({ prompt });
+
+  assert.equal(Buffer.byteLength(prompt, "utf8") <= 100_000, true);
+  assert.equal(invocation.useStdin, false);
+  assert.equal(invocation.input, undefined);
+  assert.deepEqual(invocation.args.slice(0, 2), ["-p", prompt]);
+});
+
 test("parseGeminiStreamText collects session id, stats, and assistant text", () => {
   const parsed = parseGeminiStreamText(
     [
