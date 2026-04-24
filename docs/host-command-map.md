@@ -86,3 +86,6 @@ Claude Code first-classes user-visible slash-commands, so ten separate command f
 - Any new polycli companion subcommand → add a row to both tables in this file.
 - Any new host → add a column. Consider whether the host's natural surface is slash-command, skill-subcommand, or tool-call, and follow the pattern from the closest existing host.
 - Any change in argument grammar (a new flag that replaces an existing one, a renamed subcommand) → update `node polycli-companion.bundle.mjs --help` first, then the affected rows here.
+
+`npm run validate:host-map` verifies this document against the companion dispatcher,
+Claude command files, Codex/Copilot skill command lists, and OpenCode tool surface.

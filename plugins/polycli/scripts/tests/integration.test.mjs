@@ -97,6 +97,7 @@ const args = process.argv.slice(2);
   }
   const outputFormat = args[args.indexOf("-o") + 1] || "json";
   const prompt = args[args.indexOf("-p") + 1] || "";
+  const omitStreamModel = process.env.GEMINI_OMIT_STREAM_MODEL === "1";
   const pingDelay = prompt === "ping" ? Number.parseInt(process.env.GEMINI_PING_DELAY_MS || "0", 10) : 0;
   if (pingDelay > 0) await sleep(pingDelay);
   const delayMatch = prompt.match(/__delay=(\\d+)/);
@@ -113,11 +114,11 @@ const args = process.argv.slice(2);
     }) + "\\n");
     process.exit(0);
   }
-  process.stdout.write(JSON.stringify({ type: "init", session_id: "22222222-2222-2222-2222-222222222222", model: "gemini-test" }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "init", session_id: "22222222-2222-2222-2222-222222222222", ...(omitStreamModel ? {} : { model: "gemini-test" }) }) + "\\n");
   if (delay > 0) await sleep(delay);
   process.stdout.write(JSON.stringify({ type: "message", role: "assistant", content: reply }) + "\\n");
   if (tailDelay > 0) await sleep(tailDelay);
-  process.stdout.write(JSON.stringify({ type: "result", stats: { models: { "gemini-test": 1 } } }) + "\\n");
+  process.stdout.write(JSON.stringify(omitStreamModel ? { type: "result" } : { type: "result", stats: { models: { "gemini-test": 1 } } }) + "\\n");
 })();
 `,
     { mode: 0o755 }
@@ -950,6 +951,22 @@ test("integration: setup and ask succeed for gemini via bundled companion", asyn
     assert.equal(askPayload.timing.metrics.gen.status, "measured");
     assert.equal(askPayload.timing.metrics.tail.status, "measured");
     assert.equal(askPayload.timing.metrics.tool.status, "unsupported");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: ask uses cached setup model when a provider stream omits model", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeGeminiBin();
+  try {
+    const askPayload = await assertSetupAndAsk("gemini", cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      GEMINI_CLI_BIN: fake.bin,
+      GEMINI_OMIT_STREAM_MODEL: "1",
+    }));
+    assert.equal(askPayload.model, "gemini-test");
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });

@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Codex — close Q2 and Q3 with guardrails
+
+- Closed Q2 by documenting the model fallback policy and adding a host integration test that proves cached setup model metadata is used only as the final `defaultModel` fallback when a provider stream omits model fields.
+- Closed Q3 by accepting host-surface asymmetry as the durable design and adding `npm run validate:host-map` to keep `docs/host-command-map.md`, Claude commands, Codex/Copilot skills, OpenCode tools, and the companion dispatcher aligned.
+- Refreshed `docs/roadmap.md` to mark R1-R7 and Q1-Q3 closed after v0.5.0.
+
+---
+
 ## 2026-04-24 — Claude — v0.5.0 shipped
 
 - Pushed `main` + tag `v0.5.0` (tag at 306c703 — R5 fixture replay pilot commit).
