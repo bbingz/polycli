@@ -6,6 +6,15 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Claude — v0.4.2 shipped
+
+- Pushed `main` + tag `v0.4.2` (tag at 5c7f709 — R2 runtime fix commit).
+- GitHub release live at https://github.com/bbingz/polycli/releases/tag/v0.4.2 (notes from `docs/release-notes-v0.4.2.md`).
+- npm: `@bbingz/polycli-opencode@0.4.2` published.
+- Closes roadmap R1 (p2-p3-backlog merged; 511fceb dropped as superseded by 12d9ca9), R2 (minimax capability matrix + review.mjs YAML hardening + tmp cleanup), and R3 (v1 surface doc superseded). 250/250 tests pass at release tag.
+
+---
+
 ## 2026-04-24 — Claude — prepare v0.4.2 release
 
 - Bumped the four host plugin release manifests and both host marketplace metadata entries from `0.4.1` to `0.4.2`.
