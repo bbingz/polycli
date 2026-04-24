@@ -8,7 +8,7 @@ import { randomUUID as randomUUID2 } from "node:crypto";
 import { spawn as spawn2 } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-// ../../../packages/polycli-utils/src/args.js
+// packages/polycli-utils/src/args.js
 function parseArgs(argv, config = {}) {
   const valueOptions = new Set(config.valueOptions ?? []);
   const booleanOptions = new Set(config.booleanOptions ?? []);
@@ -84,11 +84,11 @@ function parseArgs(argv, config = {}) {
   return { options, positionals };
 }
 
-// ../../../packages/polycli-runtime/src/constants.js
+// packages/polycli-runtime/src/constants.js
 var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi"];
 var PROVIDER_OPERATION_NAMES = ["prompt"];
 
-// ../../../packages/polycli-utils/src/parse-stream-json.js
+// packages/polycli-utils/src/parse-stream-json.js
 function findJsonStart(text) {
   for (let index = 0; index < text.length; index += 1) {
     const slice = text.slice(index);
@@ -140,7 +140,7 @@ function parseStreamJsonLine(raw, { allowPrefix = true } = {}) {
   }
 }
 
-// ../../../packages/polycli-utils/src/process.js
+// packages/polycli-utils/src/process.js
 import { spawnSync } from "node:child_process";
 import process2 from "node:process";
 function runCommand(command, args = [], options = {}) {
@@ -257,7 +257,7 @@ async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SI
   return true;
 }
 
-// ../../../packages/polycli-utils/src/session-id.js
+// packages/polycli-utils/src/session-id.js
 var UUID_SESSION_ID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 function matchSessionId(text, { patterns = [UUID_SESSION_ID_REGEX] } = {}) {
   if (typeof text !== "string" || text.length === 0) {
@@ -294,7 +294,7 @@ function resolveSessionId({
   return { sessionId: null, source: null };
 }
 
-// ../../../packages/polycli-runtime/src/errors.js
+// packages/polycli-runtime/src/errors.js
 function formatProviderExitError(provider, status) {
   if (status === 124) {
     return `${provider} timed out`;
@@ -308,10 +308,10 @@ function formatProviderExitError(provider, status) {
   return `${provider} exited with code ${status}`;
 }
 
-// ../../../packages/polycli-runtime/src/spawn.js
+// packages/polycli-runtime/src/spawn.js
 import { spawn } from "node:child_process";
 
-// ../../../packages/polycli-utils/src/stream.js
+// packages/polycli-utils/src/stream.js
 import { StringDecoder } from "node:string_decoder";
 function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true, maxBufferBytes = 1048576 } = {}) {
   const decoder = new StringDecoder(encoding);
@@ -357,7 +357,7 @@ function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true, maxB
   };
 }
 
-// ../../../packages/polycli-runtime/src/spawn.js
+// packages/polycli-runtime/src/spawn.js
 function formatExitError(status, signal, { timedOut = false, aborted = false } = {}) {
   if (aborted) {
     return "process aborted";
@@ -581,7 +581,7 @@ function spawnStreamingCommand({
   });
 }
 
-// ../../../packages/polycli-runtime/src/claude.js
+// packages/polycli-runtime/src/claude.js
 var CLAUDE_BIN = process.env.CLAUDE_CLI_BIN || "claude";
 var DEFAULT_TIMEOUT_MS = 9e5;
 var AUTH_CHECK_TIMEOUT_MS = 3e4;
@@ -873,7 +873,7 @@ function runClaudePromptStreaming({
   });
 }
 
-// ../../../packages/polycli-runtime/src/copilot.js
+// packages/polycli-runtime/src/copilot.js
 var COPILOT_BIN = process.env.COPILOT_CLI_BIN || "copilot";
 var DEFAULT_TIMEOUT_MS2 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS2 = 3e4;
@@ -1138,7 +1138,7 @@ function runCopilotPromptStreaming({
   });
 }
 
-// ../../../packages/polycli-runtime/src/gemini.js
+// packages/polycli-runtime/src/gemini.js
 var GEMINI_BIN = process.env.GEMINI_CLI_BIN || "gemini";
 var DEFAULT_TIMEOUT_MS3 = 3e5;
 var AUTH_CHECK_TIMEOUT_MS3 = 3e4;
@@ -1398,7 +1398,7 @@ function runGeminiPromptStreaming({
   });
 }
 
-// ../../../packages/polycli-runtime/src/kimi.js
+// packages/polycli-runtime/src/kimi.js
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1777,7 +1777,7 @@ function withKimiResumeWarnings(result, requestedSessionId) {
   };
 }
 
-// ../../../packages/polycli-runtime/src/qwen.js
+// packages/polycli-runtime/src/qwen.js
 var QWEN_BIN = process.env.QWEN_CLI_BIN || "qwen";
 var DEFAULT_TIMEOUT_MS5 = 3e5;
 var AUTH_CHECK_TIMEOUT_MS5 = 3e4;
@@ -2132,7 +2132,7 @@ function runQwenPromptStreaming({
   });
 }
 
-// ../../../packages/polycli-runtime/src/minimax.js
+// packages/polycli-runtime/src/minimax.js
 import fs2 from "node:fs";
 import os2 from "node:os";
 import path2 from "node:path";
@@ -2417,7 +2417,7 @@ async function runMiniMaxPromptStreaming({
   });
 }
 
-// ../../../packages/polycli-runtime/src/opencode.js
+// packages/polycli-runtime/src/opencode.js
 var OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
 var DEFAULT_TIMEOUT_MS7 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS7 = 3e4;
@@ -2753,7 +2753,7 @@ function runOpenCodePromptStreaming({
   });
 }
 
-// ../../../packages/polycli-runtime/src/pi.js
+// packages/polycli-runtime/src/pi.js
 var PI_BIN = process.env.PI_CLI_BIN || "pi";
 var DEFAULT_PI_MODEL = "openai-codex/gpt-5.4";
 var DEFAULT_TIMEOUT_MS8 = 9e5;
@@ -3009,17 +3009,17 @@ function runPiPromptStreaming({
   });
 }
 
-// ../../../packages/polycli-runtime/src/registry.js
+// packages/polycli-runtime/src/registry.js
 import { performance } from "node:perf_hooks";
 
-// ../../../packages/polycli-timing/src/constants.js
+// packages/polycli-timing/src/constants.js
 var TIMING_SCHEMA_VERSION = 1;
 var TIMING_METRIC_NAMES = ["cold", "ttft", "gen", "tool", "retry", "tail", "total"];
 var TIMING_METRIC_STATUSES = ["measured", "zero", "missing", "unsupported"];
 var TIMING_RUNTIME_PERSISTENCE = ["ephemeral", "session", "daemon"];
 var TIMING_MEASUREMENT_SCOPES = ["request", "turn", "job"];
 
-// ../../../packages/polycli-timing/src/percentile.js
+// packages/polycli-timing/src/percentile.js
 function calculatePercentiles(values, percentiles = [50, 95, 99]) {
   const sorted = values.filter((value) => Number.isFinite(value)).slice().sort((left, right) => left - right);
   const output2 = {};
@@ -3038,7 +3038,7 @@ function calculatePercentiles(values, percentiles = [50, 95, 99]) {
   return output2;
 }
 
-// ../../../packages/polycli-timing/src/validate.js
+// packages/polycli-timing/src/validate.js
 function isIsoDate(value) {
   return typeof value === "string" && !Number.isNaN(Date.parse(value));
 }
@@ -3115,7 +3115,7 @@ function validateTimingRecord(record) {
   return { ok: errors.length === 0, errors };
 }
 
-// ../../../packages/polycli-timing/src/aggregate.js
+// packages/polycli-timing/src/aggregate.js
 function createMetricSummary() {
   return {
     contributingCount: 0,
@@ -3207,10 +3207,10 @@ function aggregateTimingRecords(records) {
   return summary;
 }
 
-// ../../../packages/polycli-timing/src/index.js
+// packages/polycli-timing/src/index.js
 var TIMING_SCHEMA_URL = new URL("../timing.schema.json", import.meta.url);
 
-// ../../../packages/polycli-runtime/src/timing.js
+// packages/polycli-runtime/src/timing.js
 function measuredOrZero(ms) {
   if (!Number.isFinite(ms) || ms < 0) {
     throw new Error(`Invalid measured timing value: ${ms}`);
@@ -3319,7 +3319,7 @@ function attachPromptTiming(result, {
   };
 }
 
-// ../../../packages/polycli-runtime/src/registry.js
+// packages/polycli-runtime/src/registry.js
 var TIMING_SUPPORT = {
   claude: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   copilot: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
@@ -4497,10 +4497,10 @@ function buildReviewPrompt({
 // plugins/polycli/scripts/lib/timing.mjs
 import path6 from "node:path";
 
-// ../../../packages/polycli-utils/src/ndjson.js
+// packages/polycli-utils/src/ndjson.js
 import fs7 from "node:fs";
 
-// ../../../packages/polycli-utils/src/atomic-save.js
+// packages/polycli-utils/src/atomic-save.js
 import crypto2 from "node:crypto";
 import fs6 from "node:fs";
 import path5 from "node:path";
@@ -4631,7 +4631,7 @@ function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 
   throw new LockfileTimeoutError(lockPath, timeoutMs);
 }
 
-// ../../../packages/polycli-utils/src/ndjson.js
+// packages/polycli-utils/src/ndjson.js
 function safeParseLine(line) {
   try {
     return JSON.parse(line);
