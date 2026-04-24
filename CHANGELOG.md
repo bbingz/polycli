@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Codex — port stop-time review gate hooks
+
+- Added Claude Code SessionStart / SessionEnd / Stop hook registration for the polycli host plugin, with lifecycle state cleanup and the optional stop-review gate.
+- Recorded the last-used ask/rescue provider in workspace state so the gate honors the user's current provider selection, with health-probe fallback when no provider is recorded.
+- Added hook tests for lifecycle cleanup, multi-line ALLOW/BLOCK sentinel parsing, timeout skip behavior, and unresolvable-provider skip behavior.
+
 ## 2026-04-24 — Codex — v0.5.1 shipped
 
 - Pushed `main` and tag `v0.5.1` (tag at `0b79c86`).

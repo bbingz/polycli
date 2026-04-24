@@ -1,6 +1,6 @@
 ---
 description: Check which polycli providers are installed and authenticated
-argument-hint: '[--provider <claude|copilot|opencode|pi|gemini|kimi|qwen|minimax>]'
+argument-hint: '[--provider <claude|copilot|opencode|pi|gemini|kimi|qwen|minimax>] [--enable-review-gate|--disable-review-gate]'
 allowed-tools: Bash(node:*)
 ---
 
@@ -15,5 +15,6 @@ Render the JSON faithfully.
 Rules:
 - Do not paraphrase provider state into vague prose.
 - If a provider is unavailable or unauthenticated, report its `authDetail` / `availabilityDetail`.
+- If `--enable-review-gate` or `--disable-review-gate` was passed, report the returned `stopReviewGate` and `stopReviewGateWorkspace` fields.
 - Do not auto-install anything.
 - This is a diagnostic command, not a required preflight before every prompt-bearing command.

@@ -2,9 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import { withLockfile, writeJsonAtomic } from "@bbingz/polycli-utils/atomic-save";
-import { runCommand } from "@bbingz/polycli-utils/process";
+import { spawnSync } from "node:child_process";
 
 const STATE_VERSION = 1;
 const STATE_FILE_NAME = "state.json";
@@ -12,6 +10,125 @@ const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 100;
 const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
 const FALLBACK_STATE_ROOT = path.join(os.tmpdir(), "polycli-companion");
+
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function writeJsonAtomic(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${crypto.randomUUID()}`;
+  const fd = fs.openSync(tmpPath, "w", 0o666);
+  try {
+    fs.writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tmpPath, filePath);
+  try {
+    const dirFd = fs.openSync(path.dirname(filePath), "r");
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
+  } catch (error) {
+    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
+      throw error;
+    }
+  }
+}
+
+function withLockfile(lockPath, fn, { timeoutMs = 10_000, staleMs = 600_000, pollMs = 25 } = {}) {
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const fd = fs.openSync(
+        lockPath,
+        fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+        0o600
+      );
+      try {
+        fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), "utf8");
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      try {
+        return fn();
+      } finally {
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          // ignore
+        }
+      }
+    } catch (error) {
+      if (error.code !== "EEXIST") {
+        throw error;
+      }
+      try {
+        const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+        const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
+        const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
+        const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
+        let ownerAlive = false;
+
+        if (pid != null) {
+          try {
+            process.kill(pid, 0);
+            ownerAlive = true;
+          } catch (killError) {
+            if (killError.code === "ESRCH") {
+              fs.unlinkSync(lockPath);
+              continue;
+            }
+            if (killError.code !== "EPERM") {
+              throw killError;
+            }
+            ownerAlive = true;
+          }
+        }
+
+        if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      sleepSync(pollMs);
+    }
+  }
+
+  const error = new Error(`Timed out acquiring lockfile ${lockPath} after ${timeoutMs}ms`);
+  error.code = "ELOCKTIMEOUT";
+  throw error;
+}
+
+function runCommand(command, args = [], options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    encoding: "utf8",
+    input: options.input,
+    timeout: options.timeout,
+    stdio: options.stdio ?? "pipe",
+  });
+  return {
+    command,
+    args,
+    status: result.status ?? 0,
+    signal: result.signal ?? null,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    error: result.error ?? null,
+  };
+}
 
 function computeWorkspaceSlug(workspaceRoot) {
   const base = path.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
@@ -22,6 +139,7 @@ function computeWorkspaceSlug(workspaceRoot) {
 function defaultState() {
   return {
     version: STATE_VERSION,
+    config: {},
     jobs: [],
   };
 }
@@ -102,6 +220,7 @@ export function loadState(workspaceRoot) {
     }
     return {
       version: parsed.version ?? STATE_VERSION,
+      config: parsed.config && typeof parsed.config === "object" ? parsed.config : {},
       jobs: parsed.jobs,
     };
   } catch {
@@ -116,8 +235,9 @@ export function saveState(workspaceRoot, state) {
     .slice()
     .sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""))
     .slice(0, MAX_JOBS);
-  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, jobs });
-  return { version: STATE_VERSION, jobs };
+  const config = state.config && typeof state.config === "object" ? state.config : {};
+  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs });
+  return { version: STATE_VERSION, config, jobs };
 }
 
 export function updateState(workspaceRoot, mutate) {
@@ -196,6 +316,31 @@ export function listJobs(workspaceRoot) {
 
 export function getJob(workspaceRoot, reference) {
   return listJobs(workspaceRoot).find((job) => job.jobId === reference) || null;
+}
+
+export function getConfig(workspaceRoot) {
+  return loadState(workspaceRoot).config || {};
+}
+
+export function setConfig(workspaceRoot, key, value) {
+  updateState(workspaceRoot, (state) => {
+    state.config = state.config || {};
+    state.config[key] = value;
+  });
+}
+
+export function recordLastUsedProvider(workspaceRoot, provider) {
+  if (typeof provider !== "string" || !provider.trim()) return;
+  updateState(workspaceRoot, (state) => {
+    state.config = state.config || {};
+    state.config.lastUsedProvider = provider.trim();
+    state.config.lastUsedProviderAt = new Date().toISOString();
+  });
+}
+
+export function readLastUsedProvider(workspaceRoot) {
+  const provider = getConfig(workspaceRoot).lastUsedProvider;
+  return typeof provider === "string" && provider.trim() ? provider.trim() : null;
 }
 
 export function writeJobFile(workspaceRoot, jobId, payload) {

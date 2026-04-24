@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { createClaudeFixtureReplay } from "./helpers/fixture-replay.mjs";
+import { readLastUsedProvider, resolveWorkspaceRoot } from "../lib/state.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const companionPath = path.resolve(__dirname, "..", "polycli-companion.bundle.mjs");
@@ -932,6 +933,35 @@ test("integration: ask constrains qwen to emit a visible final answer", async ()
     const argv = logged.argv.join(" ");
     assert.match(argv, /--max-session-turns 1/);
     assert.match(argv, /--append-system-prompt/);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: foreground ask records the last-used provider for stop-review gate lookup", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeQwenBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+      QWEN_FIXED_REPLY: "PONG",
+    });
+    const ask = await runCompanion(
+      ["ask", "--provider", "qwen", "--json", "__reply=PONG"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(ask.code, 0, ask.stderr);
+
+    const previous = process.env.CLAUDE_PLUGIN_DATA;
+    process.env.CLAUDE_PLUGIN_DATA = pluginData;
+    try {
+      assert.equal(readLastUsedProvider(resolveWorkspaceRoot(process.cwd())), "qwen");
+    } finally {
+      if (previous == null) delete process.env.CLAUDE_PLUGIN_DATA;
+      else process.env.CLAUDE_PLUGIN_DATA = previous;
+    }
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
