@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-24 — Codex — add R8a/R8d unified flags
+
+- Added Kimi-only `--resume-last` / `--resume <uuid>` / `--fresh` handling on `/polycli:ask` and `/polycli:rescue`, including wrapper-side session validation and resume-mismatch warnings.
+- Added Gemini-only `--write` and `--effort low|medium|high` handling on the unified ask/rescue surface.
+- Documented and tested unsupported-provider silent-drop notes for the new provider-specific flags.
+
+---
+
 ## 2026-04-24 — Claude — open R8 legacy plugin convergence
 
 - Reversed the prior non-goal "No migration of legacy sibling repos into this monorepo" after a capability gap audit against `gemini-plugin-cc` / `kimi-plugin-cc` / `qwen-plugin-cc` / `minimax-plugin-cc`.

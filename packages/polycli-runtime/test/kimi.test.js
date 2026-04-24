@@ -11,6 +11,7 @@ import {
   buildKimiInvocation,
   extractKimiText,
   getKimiAuthStatus,
+  resolveKimiResumeSession,
   parseKimiStreamText,
   runKimiPrompt,
   runKimiPromptStreaming,
@@ -48,6 +49,106 @@ test("buildKimiInvocation omits -p in stdin mode and enables input-format text",
     "-r",
     "123e4567-e89b-12d3-a456-426614174000",
   ]);
+});
+
+test("resolveKimiResumeSession resolves and validates the last cwd session before spawn", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-home-"));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-cwd-"));
+  const sessionId = "123e4567-e89b-42d3-a456-426614174000";
+  const oldHome = process.env.HOME;
+  const oldUserProfile = process.env.USERPROFILE;
+
+  try {
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    fs.mkdirSync(path.join(home, ".kimi"), { recursive: true });
+    const realCwd = fs.realpathSync(cwd);
+    fs.writeFileSync(
+      path.join(home, ".kimi", "kimi.json"),
+      `${JSON.stringify({ work_dirs: [{ path: realCwd, kaos: "local", last_session_id: sessionId }] })}\n`
+    );
+
+    const first = resolveKimiResumeSession({ cwd, resumeLast: true });
+    assert.equal(first.ok, false);
+    assert.match(first.error, /not found/i);
+
+    fs.mkdirSync(path.join(home, ".kimi", "sessions", first.cwdHash, sessionId), { recursive: true });
+    fs.writeFileSync(path.join(home, ".kimi", "sessions", first.cwdHash, sessionId, "context.jsonl"), "{}\n");
+
+    const second = resolveKimiResumeSession({ cwd, resumeLast: true });
+    assert.equal(second.ok, true);
+    assert.equal(second.sessionId, sessionId);
+  } finally {
+    if (oldHome == null) delete process.env.HOME;
+    else process.env.HOME = oldHome;
+    if (oldUserProfile == null) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = oldUserProfile;
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runKimiPromptStreaming rejects invalid explicit resume ids before spawn", async () => {
+  const result = await runKimiPromptStreaming({
+    prompt: "ping",
+    cwd: process.cwd(),
+    resumeSessionId: "not-a-uuid",
+    spawnImpl() {
+      throw new Error("spawn should not be called");
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /invalid sessionId format/i);
+});
+
+test("runKimiPromptStreaming warns when requested resume id differs from returned session", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-home-"));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-cwd-"));
+  const requested = "123e4567-e89b-42d3-a456-426614174000";
+  const returned = "223e4567-e89b-42d3-a456-426614174001";
+  const oldHome = process.env.HOME;
+  const oldUserProfile = process.env.USERPROFILE;
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  try {
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    const resolved = resolveKimiResumeSession({ cwd, resumeSessionId: requested });
+    fs.mkdirSync(path.join(home, ".kimi", "sessions", resolved.cwdHash, requested), { recursive: true });
+    fs.writeFileSync(path.join(home, ".kimi", "sessions", resolved.cwdHash, requested, "context.jsonl"), "{}\n");
+
+    const result = await runKimiPromptStreaming({
+      prompt: "ping",
+      cwd,
+      resumeSessionId: requested,
+      spawnImpl() {
+        queueMicrotask(() => {
+          child.stderr.emit("data", `To resume: kimi -r ${returned}\n`);
+          child.stdout.emit("data", '{"role":"assistant","content":[{"type":"text","text":"hello"}]}\n');
+          child.emit("close", 0, null);
+        });
+        return child;
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.resumeMismatched, true);
+    assert.deepEqual(result.warnings, [
+      `Warning: requested --resume ${requested} did not match returned session ${returned}`,
+    ]);
+  } finally {
+    if (oldHome == null) delete process.env.HOME;
+    else process.env.HOME = oldHome;
+    if (oldUserProfile == null) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = oldUserProfile;
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
 });
 
 test("parseKimiStreamText keeps assistant text and tool events separate", () => {

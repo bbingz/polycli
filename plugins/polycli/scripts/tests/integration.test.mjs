@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { createClaudeFixtureReplay } from "./helpers/fixture-replay.mjs";
@@ -474,6 +475,18 @@ function readJsonLine(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8").trim());
 }
 
+function createKimiSessionFixture({ home, cwd, sessionId }) {
+  const realCwd = fs.realpathSync(cwd);
+  const cwdHash = createHash("md5").update(realCwd).digest("hex");
+  fs.mkdirSync(path.join(home, ".kimi", "sessions", cwdHash, sessionId), { recursive: true });
+  fs.writeFileSync(path.join(home, ".kimi", "sessions", cwdHash, sessionId, "context.jsonl"), "{}\n");
+  fs.writeFileSync(
+    path.join(home, ".kimi", "kimi.json"),
+    `${JSON.stringify({ work_dirs: [{ path: realCwd, kaos: "local", last_session_id: sessionId }] })}\n`
+  );
+  return { cwdHash, realCwd };
+}
+
 async function waitForTerminalJob(jobId, context) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -935,6 +948,163 @@ test("integration: ask constrains qwen to emit a visible final answer", async ()
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: gemini ask parses --write and --effort into runtime options", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const argLog = path.join(pluginData, "gemini-flags-argv.jsonl");
+  const fake = createFakeGeminiBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      GEMINI_CLI_BIN: fake.bin,
+      GEMINI_ARGV_LOG: argLog,
+      GEMINI_FIXED_REPLY: "GEMINI_FLAGS_OK",
+    });
+    const ask = await runCompanion(
+      ["ask", "--provider", "gemini", "--write", "--effort", "high", "--json", "__reply=IGNORED"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(ask.code, 0, ask.stderr);
+    const payload = JSON.parse(ask.stdout);
+    assert.equal(payload.response, "GEMINI_FLAGS_OK");
+
+    const logged = readJsonLine(argLog);
+    const approvalIndex = logged.argv.indexOf("--approval-mode");
+    assert.notEqual(approvalIndex, -1);
+    assert.equal(logged.argv[approvalIndex + 1], "auto_edit");
+    const prompt = logged.argv[logged.argv.indexOf("-p") + 1];
+    assert.match(prompt, /^Think step by step\./);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: kimi ask parses --resume-last, --resume, and --fresh", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-home-"));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-cwd-"));
+  const argLog = path.join(pluginData, "kimi-flags-argv.jsonl");
+  const fake = createFakeKimiBin();
+  const sessionId = "33333333-3333-4333-8333-333333333333";
+  try {
+    createKimiSessionFixture({ home, cwd, sessionId });
+    const env = cleanEnv({
+      HOME: home,
+      USERPROFILE: home,
+      CLAUDE_PLUGIN_DATA: pluginData,
+      KIMI_CLI_BIN: fake.bin,
+      KIMI_ARGV_LOG: argLog,
+      KIMI_FIXED_REPLY: "KIMI_FLAGS_OK",
+    });
+
+    const resumeLast = await runCompanion(
+      ["ask", "--provider", "kimi", "--resume-last", "--json", "__reply=IGNORED"],
+      { cwd, env }
+    );
+    assert.equal(resumeLast.code, 0, resumeLast.stderr);
+    let logged = readJsonLine(argLog);
+    assert.deepEqual(logged.argv.slice(logged.argv.indexOf("-r"), logged.argv.indexOf("-r") + 2), ["-r", sessionId]);
+
+    const explicitResume = await runCompanion(
+      ["rescue", "--provider", "kimi", "--resume", sessionId, "--json", "__reply=IGNORED"],
+      { cwd, env }
+    );
+    assert.equal(explicitResume.code, 0, explicitResume.stderr);
+    logged = readJsonLine(argLog);
+    assert.deepEqual(logged.argv.slice(logged.argv.indexOf("-r"), logged.argv.indexOf("-r") + 2), ["-r", sessionId]);
+
+    const fresh = await runCompanion(
+      ["ask", "--provider", "kimi", "--fresh", "--json", "__reply=IGNORED"],
+      { cwd, env }
+    );
+    assert.equal(fresh.code, 0, fresh.stderr);
+    logged = readJsonLine(argLog);
+    assert.equal(logged.argv.includes("-r"), false);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("integration: unsupported flags emit one-line notes and continue", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fakeKimi = createFakeKimiBin();
+  const fakeQwen = createFakeQwenBin();
+  try {
+    const kimiWrite = await runCompanion(
+      ["ask", "--provider", "kimi", "--write", "--json", "__reply=PONG"],
+      {
+        cwd: process.cwd(),
+        env: cleanEnv({
+          CLAUDE_PLUGIN_DATA: pluginData,
+          KIMI_CLI_BIN: fakeKimi.bin,
+        }),
+      }
+    );
+    assert.equal(kimiWrite.code, 0, kimiWrite.stderr);
+    assert.equal(
+      kimiWrite.stderr,
+      "Kimi doesn't distinguish plan-mode from write-mode; it will act on what the prompt asks.\n"
+    );
+
+    const qwenResume = await runCompanion(
+      ["ask", "--provider", "qwen", "--resume-last", "--json", "__reply=PONG"],
+      {
+        cwd: process.cwd(),
+        env: cleanEnv({
+          CLAUDE_PLUGIN_DATA: pluginData,
+          QWEN_CLI_BIN: fakeQwen.bin,
+        }),
+      }
+    );
+    assert.equal(qwenResume.code, 0, qwenResume.stderr);
+    assert.match(qwenResume.stderr, /^--resume-last is kimi-specific; qwen will proceed without it\.\n$/);
+  } finally {
+    fakeKimi.cleanup();
+    fakeQwen.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: kimi explicit resume mismatch emits a warning after spawn", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-home-"));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-cwd-"));
+  const fake = createFakeKimiBin();
+  const requested = "123e4567-e89b-42d3-a456-426614174000";
+  const returned = "33333333-3333-4333-8333-333333333333";
+  try {
+    createKimiSessionFixture({ home, cwd, sessionId: requested });
+    const result = await runCompanion(
+      ["ask", "--provider", "kimi", "--resume", requested, "--json", "__reply=PONG"],
+      {
+        cwd,
+        env: cleanEnv({
+          HOME: home,
+          USERPROFILE: home,
+          CLAUDE_PLUGIN_DATA: pluginData,
+          KIMI_CLI_BIN: fake.bin,
+        }),
+      }
+    );
+
+    assert.equal(result.code, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.resumeMismatched, true);
+    assert.match(
+      result.stderr,
+      new RegExp(`Warning: requested --resume ${requested} did not match returned session ${returned}`)
+    );
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
   }
 });
 

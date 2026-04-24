@@ -1144,23 +1144,42 @@ var DEFAULT_TIMEOUT_MS3 = 3e5;
 var AUTH_CHECK_TIMEOUT_MS3 = 3e4;
 var PROMPT_STDIN_THRESHOLD2 = 1e5;
 var GEMINI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var VALID_GEMINI_EFFORTS = /* @__PURE__ */ new Set(["low", "medium", "high"]);
 var TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
+function applyGeminiEffort(prompt, effort) {
+  const promptText = String(prompt ?? "");
+  if (!VALID_GEMINI_EFFORTS.has(effort)) return promptText;
+  if (effort === "high") {
+    return `Think step by step. Be thorough and consider edge cases.
+
+${promptText}`;
+  }
+  if (effort === "low") {
+    return `Be concise. Give the most direct answer.
+
+${promptText}`;
+  }
+  return promptText;
+}
 function buildGeminiInvocation({
   prompt,
   model = null,
   approvalMode = "plan",
+  write = false,
+  effort = null,
   outputFormat = "json",
   resumeSessionId = null,
   extraArgs = [],
   bin = GEMINI_BIN
 } = {}) {
-  const promptText = String(prompt ?? "");
+  const promptText = applyGeminiEffort(prompt, effort);
   const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD2;
   const args = ["-p", useStdin ? "" : promptText, "-o", outputFormat];
+  const resolvedApprovalMode = write ? "auto_edit" : approvalMode;
   if (model) args.push("-m", model);
-  args.push("--approval-mode", approvalMode);
+  args.push("--approval-mode", resolvedApprovalMode);
   if (resumeSessionId) args.push("--resume", resumeSessionId);
   if (extraArgs.length > 0) args.push(...extraArgs);
   return {
@@ -1280,6 +1299,8 @@ function runGeminiPrompt({
   prompt,
   model = null,
   approvalMode = "plan",
+  write = false,
+  effort = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS3,
   extraArgs = [],
@@ -1291,6 +1312,8 @@ function runGeminiPrompt({
     prompt,
     model,
     approvalMode,
+    write,
+    effort,
     outputFormat: "json",
     resumeSessionId,
     extraArgs,
@@ -1315,6 +1338,8 @@ function runGeminiPromptStreaming({
   prompt,
   model = null,
   approvalMode = "plan",
+  write = false,
+  effort = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS3,
   extraArgs = [],
@@ -1329,6 +1354,8 @@ function runGeminiPromptStreaming({
     prompt,
     model,
     approvalMode,
+    write,
+    effort,
     outputFormat: "stream-json",
     resumeSessionId,
     extraArgs,
@@ -1375,15 +1402,153 @@ function runGeminiPromptStreaming({
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 var KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
 var DEFAULT_TIMEOUT_MS4 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS4 = 3e4;
 var PROMPT_STDIN_THRESHOLD_BYTES = 1e5;
 var KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var KIMI_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var TRANSIENT_PROBE_ERROR_PATTERNS2 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
 var KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path.join(os.homedir(), ".kimi", "config.toml");
+function kimiJsonPath() {
+  return path.join(os.homedir(), ".kimi", "kimi.json");
+}
+function kimiSessionsDir() {
+  return path.join(os.homedir(), ".kimi", "sessions");
+}
+function resolveRealCwd(cwd) {
+  return fs.realpathSync(cwd || process.cwd());
+}
+function md5CwdPath(realCwd) {
+  return createHash("md5").update(realCwd).digest("hex");
+}
+function formatKimiResumeError(reason, { sessionId, cwd, errCode } = {}) {
+  const cwdBase = cwd ? path.basename(cwd) : "?";
+  if (reason === "invalid-uuid") return "invalid sessionId format; expected UUID.";
+  if (reason === "no-prior-session") return `no prior kimi session for this directory (${cwdBase}). Use /polycli:ask --provider kimi to start one.`;
+  if (reason === "kimi-json-malformed") return "~/.kimi/kimi.json is malformed; cannot resolve last session.";
+  if (reason === "session-not-found") return `session ${sessionId} not found for this directory (${cwdBase}).`;
+  if (reason === "session-empty") return `session ${sessionId} has no stored messages; cannot resume.`;
+  if (reason === "fs-error") return `filesystem access failed${errCode ? ` \u2014 ${errCode}` : ""}. Check permissions on ~/.kimi/.`;
+  return `kimi resume validation failed: ${reason}`;
+}
+function readKimiLastSession(realCwd) {
+  let raw;
+  try {
+    raw = fs.readFileSync(kimiJsonPath(), "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return { ok: false, reason: "no-prior-session" };
+    return { ok: false, reason: "fs-error", errCode: error.code };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, reason: "kimi-json-malformed" };
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.work_dirs)) {
+    return { ok: false, reason: "kimi-json-malformed" };
+  }
+  const entry = parsed.work_dirs.find((item) => item && item.path === realCwd && item.kaos === "local");
+  if (!entry || typeof entry.last_session_id !== "string" || entry.last_session_id.length === 0) {
+    return { ok: false, reason: "no-prior-session" };
+  }
+  return { ok: true, sessionId: entry.last_session_id };
+}
+function validateKimiResumeTarget({ realCwd, cwdHash, sessionId }) {
+  if (typeof sessionId !== "string" || !KIMI_UUID_RE.test(sessionId)) {
+    return { ok: false, reason: "invalid-uuid" };
+  }
+  const sessionDir = path.join(kimiSessionsDir(), cwdHash, sessionId);
+  const contextPath = path.join(sessionDir, "context.jsonl");
+  try {
+    const dirStat = fs.statSync(sessionDir);
+    if (!dirStat.isDirectory()) {
+      return { ok: false, reason: "session-not-found" };
+    }
+    const contextStat = fs.statSync(contextPath);
+    if (!contextStat.isFile() || contextStat.size === 0) {
+      return { ok: false, reason: "session-empty" };
+    }
+    return { ok: true };
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return {
+        ok: false,
+        reason: fs.existsSync(sessionDir) ? "session-empty" : "session-not-found"
+      };
+    }
+    return { ok: false, reason: "fs-error", errCode: error.code, realCwd };
+  }
+}
+function resolveKimiResumeSession({
+  cwd,
+  resumeSessionId = null,
+  resumeLast = false,
+  fresh = false
+} = {}) {
+  let realCwd;
+  try {
+    realCwd = resolveRealCwd(cwd);
+  } catch (error) {
+    return {
+      ok: false,
+      status: 1,
+      error: formatKimiResumeError("fs-error", { errCode: error.code }),
+      reason: "fs-error",
+      cwdHash: null,
+      realCwd: null
+    };
+  }
+  const cwdHash = md5CwdPath(realCwd);
+  if (fresh || !resumeSessionId && !resumeLast) {
+    return { ok: true, sessionId: null, cwdHash, realCwd };
+  }
+  if (resumeSessionId && resumeLast) {
+    return {
+      ok: false,
+      status: 2,
+      error: "Choose only one of --resume-last, --resume, or --fresh.",
+      reason: "mutually-exclusive-resume-flags",
+      cwdHash,
+      realCwd
+    };
+  }
+  let sessionId = resumeSessionId;
+  if (resumeLast) {
+    const last = readKimiLastSession(realCwd);
+    if (!last.ok) {
+      return {
+        ok: false,
+        status: last.reason === "invalid-uuid" ? 2 : 1,
+        error: formatKimiResumeError(last.reason, { cwd: realCwd, errCode: last.errCode }),
+        reason: last.reason,
+        cwdHash,
+        realCwd
+      };
+    }
+    sessionId = last.sessionId;
+  }
+  const validation = validateKimiResumeTarget({ realCwd, cwdHash, sessionId });
+  if (!validation.ok) {
+    return {
+      ok: false,
+      status: validation.reason === "invalid-uuid" ? 2 : 1,
+      error: formatKimiResumeError(validation.reason, {
+        sessionId,
+        cwd: realCwd,
+        errCode: validation.errCode
+      }),
+      reason: validation.reason,
+      cwdHash,
+      realCwd
+    };
+  }
+  return { ok: true, sessionId, cwdHash, realCwd };
+}
 function readKimiDefaultModel() {
   try {
     const text = fs.readFileSync(KIMI_CONFIG_PATH, "utf8");
@@ -1492,13 +1657,19 @@ function runKimiPrompt({
   timeout = DEFAULT_TIMEOUT_MS4,
   extraArgs = [],
   resumeSessionId = null,
+  resumeLast = false,
+  fresh = false,
   defaultModel = null,
   bin = KIMI_BIN
 } = {}) {
+  const resume = resolveKimiResumeSession({ cwd, resumeSessionId, resumeLast, fresh });
+  if (!resume.ok) {
+    return { ok: false, error: resume.error, status: resume.status };
+  }
   const invocation = buildKimiInvocation({
     prompt,
     model,
-    resumeSessionId,
+    resumeSessionId: resume.sessionId,
     extraArgs,
     bin
   });
@@ -1523,7 +1694,7 @@ function runKimiPrompt({
     stderr: result.stderr,
     priority: ["stdout", "stderr", "file"]
   });
-  return {
+  return withKimiResumeWarnings({
     ok: Boolean(parsed.response.trim()),
     response: parsed.response,
     events: parsed.events,
@@ -1531,7 +1702,7 @@ function runKimiPrompt({
     sessionId: session.sessionId,
     model: parsed.model ?? model ?? defaultModel,
     error: parsed.response.trim() ? null : "kimi produced no visible text"
-  };
+  }, resume.sessionId);
 }
 function runKimiPromptStreaming({
   prompt,
@@ -1540,16 +1711,22 @@ function runKimiPromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS4,
   extraArgs = [],
   resumeSessionId = null,
+  resumeLast = false,
+  fresh = false,
   defaultModel = null,
   onEvent = () => {
   },
   bin = KIMI_BIN,
   spawnImpl
 } = {}) {
+  const resume = resolveKimiResumeSession({ cwd, resumeSessionId, resumeLast, fresh });
+  if (!resume.ok) {
+    return Promise.resolve({ ok: false, error: resume.error, status: resume.status });
+  }
   const invocation = buildKimiInvocation({
     prompt,
     model,
-    resumeSessionId,
+    resumeSessionId: resume.sessionId,
     extraArgs,
     bin
   });
@@ -1578,15 +1755,26 @@ function runKimiPromptStreaming({
       priority: ["stdout", "stderr", "file"]
     });
     const hasVisibleText = Boolean(parsed.response.trim());
-    return {
+    return withKimiResumeWarnings({
       ...result,
       ...parsed,
       sessionId: session.sessionId,
       model: parsed.model ?? model ?? defaultModel,
       ok: result.ok && hasVisibleText,
       error: result.ok ? hasVisibleText ? null : "kimi produced no visible text" : result.error
-    };
+    }, resume.sessionId);
   });
+}
+function withKimiResumeWarnings(result, requestedSessionId) {
+  if (!requestedSessionId || !result.ok || !result.sessionId || result.sessionId === requestedSessionId) {
+    return result;
+  }
+  const warning = `Warning: requested --resume ${requestedSessionId} did not match returned session ${result.sessionId}`;
+  return {
+    ...result,
+    resumeMismatched: true,
+    warnings: [...result.warnings || [], warning]
+  };
 }
 
 // packages/polycli-runtime/src/qwen.js
@@ -4653,6 +4841,68 @@ function parseExecutionMode(options) {
     background: Boolean(options.background)
   };
 }
+function emitNote(line) {
+  if (!line) return;
+  process5.stderr.write(`${line}
+`);
+}
+function emitRuntimeWarnings(result = {}) {
+  if (!Array.isArray(result.warnings)) return;
+  for (const warning of result.warnings) {
+    if (typeof warning === "string" && warning.trim()) {
+      process5.stderr.write(`${warning.trim()}
+`);
+    }
+  }
+}
+function validateEffort(effort) {
+  if (effort == null) return;
+  if (!["low", "medium", "high"].includes(effort)) {
+    throw new Error("--effort must be one of: low, medium, high.");
+  }
+}
+function buildProviderFlagRuntimeOptions(provider, options) {
+  const runtimeOptions = {};
+  const notes = [];
+  const resumeFlags = [
+    options["resume-last"] ? "--resume-last" : null,
+    options.resume ? "--resume" : null,
+    options.fresh ? "--fresh" : null
+  ].filter(Boolean);
+  if (provider === "kimi") {
+    if (resumeFlags.length > 1) {
+      throw new Error("Choose only one of --resume-last, --resume, or --fresh.");
+    }
+    if (options["resume-last"]) runtimeOptions.resumeLast = true;
+    if (options.resume) runtimeOptions.resumeSessionId = options.resume;
+    if (options.fresh) runtimeOptions.fresh = true;
+    if (options.write) {
+      notes.push("Kimi doesn't distinguish plan-mode from write-mode; it will act on what the prompt asks.");
+    }
+    if (options.effort) {
+      notes.push(`--effort is gemini-specific; ${provider} will proceed without it.`);
+    }
+    return { runtimeOptions, notes };
+  }
+  if (provider === "gemini") {
+    if (options.write) runtimeOptions.write = true;
+    if (options.effort) runtimeOptions.effort = options.effort;
+    if (resumeFlags.length > 0) {
+      notes.push(`${resumeFlags.join(", ")} ${resumeFlags.length === 1 ? "is" : "are"} kimi-specific; ${provider} will proceed without ${resumeFlags.length === 1 ? "it" : "them"}.`);
+    }
+    return { runtimeOptions, notes };
+  }
+  if (options.write) {
+    notes.push(`--write is gemini-specific; ${provider} will proceed without it.`);
+  }
+  if (options.effort) {
+    notes.push(`--effort is gemini-specific; ${provider} will proceed without it.`);
+  }
+  if (resumeFlags.length > 0) {
+    notes.push(`${resumeFlags.join(", ")} ${resumeFlags.length === 1 ? "is" : "are"} kimi-specific; ${provider} will proceed without ${resumeFlags.length === 1 ? "it" : "them"}.`);
+  }
+  return { runtimeOptions, notes };
+}
 function buildExecutionEnvelope(execution, result) {
   return {
     provider: execution.provider,
@@ -4710,6 +4960,7 @@ async function runForegroundExecution(execution, asJson) {
   } finally {
     cleanupRuntimeOptions(execution.runtimeOptions);
   }
+  emitRuntimeWarnings(result);
   if (result.timing) {
     appendTimingRecord(workspaceRoot, result.timing);
   }
@@ -5039,19 +5290,22 @@ async function runHealth(rawArgs) {
 }
 function parsePromptExecution(rawArgs, kind) {
   const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json", "background", "wait"],
-    valueOptions: ["provider", "model"],
+    booleanOptions: ["json", "background", "wait", "resume-last", "fresh", "write"],
+    valueOptions: ["provider", "model", "resume", "effort"],
     aliasMap: { m: "model" }
   });
   const { provider, remainingPositionals } = resolveProvider({
     provider: options.provider,
     positionals
   });
+  validateEffort(options.effort);
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
   const userPrompt = remainingPositionals.join(" ").trim();
   if (!userPrompt) {
     throw new Error(`Missing prompt text for ${kind}.`);
   }
+  const providerFlags = buildProviderFlagRuntimeOptions(provider, options);
+  for (const note of providerFlags.notes) emitNote(note);
   return {
     options,
     execution: {
@@ -5068,7 +5322,8 @@ function parsePromptExecution(rawArgs, kind) {
       measurementScope: "request",
       runtimeOptions: buildPromptRuntimeOptions({
         provider,
-        kind
+        kind,
+        runtimeOptions: providerFlags.runtimeOptions
       })
     }
   };
