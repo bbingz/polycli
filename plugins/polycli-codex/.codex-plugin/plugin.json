@@ -1,6 +1,6 @@
 {
   "name": "polycli-codex",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Codex skill adapter for the shared polycli companion.",
   "author": {
     "name": "bing"
