@@ -7,7 +7,7 @@ This repository publishes in two different ways:
 
 ## Current Release State
 
-As of `2026-04-29`, the next public patch release prepared in this working tree is:
+As of `2026-04-29`, the current public patch release is:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
 - GitHub release: `v0.6.2`
