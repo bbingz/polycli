@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-04-29 — Claude — add claude-prompting skill + bench path sanitization
+
+- Added `plugins/polycli/skills/claude-prompting/SKILL.md`. Polycli previously had `gemini-prompting` / `kimi-prompting` / `qwen-prompting` / `minimax-prompting` but no per-provider prompt scaffolding for the `claude` provider. The new skill encodes claude-specific prompting guidance (CLAUDE.md does not propagate, same model family, stateless by default, error-surface notes).
+- Hardened `scripts/bench-vs-bare-cli.mjs` with path sanitization: replaces `$HOME` with `~` in all stored stdout/stderr/parsedJson before writing results JSON. Earlier run leaked maintainer-local paths into `results-2026-04-29.json` because qwen rescue output hallucinated absolute paths under the bench cwd; `scripts/tests/open-source-hygiene.test.mjs` caught it.
+- Re-sanitized the published `docs/benchmarks/results-2026-04-29.json` retroactively. `npm test` now passes 287/287.
+
 ## 2026-04-29 — Claude — first benchmark of polycli vs bare-shell CLI invocation
 
 - Added `scripts/bench-vs-bare-cli.mjs`: N=3 live bench comparing path (a) `Bash(<provider> -p)` and path (c) `polycli-companion` for `gemini`/`qwen` × `ask`/`review`/`rescue`. Outputs `docs/benchmarks/results-<date>.{json,md}`.

@@ -97,6 +97,21 @@ function utf8Bytes(s) {
   return Buffer.byteLength(s ?? "", "utf-8");
 }
 
+const HOME = process.env.HOME || "";
+function sanitizePaths(value) {
+  if (value == null) return value;
+  if (typeof value === "string") {
+    return HOME ? value.split(HOME).join("~") : value;
+  }
+  if (Array.isArray(value)) return value.map(sanitizePaths);
+  if (typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = sanitizePaths(v);
+    return out;
+  }
+  return value;
+}
+
 async function runBareShell(provider, prompt) {
   const start = Date.now();
   const { stdout, stderr, code } = await execCmd(provider, ["-p", prompt]);
@@ -108,8 +123,8 @@ async function runBareShell(provider, prompt) {
     boundaryChars: [...stdout].length,
     elapsedMs,
     exitCode: code,
-    stderrSnippet: stderr.slice(0, 300),
-    rawOutput: stdout,
+    stderrSnippet: sanitizePaths(stderr.slice(0, 300)),
+    rawOutput: sanitizePaths(stdout),
   };
 }
 
@@ -141,11 +156,11 @@ async function runPolycli(provider, scenario, prompt) {
     boundaryChars: [...response].length,
     elapsedMs,
     exitCode: code,
-    stderrSnippet: stderr.slice(0, 300),
+    stderrSnippet: sanitizePaths(stderr.slice(0, 300)),
     parseError,
-    rawStdout: stdout,
-    rawParsedJson: parsedJson,
-    extractedResponse: response,
+    rawStdout: sanitizePaths(stdout),
+    rawParsedJson: sanitizePaths(parsedJson),
+    extractedResponse: sanitizePaths(response),
   };
 }
 
