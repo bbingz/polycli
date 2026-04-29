@@ -41,7 +41,7 @@ A common question: if I can shell-call `gemini -p "..."` directly, why install a
 
 Answering honestly requires accounting for **probing cost**. A cold Claude conversation that has never invoked a given CLI must first read its `--help` (several KB) before it knows the right flags. polycli encapsulates that invocation knowledge — the host skips the probing turn entirely.
 
-| Scenario | Provider | Bare-shell + probing | polycli | Δ |
+| Scenario | Provider | Bare-shell + probing[^1] | polycli | Δ |
 |---|---|---|---|---|
 | `ask` | `gemini` | 4069 B | 236 B | **−94%** |
 | `ask` | `qwen` | 8242 B | 164 B | **−98%** |
@@ -49,6 +49,8 @@ Answering honestly requires accounting for **probing cost**. A cold Claude conve
 | `review` | `qwen` | 9633 B | 1389 B | **−86%** |
 | `rescue` | `gemini` | 5364 B | 1289 B | **−76%** |
 | `rescue` | `qwen` | 8848 B | 1026 B | **−88%** |
+
+[^1]: "Bare-shell + probing" = response median bytes + the one-time probing-cost lower bound from `docs/benchmarks/probing-cost.json`. The raw response medians alone (without probing) are visible in the linked results doc.
 
 Without the probing-cost adjustment, boundary bytes between bare-shell and polycli vary by cell, sometimes in polycli's favor, sometimes against — **polycli is not compressing output**, it is amortizing invocation discovery.
 

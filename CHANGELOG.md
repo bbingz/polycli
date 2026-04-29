@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-04-29 — Claude — close CLAUDE.md inheritance investigation + small bench doc fixes
+
+- Investigated the CLAUDE.md inheritance question raised in pilot (parent answered in Chinese, polycli claude in English on the same review task). **Not a bug.** CLAUDE.md inheritance works at the CLI layer (`claude -p`) and the polycli `ask` command — both respect the user's language preference. The English output observed in pilot came from `buildReviewPrompt` (`plugins/polycli/scripts/lib/review.mjs`), whose template is hardcoded English ("You are acting as <provider> inside polycli.", etc.); combined with the English diff payload, models default to English for `review`/`rescue`/`adversarial-review`. Treated as feature, not bug — multi-provider review benefits from a consistent prompt baseline. Spec followup updated.
+- README: clarified "Bare-shell + probing" column meaning with a footnote pointing to `probing-cost.json`. The previous header could read as raw response bytes; clarification follows Codex review feedback.
+- `docs/benchmarks/results-2026-04-29.md`: added a caveat noting that `qwen` `review` run #2 returned 1 byte at `exitCode: 0` (treated as success because exit code, not body, gates the bench's failure count). Median is unaffected; flagged for transparency.
+
 ## 2026-04-29 — Claude — add claude-prompting skill + bench path sanitization
 
 - Added `plugins/polycli/skills/claude-prompting/SKILL.md`. Polycli previously had `gemini-prompting` / `kimi-prompting` / `qwen-prompting` / `minimax-prompting` but no per-provider prompt scaffolding for the `claude` provider. The new skill encodes claude-specific prompting guidance (CLAUDE.md does not propagate, same model family, stateless by default, error-surface notes).
