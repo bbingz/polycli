@@ -6,6 +6,16 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-29 — Claude — README rewrite + i18n + LICENSE
+
+- Rewrote `README.md` from scratch as international-standard, English-default. Added clear hero pitch, "Why polycli" differentiation (4-state timing honesty, no fake unification, direct CLI passthrough), badges (npm version × 2, MIT license, Node ≥20), and a language switcher.
+- Added translations: `README.zh-CN.md` (Simplified Chinese) and `README.ja.md` (Japanese). All three are full peers — not abbreviated versions. Technical terms (`runtime`, `streaming`, `session resume`, `Path B`, `monorepo`) kept in English by convention; Japanese version uses です・ます style.
+- Added root `LICENSE` file (MIT, `Copyright (c) 2025 bbingz`) — the sub-packages already declared MIT, the root file was missing. GitHub `licenseInfo` was previously `null`; this fixes the License badge target and makes the project legally complete by community standards.
+- Fixed dead links: previous README contained absolute paths like `/home/user/-Code-/polycli/...` that did not work on GitHub. All internal links are now repo-relative. Verified every referenced path exists.
+- Restructured: hero → why → hosts/providers → install → quick start → core commands → capability matrix → timing semantics → packages → development → release → contributing → license. Old structure (Who This Is For, Background Jobs, Current Scope) removed or merged.
+
+---
+
 ## 2026-04-29 — Claude — provider CLI upgrades + default-model audit
 
 - Upgraded local provider CLIs to upstream latest: `copilot` 1.0.35 → 1.0.39, `kimi-cli` 1.37.0 → 1.40.0, `mini-agent` (git+main) refreshed to 2026-02-14 commit (deps: pydantic 2.13.2 → 2.13.3, uvicorn 0.44 → 0.46, sse-starlette 3.3 → 3.4). Five other CLIs (claude, gemini, qwen, opencode, pi) already at upstream latest.

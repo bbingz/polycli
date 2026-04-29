@@ -1,267 +1,202 @@
+<div align="center">
+
 # polycli
 
-`polycli` 是一个面向多 AI CLI 的 monorepo，提供两层东西：
+**One command surface across 8 AI coding CLIs, inside the host you already use.**
 
-1. 给最终用户安装的宿主插件和 OpenCode 包
-2. 给仓库维护者复用的 runtime / utils / timing 包
+[![npm: polycli-utils](https://img.shields.io/npm/v/@bbingz/polycli-utils?label=%40bbingz%2Fpolycli-utils&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-utils)
+[![npm: polycli-timing](https://img.shields.io/npm/v/@bbingz/polycli-timing?label=%40bbingz%2Fpolycli-timing&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-timing)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
 
-它的边界保持收窄：
+**English** · [简体中文](./README.zh-CN.md) · [日本語](./README.ja.md)
 
-- 做多 provider CLI 的 companion / wrapper
-- 做独立 timing contract
-- 不做公共 runtime 基类
-- 不做 provider 差异被抹平的伪统一框架
+</div>
 
-## Who This Is For
+---
 
-### 1. 终端用户 / AI CLI 使用者
+## What is polycli?
 
-如果你的目标是“装上插件，然后尽快开始用”，先看这一节，不需要先理解 monorepo 内部结构。
+`polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, and **`mini-agent`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing` — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
 
-当前支持的宿主：
+It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-- Claude Code
-- Codex
-- GitHub Copilot CLI
-- OpenCode
+## Why polycli?
 
-当前接入的 provider runtime：
+Most "multi-AI orchestrators" lie about capability differences to fit a uniform API. polycli does the opposite:
 
-- `claude`
-- `copilot`
-- `opencode`
-- `pi`
-- `gemini`
-- `kimi`
-- `qwen`
-- `minimax`
+- **Honest 4-state timing** — every metric is `measured`, `zero`, `missing`, or `unsupported`, never collapsed. You always know which provider could not be measured vs. which one ran with zero output.
+- **No fake unification** — provider differences (session resume, tool support, structured output) are surfaced explicitly in a capability matrix, not hidden behind glue code.
+- **Direct CLI passthrough** — spawns the official upstream CLIs (`gemini`, `kimi`, etc.) as subprocesses. You inherit your existing auth and configs; no API keys are sent to polycli, no protocol shims to maintain.
+- **Multi-host, single surface** — the same command vocabulary works across Claude Code, Codex, Copilot CLI, and OpenCode. Switch hosts without re-learning.
 
-### 2. 仓库维护者 / 发布者
+## Hosts and providers
 
-如果你的目标是“在这个仓库里改实现、跑测试、发版”，看后面的 `Packages`、`Development` 和 `Release` 章节。
+| Hosts (where polycli is installed) | Providers (what polycli can call) |
+|---|---|
+| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `mini-agent` |
 
-## Install And First Run
+See [Capability matrix](#capability-matrix) for what each provider supports.
+
+## Installation
 
 ### Claude Code
-
-安装：
 
 ```bash
 claude plugin marketplace add bbingz/polycli
 claude plugin install polycli@polycli-hosts
 ```
 
-第一次验证：
-
-```text
-/polycli:health
-/polycli:timing --provider qwen
-```
-
 ### Codex
-
-安装：
 
 ```bash
 codex plugin marketplace add bbingz/polycli
 ```
 
-第一次验证：
-
-```text
-/polycli-codex:polycli health
-/polycli-codex:polycli timing --provider qwen --json
-```
-
 ### GitHub Copilot CLI
-
-安装：
 
 ```bash
 copilot plugin marketplace add bbingz/polycli
 copilot plugin install polycli-copilot@polycli-hosts
 ```
 
-第一次验证：
-
-```text
-polycli health
-polycli timing --provider qwen --json
-```
-
 ### OpenCode
-
-安装：
 
 ```bash
 opencode plugin @bbingz/polycli-opencode
 ```
 
-第一次验证思路：
+## Quick start
 
-- 运行 `polycli_run`，参数传 `["health","--json"]`
-- 或直接运行 `polycli_timing` 读取 timing 记录
-
-## User Mental Model
-
-无论宿主是什么，`polycli` 都是同一套命令面：
-
-- `setup`: 检查 provider CLI 是否安装、是否已登录
-- `health`: 对 provider 做端到端短 prompt 探测，返回 `healthyProviders`，并写入 timing
-- `ask`: 单次提问
-- `rescue`: 长一点的排障/分析任务
-- `review`: 基于当前 git diff 做代码审查
-- `adversarial-review`: 更偏攻击面的审查
-- `status`: 查看后台 job
-- `result`: 读取后台 job 结果
-- `cancel`: 取消后台 job
-- `timing`: 查看 timing 历史和聚合
-
-第一次接入某个 provider、登录状态变化、或 provider 命令失败时，跑一次：
+After installing, verify the integration in your host:
 
 ```text
-health
+# Claude Code
+/polycli:health
+
+# Codex
+/polycli-codex:polycli health
+
+# GitHub Copilot CLI
+polycli health
+
+# OpenCode (call polycli_run with ["health","--json"])
 ```
 
-它会检查所有 integrated provider。只诊断单个 provider 时再传 `health --provider <provider>`。
-
-日常使用不需要每次先跑 `setup` 或 `health`。provider 已出现在 `healthyProviders` 后，直接运行：
+`health` runs an end-to-end probe against every provider with valid auth and reports which ones are alive in `healthyProviders`. After that, daily use is direct:
 
 ```text
-ask --provider <provider> ...
-review --provider <provider> ...
-rescue --provider <provider> ...
+ask --provider qwen "explain this stack trace ..."
+review --provider claude            # reviews current git diff
+rescue --provider gemini "..."      # longer task, can be backgrounded
 ```
 
-`setup --provider <provider>` 是更便宜的诊断命令，只检查安装和认证状态，不发送模型请求。需要长任务时再用 `--background` 配合 `status/result`，最后用 `timing` 看记录是否已经落库。
+For longer tasks, append `--background` and use `status <jobId>` / `result <jobId>` to retrieve.
 
-## Provider Capability Matrix
+## Core commands
 
-不同 provider 底层 CLI 能力不同，`polycli` 如实暴露差异而不做假统一。下表来自 `packages/polycli-runtime/src/registry.js` 的 `RUNTIMES` + `TIMING_SUPPORT`。`✓` = 支持；`—` = 设计上不支持（会在 timing 里报 `unsupported`，不会 fake 成 `missing` 或 0）。
+All commands work identically across hosts:
 
-| provider | streaming | sessionResume | structuredOutput | ttft | gen | tail | tool |
-|----------|:---------:|:-------------:|:----------------:|:----:|:---:|:----:|:----:|
-| claude   | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| copilot  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| gemini   | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| kimi     | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| qwen     | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| minimax  | ✓ | — | — | — | — | — | — |
-| opencode | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| pi       | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Command | What it does |
+|---|---|
+| `setup` | Check provider CLI install + auth status (cheap; no model call) |
+| `health` | End-to-end short-prompt probe; returns `healthyProviders` and writes timing |
+| `ask` | One-shot prompt |
+| `review` | Code review against the current `git diff` |
+| `rescue` | Longer triage / analysis task |
+| `adversarial-review` | Attack-surface-oriented review |
+| `timing` | Inspect timing history and aggregates |
+| `status` / `result` / `cancel` | Background-job control |
 
-说明：
+Run `health` only when (a) integrating a provider for the first time, (b) auth state changes, or (c) a provider command fails. Daily use does not need it as a preamble.
 
-- `cold` / `retry` 两项对所有 provider 都是 `unsupported`（上游 CLI 无稳定信号，刻意不测，见 `CLAUDE.md`）。`total` 对所有 provider 都是 `measured`。未列入表。
-- `minimax` 走日志回放协议，不支持 session resume / 结构化输出 / 细粒度 streaming timing — 这是 provider 固有限制，不是 polycli 的 bug。`total` 仍会正确测量。
-- 只有 `qwen` 声明 `tool: true` — 这意味着 `qwen` 未触发 tool 调用时 `tool` 报 `missing`（可观测但未发生），其余 provider 报 `unsupported`（能力上不跟踪）。两个状态语义不同，不要合并。
-- `ask` 响应的顶层 `model` 字段在 v0.4.1 后对 8 个 provider 都填值；见 `docs/release-notes-v0.4.1.md` 的 live smoke 结果。
+## Capability matrix
 
-## Background Jobs
+Source of truth: [`packages/polycli-runtime/src/registry.js`](./packages/polycli-runtime/src/registry.js) — `RUNTIMES` + `TIMING_SUPPORT`. `✓` = supported. `—` = not applicable by design (reported as `unsupported`, not faked as `missing` or `0`).
 
-`ask` / `rescue` / `review` / `adversarial-review` 支持 `--background`。
+| Provider | streaming | sessionResume | structuredOutput | ttft | gen | tail | tool |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `claude` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `copilot` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `gemini` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `kimi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `qwen` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `mini-agent` | ✓ | — | — | — | — | — | — |
+| `opencode` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `pi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 
-通用流程：
+Notes:
 
-1. 启动：`... --background`
-2. 轮询：`status <jobId>` 或 `status <jobId> --wait`
-3. 取结果：`result <jobId>`
-4. 必要时取消：`cancel <jobId>`
+- `cold` and `retry` are `unsupported` for every provider. Upstream CLIs lack a stable signal, and polycli refuses to fake them. `total` is always `measured`.
+- `mini-agent` uses log replay; no session resume, no structured output, no fine-grained streaming timing. This is an upstream limitation, not a polycli bug.
+- Only `qwen` declares `tool: true`. When no tool is invoked, `qwen` reports `missing` (observable but absent); the others report `unsupported` (capability-level not tracked). The two states are not interchangeable.
 
-## Current Scope
+## Timing semantics
 
-当前仓库已经落地三层能力：
+The polycli timing contract unifies **state expression**, not numbers. Every metric carries one of four explicit states:
 
-- `@bbingz/polycli-utils`
-- `@bbingz/polycli-timing`
-- `@bbingz/polycli-runtime`
-- multi-host plugin adapters (`Claude` / `Codex` / `Copilot` / `OpenCode`)
+| State | Meaning |
+|---|---|
+| `measured` | Real, non-zero value |
+| `zero` | Explicitly contributed zero |
+| `missing` | Measurable in principle, not captured this run |
+| `unsupported` | Provider/runtime fundamentally lacks this metric |
 
-`v1` 阶段只有前两个包；从 `v2` 开始，`claude` / `copilot` / `opencode` / `pi` / `gemini` / `kimi` / `qwen` / `minimax` 的 runtime adapter 已经进入本仓。旧 provider plugin repo 只作为 reference implementation，不再作为运行依赖。
+This stops cross-provider comparisons from collapsing "no capability", "no data", and "contributed 0" into a single column.
+
+Each timing record also carries:
+
+- `runtimePersistence` — `ephemeral | session | daemon`
+- `measurementScope` — `request | turn | job`
 
 ## Packages
 
-- `@bbingz/polycli-utils`
-  - 参数解析、进程执行、stream 解码、NDJSON、atomic save、session id、stream JSON parsing
-- `@bbingz/polycli-timing`
-  - timing schema、运行时校验、percentiles、capability-aware aggregation
-- `@bbingz/polycli-runtime`
-  - provider registry、availability/auth probes、prompt args builder、foreground / streaming execution、stream / log parsing
+| Package | Purpose |
+|---|---|
+| [`@bbingz/polycli-utils`](./packages/polycli-utils) | Args parsing, process exec, stream decoding, NDJSON, atomic save, session-id, stream JSON parsing |
+| [`@bbingz/polycli-timing`](./packages/polycli-timing) | Timing schema, runtime validation, percentiles, capability-aware aggregation |
+| [`@bbingz/polycli-runtime`](./packages/polycli-runtime) | Provider registry, availability/auth probes, invocation builders, foreground/streaming execution, stream/log parsing |
 
-## Timing Contract
+Plugin distributions:
 
-`polycli-timing` 的核心不是“统一 6 段数值”，而是**统一状态表达**。每个 metric 都必须明确标记为：
-
-- `measured`: 有数据且大于 0
-- `zero`: 明确贡献了 0
-- `missing`: 理论上能测，但本次没拿到
-- `unsupported`: provider / runtime 根本不具备这个指标
-
-这保证跨 AI 能力对比时不会把“没能力”“没数据”“贡献 0”混成一列。
-
-此外，record 里保留两个关键字段：
-
-- `runtimePersistence`: `ephemeral | session | daemon`
-- `measurementScope`: `request | turn | job`
-
-## Repository Map
-
-- `packages/polycli-utils`
-- `packages/polycli-timing`
-- `packages/polycli-runtime`
-- `plugins/polycli`
-- `plugins/polycli-codex`
-- `plugins/polycli-copilot`
-- `plugins/polycli-opencode`
-- `docs/`
+- [`plugins/polycli`](./plugins/polycli) — Claude Code host plugin
+- [`plugins/polycli-codex`](./plugins/polycli-codex) — Codex
+- [`plugins/polycli-copilot`](./plugins/polycli-copilot) — GitHub Copilot CLI
+- [`plugins/polycli-opencode`](./plugins/polycli-opencode) — OpenCode
 
 ## Development
 
-要求：
-
-- Node.js `>=20`
-- 在仓库根目录安装依赖：`npm install`
-
-常用验证：
+Requirements: Node.js `>=20`.
 
 ```bash
-npm test
-node --test packages/polycli-utils/test/*.test.js
-node --test packages/polycli-timing/test/*.test.js
-node --test packages/polycli-runtime/test/*.test.js
+npm install
+npm test                                       # build:plugins + full suite
+node --test packages/polycli-runtime/test/     # focused per-package run
+npm run build:plugins                          # rebundle plugin distributions
+npm run release:check                          # publish-readiness checks
 ```
 
-插件打包：
-
-```bash
-npm run build:plugins
-```
-
-发布前检查：
-
-```bash
-npm run release:check
-npm run pack:opencode
-```
-
-## Maintainer Notes
-
-维护时优先看这些文件：
-
-- [packages/polycli-runtime/README.md](/home/user/-Code-/polycli/packages/polycli-runtime/README.md)
-- [plugins/polycli/README.md](/home/user/-Code-/polycli/plugins/polycli/README.md)
-- [docs/release.md](/home/user/-Code-/polycli/docs/release.md)
-- [docs/session-memory-2026-04-22.md](/home/user/-Code-/polycli/docs/session-memory-2026-04-22.md)
-
-与宿主插件发布相关的 marketplace 文件：
-
-- [.claude-plugin/marketplace.json](/home/user/-Code-/polycli/.claude-plugin/marketplace.json)
-- [.agents/plugins/marketplace.json](/home/user/-Code-/polycli/.agents/plugins/marketplace.json)
-- [.github/plugin/marketplace.json](/home/user/-Code-/polycli/.github/plugin/marketplace.json)
+`npm test` already runs `build:plugins` first — do not invoke them sequentially.
 
 ## Release
 
-当前发布流说明见：
+Procedure: [`docs/release.md`](./docs/release.md). Per-version notes: [`docs/release-notes-*.md`](./docs/).
 
-- [docs/release.md](/home/user/-Code-/polycli/docs/release.md)
-- [docs/release-notes-v0.4.0.md](/home/user/-Code-/polycli/docs/release-notes-v0.4.0.md)
+## Architecture and contributing
+
+Read these before opening a PR:
+
+- [`AGENTS.md`](./AGENTS.md) — repository map, editing rules, delivery expectations
+- [`CLAUDE.md`](./CLAUDE.md) — Claude Code-specific patches
+- [`docs/polycli-proposal.md`](./docs/polycli-proposal.md) — main architecture and product context
+- [`docs/roadmap.md`](./docs/roadmap.md) — live open-work list
+
+Hard architectural constraints (please honor):
+
+- Provider-specific protocol parsing belongs in `polycli-runtime`, never in `polycli-utils`.
+- The four timing states must not be collapsed. `cold` and `retry` deliberately remain unmeasured (no stable upstream signal).
+- Legacy sibling repos (`gemini-plugin-cc` / `qwen-plugin-cc` / `kimi-plugin-cc` / `minimax-plugin-cc`) are read-only references — `grep` is fine, no edits.
+
+## License
+
+[MIT](./LICENSE) — see [`LICENSE`](./LICENSE) and individual package metadata under [`packages/*/package.json`](./packages/).
