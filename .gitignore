@@ -5,3 +5,9 @@ tmp/
 dist/
 .worktrees/
 *.tgz
+
+# Claude auto-memory (symlinked from ~/.claude/projects/.../memory)
+.memory/
+
+# Claude Code worktree state (agent isolation runs)
+.claude/

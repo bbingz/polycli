@@ -6,6 +6,18 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-29 — Claude — provider CLI upgrades + default-model audit
+
+- Upgraded local provider CLIs to upstream latest: `copilot` 1.0.35 → 1.0.39, `kimi-cli` 1.37.0 → 1.40.0, `mini-agent` (git+main) refreshed to 2026-02-14 commit (deps: pydantic 2.13.2 → 2.13.3, uvicorn 0.44 → 0.46, sse-starlette 3.3 → 3.4). Five other CLIs (claude, gemini, qwen, opencode, pi) already at upstream latest.
+- Verified kimi 1.40 and refreshed mini-agent stream-json compatibility via live probes. `kimi.test.js` 13/13 still pass; live `runKimiPromptStreaming` extracts response and sessionId correctly. mini-agent live probe parses 48 progress events, strips ANSI, extracts response.
+- Ran 8-CLI default-model audit by spawning each provider with a "what model are you" prompt and reading polycli's `result.model`. Surfaced two latent bugs:
+  - **`gemini.js:135`** takes `Object.keys(parsed.stats?.models ?? {})[0]` — first *attempted* model, not actually-used. Misleads when gemini-cli auto-falls-back from a 429-throttled preview (e.g. `gemini-3.1-pro-preview` → `gemini-2.5-pro` due to Google server-side preview capacity).
+  - **`kimi.js:174`/`:264`** has `readKimiDefaultModel()` reading `~/.kimi/config.toml`, but it's only consumed by `getKimiAuthStatus`, never threaded into `runKimiPromptStreaming` / `runKimiPrompt` results — so `result.model` is null even when config has a default.
+- Both fixes drafted as specs in `tasks/model-extraction-fixes.md` for Codex implementation. Non-breaking; target v0.6.x patch or v0.7.
+- Memory: added `reference_cli_provider_versions.md` (per-CLI version-check + upgrade commands + gotchas), `reference_default_model_extraction_caveats.md` (which providers' `result.model` is unreliable and why), and `feedback_no_ask_for_nondestructive.md` (skip confirmation gates for sandboxed/read-only ops).
+
+---
+
 ## 2026-04-24 — Claude — close R8 bookkeeping post-ship
 
 - Relaxed the CLAUDE.md legacy-repo constraint to a permanent "allow grep, no edits" form (dropped the "R8 期间" conditional now that R8 is complete and R8g was cancelled).
