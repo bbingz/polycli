@@ -1,0 +1,22 @@
+{
+  "collectedAt": "2026-04-29",
+  "method": "Measured raw stdout bytes that a cold Claude conversation would absorb to discover how to invoke each CLI: `which <provider>` + `<provider> --help`. Excludes any trial invocation. This is a conservative LOWER BOUND on probing cost; actual cold-start usually adds at least one trial call (another ~200-2000 bytes) before the user's real task runs.",
+  "perProvider": {
+    "gemini": {
+      "bytes": 3843,
+      "breakdown": {
+        "which": 25,
+        "help": 3818
+      },
+      "notes": "Lower bound. Realistic cold-start adds a trial -p call."
+    },
+    "qwen": {
+      "bytes": 8077,
+      "breakdown": {
+        "which": 23,
+        "help": 8054
+      },
+      "notes": "Lower bound. Realistic cold-start adds a trial -p call."
+    }
+  }
+}

@@ -35,6 +35,25 @@ Most "multi-AI orchestrators" lie about capability differences to fit a uniform 
 - **Direct CLI passthrough** — spawns the official upstream CLIs (`gemini`, `kimi`, etc.) as subprocesses. You inherit your existing local auth and configs; polycli does not collect, upload, or host API keys.
 - **Multi-host, single surface** — the same command vocabulary works across Claude Code, Codex, Copilot CLI, and OpenCode. Switch hosts without re-learning.
 
+## Cost vs raw shell calls
+
+A common question: if I can shell-call `gemini -p "..."` directly, why install a plugin?
+
+Answering honestly requires accounting for **probing cost**. A cold Claude conversation that has never invoked a given CLI must first read its `--help` (several KB) before it knows the right flags. polycli encapsulates that invocation knowledge — the host skips the probing turn entirely.
+
+| Scenario | Provider | Bare-shell + probing | polycli | Δ |
+|---|---|---|---|---|
+| `ask` | `gemini` | 4069 B | 236 B | **−94%** |
+| `ask` | `qwen` | 8242 B | 164 B | **−98%** |
+| `review` | `gemini` | 5667 B | 1733 B | **−69%** |
+| `review` | `qwen` | 9633 B | 1389 B | **−86%** |
+| `rescue` | `gemini` | 5364 B | 1289 B | **−76%** |
+| `rescue` | `qwen` | 8848 B | 1026 B | **−88%** |
+
+Without the probing-cost adjustment, boundary bytes between bare-shell and polycli vary by cell, sometimes in polycli's favor, sometimes against — **polycli is not compressing output**, it is amortizing invocation discovery.
+
+Methodology: live CLI calls, N=3 medians (one snapshot, not a stable distribution estimate). Probing cost is a lower bound (`which <provider>` + `<provider> --help`; excludes trial calls and error retries). Bytes ≠ tokens — tokenization rates vary across English, CJK, and code. See [`docs/benchmarks/results-2026-04-29.md`](./docs/benchmarks/results-2026-04-29.md) and [`tasks/bench-vs-bare-cli-spec.md`](./tasks/bench-vs-bare-cli-spec.md) for raw data, caveats, and falsification conditions.
+
 ## Hosts and providers
 
 | Hosts (where polycli is installed) | Providers (what polycli can call) |

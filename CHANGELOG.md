@@ -6,6 +6,23 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-04-29 — Claude — first benchmark of polycli vs bare-shell CLI invocation
+
+- Added `scripts/bench-vs-bare-cli.mjs`: N=3 live bench comparing path (a) `Bash(<provider> -p)` and path (c) `polycli-companion` for `gemini`/`qwen` × `ask`/`review`/`rescue`. Outputs `docs/benchmarks/results-<date>.{json,md}`.
+- Collected `docs/benchmarks/probing-cost.json` (lower bound: `which` + `--help` only): gemini 3843 B, qwen 8077 B.
+- Headline: with probing cost amortized, polycli reduces parent-context bytes by 69-98% across all six scenario × provider cells. Without probing cost, boundary bytes vary by cell with no consistent direction. polycli's token advantage comes from invocation-knowledge encapsulation, not output compression.
+- Added README "Cost vs raw shell calls" section pointing at the results.
+- Spec lifecycle (`tasks/bench-vs-bare-cli-spec.md`): two rounds of Codex sign-off, post-pilot amendment switching from fixture replay to live CLI calls (fixture replay was erasing probing cost), and a final Codex round-3 review that surfaced three blocks (missing `rescue` scenario, raw stdout not preserved for diagnosis, ±15% noise claim incorrect) — all fixed before publish.
+- Path (b) disciplined-bare-shell deferred — needs Anthropic SDK to drive Claude programmatically; pilot data suggests (b) and (c) are close on boundary bytes.
+- Followups noted in spec: add `claude-prompting` skill (no per-provider scaffolding for the `claude` provider in polycli today); investigate global CLAUDE.md inheritance into polycli subagent.
+
+## 2026-04-29 — Codex — close post-release maintenance
+
+- Merged all open Dependabot PRs after the v0.6.2 publication: `actions/setup-node` 4 -> 6, `actions/checkout` 4 -> 6, and `zod` 4.1.8 -> 4.3.6.
+- Confirmed the public repo has no open PRs, `main` is clean at `fe4c6d6`, the latest release remains `v0.6.2`, and the published npm packages remain aligned with the release notes.
+- Re-ran `npm test`, `npm run release:check`, and `npm audit --audit-level=moderate`; all passed, with 287/287 tests and 0 vulnerabilities.
+- Confirmed GitHub Actions CI succeeded on the three post-release `main` push runs. GitHub social preview remains a repository settings UI upload using `docs/assets/social-preview.png`; GitHub CLI exposes no social preview image option.
+
 ## 2026-04-29 — Codex — finish v0.6.2 public release polish
 
 - Added GitHub Actions CI, README release/OpenCode badges, and a social preview PNG derived from the README header SVG.
