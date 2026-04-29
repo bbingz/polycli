@@ -56,6 +56,8 @@ Without the probing-cost adjustment, boundary bytes between bare-shell and polyc
 
 Methodology: live CLI calls, N=3 medians (one snapshot, not a stable distribution estimate). Probing cost is a lower bound (`which <provider>` + `<provider> --help`; excludes trial calls and error retries). Bytes ≠ tokens — tokenization rates vary across English, CJK, and code. See [`docs/benchmarks/results-2026-04-29.md`](./docs/benchmarks/results-2026-04-29.md) and [`tasks/bench-vs-bare-cli-spec.md`](./tasks/bench-vs-bare-cli-spec.md) for raw data, caveats, and falsification conditions.
 
+Workflows where bare-shell has **no equivalent at all** (adversarial-review, background job control, session resume, multi-host consistency, etc.) are listed separately in [`docs/benchmarks/capability-matrix.md`](./docs/benchmarks/capability-matrix.md) — those are presence/absence claims, not byte ratios.
+
 ## Hosts and providers
 
 | Hosts (where polycli is installed) | Providers (what polycli can call) |

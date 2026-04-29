@@ -116,7 +116,7 @@ This must be applied uniformly across all (b) runs.
 2. `docs/benchmarks/probing-cost.md` — manual-collected probing-cost transcripts per provider, summed into report
 3. README pointer: short paragraph + link to the most recent results doc
 
-**Path (b) deferred**: requires driving Claude programmatically (Anthropic SDK) to run the disciplined-summary step. The repo currently has no Anthropic SDK dep and pilot data suggests (b) and (c) will be close (polycli's compression at the boundary appears minimal — the dominant advantage is probing cost). Add (b) in a follow-up if (a) vs (c) leaves the question open.
+**Path (b) permanently deferred (2026-04-29)**: requires driving Claude programmatically (Anthropic SDK) to run the disciplined-summary step. The (a) vs (c) data with N=3 already gives a clear directional answer (polycli reduces parent-context bytes by 69–98% across all six cells; the advantage is probing-cost amortization, not output compression). Implementing (b) would refine the comparison from "polycli vs raw bare-shell" to "polycli vs disciplined-summarized bare-shell" but is unlikely to change the positioning — both (b) and (c) skip raw-stdout dumping; only (c) skips probing cost. The cost-benefit (Anthropic SDK dep + ~18 paid API calls per re-run) does not justify this refinement. Closed.
 
 ## Follow-up (separate PR, different cadence)
 

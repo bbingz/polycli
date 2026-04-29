@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-04-29 — Claude — capability matrix for workflows with no bare-shell equivalent
+
+- Added `docs/benchmarks/capability-matrix.md` listing workflows where bare-shell has no meaningful equivalent: adversarial-review, background job control, session resume, stop-review-gate hook, 4-state timing, multi-host consistency (Claude Code / Codex / Copilot / OpenCode), provider `health` probe, probing-cost amortization. Companion to `bench-vs-bare-cli-spec.md`. These are presence/absence claims, not byte ratios — forcing them into a token comparison would be dishonest because there's nothing to compare against.
+- README "Cost vs raw shell calls" section gets a one-line pointer to the capability matrix.
+- Spec followup #3 (Path b disciplined-bare-shell) closed as **permanent deferral**: the (a) vs (c) data already gives a clear directional answer (69–98% reduction across cells, advantage from probing-cost amortization). Cost-benefit (Anthropic SDK dep + ~18 paid API calls per re-run) does not justify the refinement.
+
 ## 2026-04-29 — Claude — close CLAUDE.md inheritance investigation + small bench doc fixes
 
 - Investigated the CLAUDE.md inheritance question raised in pilot (parent answered in Chinese, polycli claude in English on the same review task). **Not a bug.** CLAUDE.md inheritance works at the CLI layer (`claude -p`) and the polycli `ask` command — both respect the user's language preference. The English output observed in pilot came from `buildReviewPrompt` (`plugins/polycli/scripts/lib/review.mjs`), whose template is hardcoded English ("You are acting as <provider> inside polycli.", etc.); combined with the English diff payload, models default to English for `review`/`rescue`/`adversarial-review`. Treated as feature, not bug — multi-provider review benefits from a consistent prompt baseline. Spec followup updated.
