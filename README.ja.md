@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./docs/assets/readme-header.svg" alt="polycli: 複数の AI コーディング CLI を 1 つのコマンド体系で操作" width="100%">
+
 # polycli
 
 **普段使っている AI ホストの中で、8 種類の AI コーディング CLI を 1 つのコマンド体系から操作できます。**

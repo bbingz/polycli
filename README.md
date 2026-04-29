@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./docs/assets/readme-header.svg" alt="polycli: one command surface across AI coding CLIs" width="100%">
+
 # polycli
 
 **One command surface across 8 AI coding CLIs, inside the host you already use.**

@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./docs/assets/readme-header.svg" alt="polycli：用一套命令驱动多个 AI coding CLI" width="100%">
+
 # polycli
 
 **在你已经在用的 AI host 里，用一套命令驱动 8 个 AI coding CLI。**
