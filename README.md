@@ -191,10 +191,13 @@ Procedure: [`docs/release.md`](./docs/release.md). Per-version notes: [`docs/rel
 
 Read these before opening a PR:
 
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — contribution workflow and release-facing checks
 - [`AGENTS.md`](./AGENTS.md) — repository map, editing rules, delivery expectations
 - [`CLAUDE.md`](./CLAUDE.md) — Claude Code-specific patches
 - [`docs/polycli-proposal.md`](./docs/polycli-proposal.md) — main architecture and product context
 - [`docs/roadmap.md`](./docs/roadmap.md) — live open-work list
+
+Security reports: see [`SECURITY.md`](./SECURITY.md).
 
 Hard architectural constraints (please honor):
 

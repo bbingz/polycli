@@ -191,10 +191,13 @@ npm run release:check                          # リリース前チェック
 
 PR を送る前に必ず読んでください:
 
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — contribution workflow and release-facing checks
 - [`AGENTS.md`](./AGENTS.md) — リポジトリマップ、編集ルール、提出基準
 - [`CLAUDE.md`](./CLAUDE.md) — Claude Code 固有のパッチ
 - [`docs/polycli-proposal.md`](./docs/polycli-proposal.md) — 主要なアーキテクチャ / プロダクトの背景
 - [`docs/roadmap.md`](./docs/roadmap.md) — 進行中のタスクリスト
+
+セキュリティ報告: [`SECURITY.md`](./SECURITY.md) を参照してください。
 
 固いアーキテクチャ制約 (遵守してください):
 

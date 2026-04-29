@@ -191,10 +191,13 @@ npm run release:check                          # 发布前校验
 
 提 PR 之前请读：
 
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) —— 贡献流程与 release-facing 检查
 - [`AGENTS.md`](./AGENTS.md) —— 仓库地图、编辑规则、交付预期
 - [`CLAUDE.md`](./CLAUDE.md) —— Claude Code 专属补丁
 - [`docs/polycli-proposal.md`](./docs/polycli-proposal.md) —— 主要架构 / 产品上下文
 - [`docs/roadmap.md`](./docs/roadmap.md) —— 实时进度清单
+
+安全问题报告：见 [`SECURITY.md`](./SECURITY.md)。
 
 硬架构约束（请遵守）：
 
