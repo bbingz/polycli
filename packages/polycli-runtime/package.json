@@ -4,8 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "@bbingz/polycli-timing": "1.0.0",
-    "@bbingz/polycli-utils": "1.0.0"
+    "@bbingz/polycli-timing": "1.0.1",
+    "@bbingz/polycli-utils": "1.0.1"
   },
   "exports": {
     ".": "./src/index.js"

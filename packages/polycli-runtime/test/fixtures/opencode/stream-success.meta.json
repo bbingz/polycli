@@ -9,7 +9,7 @@
     "--format",
     "json",
     "--dir",
-    "/home/user/-Code-/polycli",
+    "/repo",
     "--dangerously-skip-permissions"
   ],
   "expected": {

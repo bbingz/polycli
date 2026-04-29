@@ -26,11 +26,8 @@ const codexManifest = readJson("plugins/polycli-codex/.codex-plugin/plugin.json"
 const claudeManifest = readJson("plugins/polycli/.claude-plugin/plugin.json");
 const copilotManifest = readJson("plugins/polycli-copilot/plugin.json");
 const opencodeManifest = readJson("plugins/polycli-opencode/package.json");
-const workspacePackages = [
-  readJson("packages/polycli-utils/package.json"),
-  readJson("packages/polycli-timing/package.json"),
-  readJson("packages/polycli-runtime/package.json"),
-];
+const utilsPackage = readJson("packages/polycli-utils/package.json");
+const timingPackage = readJson("packages/polycli-timing/package.json");
 const runtimePackage = readJson("packages/polycli-runtime/package.json");
 
 assertPluginEntry(codexMarketplace, {
@@ -51,9 +48,10 @@ assertPluginEntry(copilotMarketplace, {
 assert.equal(codexManifest.version, claudeManifest.version);
 assert.equal(copilotManifest.version, claudeManifest.version);
 assert.equal(opencodeManifest.version, claudeManifest.version);
-for (const workspacePackage of workspacePackages) {
-  assert.equal(workspacePackage.version, "1.0.0", `${workspacePackage.name} must stay on the workspace 1.0.0 line`);
-}
+assert.match(utilsPackage.version, /^1\.\d+\.\d+$/, `${utilsPackage.name} must stay on the v1 line`);
+assert.match(timingPackage.version, /^1\.\d+\.\d+$/, `${timingPackage.name} must stay on the v1 line`);
+assert.equal(runtimePackage.dependencies?.["@bbingz/polycli-utils"], utilsPackage.version);
+assert.equal(runtimePackage.dependencies?.["@bbingz/polycli-timing"], timingPackage.version);
 assert.equal(runtimePackage.private, true, `${runtimePackage.name} must remain private`);
 assert.equal(Array.isArray(codexMarketplace.plugins), true);
 assert.equal(Array.isArray(claudeMarketplace.plugins), true);

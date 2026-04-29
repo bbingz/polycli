@@ -1,6 +1,6 @@
 {
   "name": "@bbingz/polycli-utils",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Low-semantic-risk utilities shared by polycli provider runtimes: args parsing, process execution, stream decoding, NDJSON I/O, atomic save with lockfile, session-id matching, and stream JSON parsing.",
   "license": "MIT",
   "homepage": "https://github.com/bbingz/polycli/tree/main/packages/polycli-utils",

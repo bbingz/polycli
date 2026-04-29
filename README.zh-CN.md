@@ -27,7 +27,7 @@
 
 - **诚实的 4 态 timing** —— 每个指标都是 `measured`、`zero`、`missing` 或 `unsupported`，绝不折叠。你永远清楚是哪个 provider 没法测，还是哪个只是恰好没数据，或是恰好贡献了 0。
 - **不假装统一** —— provider 之间的差异（session resume、tool 支持、结构化输出）写在 capability matrix 里明示，不用胶水代码遮掩。
-- **直通 CLI** —— 直接 spawn 官方 CLI（`gemini`、`kimi` 等）作为子进程。复用你现有的登录态和配置；polycli 拿不到任何 API key，也不需要维护协议适配。
+- **直通 CLI** —— 直接 spawn 官方 CLI（`gemini`、`kimi` 等）作为子进程。复用你本机已有的登录态和配置；polycli 不收集、不上传、不托管 API key。
 - **多 host、单一命令面** —— 同一套命令在 Claude Code、Codex、Copilot CLI、OpenCode 都生效。换 host 不用重学。
 
 ## Host 和 Provider

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Also read the repo root [AGENTS.md](/home/user/-Code-/polycli/AGENTS.md) for shared monorepo constraints and root verification commands.
+Also read the repo root [AGENTS.md](../../AGENTS.md) for shared monorepo constraints and root verification commands.
 
 ## Package Purpose
 

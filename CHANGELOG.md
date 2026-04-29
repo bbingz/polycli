@@ -6,6 +6,16 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-29 — Codex — prepare v0.6.2 open-source hygiene patch
+
+- Prepared host plugin manifests and OpenCode package for `0.6.2`; prepared `@bbingz/polycli-utils` and `@bbingz/polycli-timing` for `1.0.1`.
+- Fixed the timing package tarball so `@bbingz/polycli-timing/schema` resolves to a packed `timing.schema.json`.
+- Added package-local MIT `LICENSE` files for all public npm packages and open-source packaging tests that verify export targets and license inclusion from real `npm pack --dry-run --json` output.
+- Removed the OpenCode adapter dependency on `@opencode-ai/plugin`, replacing it with a tiny local wrapper plus `zod`; `npm audit --audit-level=moderate` now reports 0 vulnerabilities.
+- Scrubbed public fixtures and package AGENTS files of maintainer-local paths, host auth metadata, local memory metadata, and provider reasoning signatures; added a hygiene regression test for those patterns.
+- Replaced the flaky wall-clock concurrency assertion in the health integration test with fake-provider start/end event overlap verification.
+- `npm run release:check` passes end-to-end with 286/286 tests and publish dry-runs for `@bbingz/polycli-opencode@0.6.2`, `@bbingz/polycli-utils@1.0.1`, and `@bbingz/polycli-timing@1.0.1`.
+
 ## 2026-04-29 — Claude — v0.6.1 docs/legal patch shipped
 
 - Bumped 6 manifest/package versions from `0.6.0` to `0.6.1`: `plugins/polycli-opencode/package.json`, `.claude-plugin/marketplace.json` (× 2 entries), `.github/plugin/marketplace.json` (× 2 entries), `plugins/polycli-codex/.codex-plugin/plugin.json`, `plugins/polycli/.claude-plugin/plugin.json`, `plugins/polycli-copilot/plugin.json`. `@bbingz/polycli-utils` and `@bbingz/polycli-timing` stay at `1.0.0` (no source changes).

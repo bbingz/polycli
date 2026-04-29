@@ -2,10 +2,16 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { tool } from "@opencode-ai/plugin";
+import { z } from "zod";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMPANION = path.resolve(HERE, "./scripts/polycli-companion.bundle.mjs");
+
+function tool(input) {
+  return input;
+}
+
+tool.schema = z;
 
 function runCompanion(argv) {
   return execFileSync(process.execPath, [COMPANION, ...argv], {

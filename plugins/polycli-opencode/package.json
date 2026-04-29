@@ -1,6 +1,6 @@
 {
   "name": "@bbingz/polycli-opencode",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
@@ -15,6 +15,6 @@
     "directory": "plugins/polycli-opencode"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.14.20"
+    "zod": "^4.1.8"
   }
 }

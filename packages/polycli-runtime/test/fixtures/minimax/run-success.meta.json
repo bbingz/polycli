@@ -7,7 +7,7 @@
     "-t",
     "Reply with exactly HELLO_MINIMAX_FIXTURE and nothing else.",
     "-w",
-    "/home/user/-Code-/polycli"
+    "/repo"
   ],
   "expected": {
     "response": "HELLO_MINIMAX_FIXTURE",

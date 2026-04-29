@@ -27,7 +27,7 @@ Most "multi-AI orchestrators" lie about capability differences to fit a uniform 
 
 - **Honest 4-state timing** — every metric is `measured`, `zero`, `missing`, or `unsupported`, never collapsed. You always know which provider could not be measured vs. which one ran with zero output.
 - **No fake unification** — provider differences (session resume, tool support, structured output) are surfaced explicitly in a capability matrix, not hidden behind glue code.
-- **Direct CLI passthrough** — spawns the official upstream CLIs (`gemini`, `kimi`, etc.) as subprocesses. You inherit your existing auth and configs; no API keys are sent to polycli, no protocol shims to maintain.
+- **Direct CLI passthrough** — spawns the official upstream CLIs (`gemini`, `kimi`, etc.) as subprocesses. You inherit your existing local auth and configs; polycli does not collect, upload, or host API keys.
 - **Multi-host, single surface** — the same command vocabulary works across Claude Code, Codex, Copilot CLI, and OpenCode. Switch hosts without re-learning.
 
 ## Hosts and providers

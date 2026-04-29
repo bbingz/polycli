@@ -22,6 +22,10 @@ function createFakeQwenBin() {
 const fs = require("node:fs");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const args = process.argv.slice(2);
+function logEvent(event) {
+  if (!process.env.QWEN_EVENT_LOG) return;
+  fs.appendFileSync(process.env.QWEN_EVENT_LOG, JSON.stringify({ provider: "qwen", event, time: Date.now() }) + "\\n");
+}
 if (args.includes("--version")) {
   process.stdout.write("qwen 0.0.0-test\\n");
   process.exit(0);
@@ -46,6 +50,7 @@ const reply = process.env.QWEN_FIXED_REPLY || (replyMatch ? replyMatch[1] : prom
 const appendSystemIndex = args.indexOf("--append-system-prompt");
 const hasAppendSystem = appendSystemIndex >= 0 && Boolean(args[appendSystemIndex + 1]);
 (async () => {
+  logEvent("start");
   process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "11111111-1111-1111-1111-111111111111", model: "qwen-test" }) + "\\n");
   if (delay > 0) await sleep(delay);
   if (useTool) {
@@ -66,6 +71,7 @@ const hasAppendSystem = appendSystemIndex >= 0 && Boolean(args[appendSystemIndex
   }
   if (tailDelay > 0) await sleep(tailDelay);
   process.stdout.write(JSON.stringify({ type: "result", result: reply, is_error: false, permission_denials: [] }) + "\\n");
+  logEvent("end");
 })();
 `,
     { mode: 0o755 }
@@ -143,6 +149,10 @@ function createFakeKimiBin() {
 const fs = require("node:fs");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const args = process.argv.slice(2);
+function logEvent(event) {
+  if (!process.env.KIMI_EVENT_LOG) return;
+  fs.appendFileSync(process.env.KIMI_EVENT_LOG, JSON.stringify({ provider: "kimi", event, time: Date.now() }) + "\\n");
+}
 if (args.includes("-V")) {
   process.stdout.write("kimi 0.0.0-test\\n");
   process.exit(0);
@@ -160,6 +170,7 @@ const tailDelay = tailDelayMatch ? Number.parseInt(tailDelayMatch[1], 10) : 0;
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
 const reply = process.env.KIMI_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
 (async () => {
+  logEvent("start");
   process.stderr.write("To resume: kimi -r 33333333-3333-4333-8333-333333333333\\n");
   if (delay > 0) await sleep(delay);
   if (process.env.KIMI_REQUIRE_NO_THINKING === "1" && !noThinking) {
@@ -174,6 +185,7 @@ const reply = process.env.KIMI_FIXED_REPLY || (replyMatch ? replyMatch[1] : prom
     process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "text", text: reply }], model: "kimi-test" }) + "\\n");
   }
   if (tailDelay > 0) await sleep(tailDelay);
+  logEvent("end");
 })();
 `,
     { mode: 0o755 }
@@ -878,6 +890,7 @@ test("integration: health without provider probes providers concurrently", async
   const fakeQwen = createFakeQwenBin();
   const fakeKimi = createFakeKimiBin();
   const missingBin = path.join(pluginData, "missing-provider-bin");
+  const eventLog = path.join(pluginData, "health-events.ndjson");
   try {
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
@@ -893,15 +906,24 @@ test("integration: health without provider probes providers concurrently", async
       KIMI_FIXED_REPLY: "POLYCLI_HEALTH_OK",
       QWEN_DELAY_MS: "600",
       KIMI_DELAY_MS: "600",
+      QWEN_EVENT_LOG: eventLog,
+      KIMI_EVENT_LOG: eventLog,
     });
-    const startedAt = Date.now();
     const health = await runCompanion(["health", "--json"], {
       cwd: process.cwd(),
       env,
     });
-    const elapsedMs = Date.now() - startedAt;
     assert.equal(health.code, 0, health.stderr);
-    assert.equal(elapsedMs < 3_000, true, `expected concurrent probes, took ${elapsedMs}ms`);
+    const events = fs.readFileSync(eventLog, "utf8").trim().split(/\n+/).map((line) => JSON.parse(line));
+    const qwenStart = events.find((event) => event.provider === "qwen" && event.event === "start")?.time;
+    const qwenEnd = events.find((event) => event.provider === "qwen" && event.event === "end")?.time;
+    const kimiStart = events.find((event) => event.provider === "kimi" && event.event === "start")?.time;
+    const kimiEnd = events.find((event) => event.provider === "kimi" && event.event === "end")?.time;
+    assert.equal(typeof qwenStart, "number");
+    assert.equal(typeof qwenEnd, "number");
+    assert.equal(typeof kimiStart, "number");
+    assert.equal(typeof kimiEnd, "number");
+    assert.equal(qwenStart < kimiEnd && kimiStart < qwenEnd, true, `expected overlapping probes, saw ${JSON.stringify(events)}`);
 
     const timing = await runCompanion(["timing", "--json", "--history", "10"], {
       cwd: process.cwd(),
