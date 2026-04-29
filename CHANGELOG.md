@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ---
 
+## 2026-04-29 — Claude — v0.6.1 docs/legal patch shipped
+
+- Bumped 6 manifest/package versions from `0.6.0` to `0.6.1`: `plugins/polycli-opencode/package.json`, `.claude-plugin/marketplace.json` (× 2 entries), `.github/plugin/marketplace.json` (× 2 entries), `plugins/polycli-codex/.codex-plugin/plugin.json`, `plugins/polycli/.claude-plugin/plugin.json`, `plugins/polycli-copilot/plugin.json`. `@bbingz/polycli-utils` and `@bbingz/polycli-timing` stay at `1.0.0` (no source changes).
+- Drafted [`docs/release-notes-v0.6.1.md`](./docs/release-notes-v0.6.1.md) — docs/legal patch only: README rewrite + i18n (en/zh-CN/ja), root `LICENSE`, dead-absolute-path fix, latent fix specs filed in `tasks/`.
+- Updated [`docs/release.md`](./docs/release.md) "Current Release State" to v0.6.1.
+
+---
+
 ## 2026-04-29 — Claude — README rewrite + i18n + LICENSE
 
 - Rewrote `README.md` from scratch as international-standard, English-default. Added clear hero pitch, "Why polycli" differentiation (4-state timing honesty, no fake unification, direct CLI passthrough), badges (npm version × 2, MIT license, Node ≥20), and a language switcher.

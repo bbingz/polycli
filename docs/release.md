@@ -7,11 +7,11 @@ This repository publishes in two different ways:
 
 ## Current Release State
 
-As of `2026-04-24`, the latest published public release is:
+As of `2026-04-29`, the latest published public release is:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
-- GitHub release: `v0.6.0`
-- npm package: `@bbingz/polycli-opencode@0.6.0`
+- GitHub release: `v0.6.1`
+- npm package: `@bbingz/polycli-opencode@0.6.1`
 - npm packages: `@bbingz/polycli-utils@1.0.0`, `@bbingz/polycli-timing@1.0.0`
 
 Verified release paths:
