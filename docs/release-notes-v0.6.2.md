@@ -11,6 +11,11 @@ Open-source hygiene and packaging patch on top of `v0.6.1`.
 - Tightened README privacy wording: polycli reuses local provider auth/config and does not collect, upload, or host API keys.
 - Added open-source packaging and hygiene tests so future releases verify tarball export targets, license inclusion, and fixture sanitization.
 - Hardened the multi-provider health concurrency test to assert overlapping fake-provider probe events instead of relying on wall-clock thresholds.
+- Added a README header image plus a matching `docs/assets/social-preview.png` asset for GitHub social preview.
+- Added GitHub Actions CI for Node 20 install, audit, tests, release manifest checks, bundle/fixture validation, host-map validation, and package tarball dry-runs.
+- Made the OpenCode npm package publish surface explicit with `files`, `engines`, `keywords`, `publishConfig`, and `exports`.
+- Expanded hygiene checks to scan every tracked file for maintainer-local metadata.
+- Moved historical review/session handoff documents under `docs/archive/` so top-level docs focus on current release and product material.
 
 ## Verified
 

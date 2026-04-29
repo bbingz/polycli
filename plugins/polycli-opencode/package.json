@@ -9,6 +9,25 @@
   "description": "OpenCode adapter for the shared polycli companion.",
   "license": "MIT",
   "homepage": "https://github.com/bbingz/polycli",
+  "keywords": [
+    "polycli",
+    "opencode",
+    "ai-cli",
+    "developer-tools",
+    "multi-provider"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "index.mjs",
+    "README.md",
+    "LICENSE",
+    "scripts/polycli-companion.bundle.mjs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bbingz/polycli.git",

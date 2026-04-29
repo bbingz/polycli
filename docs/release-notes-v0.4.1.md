@@ -66,7 +66,7 @@ Scope: reliability and interface-hygiene pass on top of v0.4.0, driven by a 5-ag
 ## Notes for Maintainers
 
 - `@bbingz/polycli-opencode` was not published to npm for v0.4.0 despite the tag. The v0.4.1 publish will be the *first real* npm publish of that package; confirm `npm whoami` and `@bbingz` scope access before running `npm publish`.
-- Four review artifacts are landing with this release: `docs/review-2026-04-24.md` (main audit), `docs/review-2026-04-24-followup.md` (release-prep follow-ups), `docs/review-2026-04-24-bugs.md` (B1–B8 runtime observations), `docs/review-2026-04-24-b6-spec.md` (standalone B6 spec + verdict).
+- Four review artifacts are landing with this release: `docs/archive/review-2026-04-24.md` (main audit), `docs/archive/review-2026-04-24-followup.md` (release-prep follow-ups), `docs/archive/review-2026-04-24-bugs.md` (B1–B8 runtime observations), `docs/archive/review-2026-04-24-b6-spec.md` (standalone B6 spec + verdict).
 
 ## Non-Goals / Intentionally Deferred
 

@@ -54,3 +54,15 @@ test("public npm packages include MIT license text", () => {
   }
 });
 
+test("public npm packages declare an explicit publish surface", () => {
+  for (const packageDir of PUBLIC_PACKAGES) {
+    const packageJson = readJson(`${packageDir}/package.json`);
+
+    assert.equal(packageJson.engines?.node, ">=20", `${packageJson.name} must declare Node >=20`);
+    assert.equal(Array.isArray(packageJson.files), true, `${packageJson.name} must declare files`);
+    assert.notEqual(packageJson.files.length, 0, `${packageJson.name} files must not be empty`);
+    assert.equal(typeof packageJson.exports?.["."], "string", `${packageJson.name} must export its root entry`);
+    assert.equal(Array.isArray(packageJson.keywords), true, `${packageJson.name} must declare keywords`);
+    assert.ok(packageJson.keywords.includes("polycli"), `${packageJson.name} keywords must include polycli`);
+  }
+});

@@ -2,9 +2,16 @@
 
 Flat, reverse-chronological log for cross-AI collaboration (Claude / Codex / Gemini / etc.).
 Format: `## YYYY-MM-DD — author — headline` followed by bullets.
-Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md` (single handoff snapshot).
+Separate from `docs/release.md` (release-focused) and `docs/archive/session-memory-*.md` (single handoff snapshot).
 
 ---
+
+## 2026-04-29 — Codex — finish v0.6.2 public release polish
+
+- Added GitHub Actions CI, README release/OpenCode badges, and a social preview PNG derived from the README header SVG.
+- Tightened public package metadata for `@bbingz/polycli-opencode`, `@bbingz/polycli-utils`, and `@bbingz/polycli-timing`.
+- Replaced the long `release:check` shell command with `scripts/check-release.mjs`.
+- Expanded open-source hygiene scanning to all tracked files and archived historical review/session docs under `docs/archive/`.
 
 ## 2026-04-29 — Codex — prepare v0.6.2 open-source hygiene patch
 
@@ -162,7 +169,7 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ## 2026-04-24 — Claude — decide Q1 (publish utils/timing); annotate Q2/Q3 as observing
 
-- User directive on 2026-04-24: publish `@bbingz/polycli-utils` and `@bbingz/polycli-timing` to npm ("能用就应该发"). Extended `docs/review-2026-04-24-v0.5.0-spec.md` with a P1 (Q1) section covering manifest fields, README refresh, v1-public-surface rewrite, `pack:utils` / `pack:timing` scripts, and `release:check` extension with dry-run publishes.
+- User directive on 2026-04-24: publish `@bbingz/polycli-utils` and `@bbingz/polycli-timing` to npm ("能用就应该发"). Extended `docs/archive/review-2026-04-24-v0.5.0-spec.md` with a P1 (Q1) section covering manifest fields, README refresh, v1-public-surface rewrite, `pack:utils` / `pack:timing` scripts, and `release:check` extension with dry-run publishes.
 - Q2 (model fallback sustainability) and Q3 (four-host surface convergence) marked "observing" in `docs/roadmap.md` per user direction: record the concern, do not act until a signal accumulates.
 - Runtime (`@bbingz/polycli-runtime`) stays `"private": true`; this decision applies only to utils + timing.
 
@@ -218,7 +225,7 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 - Pushed `main` + tag `v0.4.1` (HEAD at eaddbbd).
 - GitHub release live at https://github.com/bbingz/polycli/releases/tag/v0.4.1 (notes from `docs/release-notes-v0.4.1.md`).
 - npm: `@bbingz/polycli-opencode@0.4.1` published. Earlier suspicion that v0.4.0 had never reached npm was a token-expired false positive; `npm view` confirms 0.3.0 / 0.4.0 / 0.4.1 all present.
-- Closes the review loop that began with `docs/review-2026-04-24.md`. All 8 bugs from `docs/review-2026-04-24-bugs.md` (B1–B8) plus FU1–FU3 release-prep follow-ups landed. 221/221 tests pass at release tag.
+- Closes the review loop that began with `docs/archive/review-2026-04-24.md`. All 8 bugs from `docs/archive/review-2026-04-24-bugs.md` (B1–B8) plus FU1–FU3 release-prep follow-ups landed. 221/221 tests pass at release tag.
 
 ---
 
@@ -262,11 +269,11 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 - Pushed `main` + tag `v0.4.0` (HEAD at 08f84c3).
 - GitHub release live at https://github.com/bbingz/polycli/releases/tag/v0.4.0 (notes from `docs/release-notes-v0.4.0.md`).
 - npm: `@bbingz/polycli-opencode@0.4.0` published; `npm view` confirms no propagation lag.
-- Closes the review loop that began with `docs/review-2026-04-22.md`. All P0/P1 from that review plus P3 fixture migration landed. 185/185 tests pass at release tag.
+- Closes the review loop that began with `docs/archive/review-2026-04-22.md`. All P0/P1 from that review plus P3 fixture migration landed. 185/185 tests pass at release tag.
 
 ## 2026-04-22 — Claude — Group 4 / 5 / release specs for Codex
 
-- Appended three spec sections to [docs/review-fb64b1e.md](docs/review-fb64b1e.md):
+- Appended three spec sections to [docs/archive/review-fb64b1e.md](docs/archive/review-fb64b1e.md):
   - Group 4: P2 host-plugin hygiene (appendPreview O(n²), previewText emoji, auto-scope shallow-clone diagnostics) — one-commit batch.
   - Group 5: real-CLI saved-stdout fixture migration (per-provider capture list, replay helper design, scope guards against running capture in CI).
   - Release checklist: v0.4.0 step-by-step with explicit Codex / user / Claude role split for each step.
@@ -274,20 +281,20 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ## 2026-04-22 — Claude — Verdict on commit 95b003c (Group 2 + 3 complete)
 
-- Appended verdict A to [docs/review-fb64b1e.md](docs/review-fb64b1e.md): atomic-save durability + `/review` CLI hard constraints both landed; `npm test` 171/171.
-- Codex's Phase 1 research ([docs/review-cli-flags.md](docs/review-cli-flags.md)) corrected 4 of 6 CLI-flag hypotheses from the original review against locally installed CLIs + primary sources.
+- Appended verdict A to [docs/archive/review-fb64b1e.md](docs/archive/review-fb64b1e.md): atomic-save durability + `/review` CLI hard constraints both landed; `npm test` 171/171.
+- Codex's Phase 1 research ([docs/archive/review-cli-flags.md](docs/archive/review-cli-flags.md)) corrected 4 of 6 CLI-flag hypotheses from the original review against locally installed CLIs + primary sources.
 - Non-overridable review constraint decision documented and enforced via `assertNoReviewConstraintOverride`.
 - Original review P0/P1 scope now 100% closed. P2/P3 move to release backlog.
 
 ## 2026-04-22 — Claude — Verdict on commit 6636b7a + Group 2/3 instructions
 
-- Appended verdict to [docs/review-fb64b1e.md](docs/review-fb64b1e.md): Group 1 landed cleanly (P1-C / P1-D / P1-E / registry gemini branch), 152/152 tests passing.
+- Appended verdict to [docs/archive/review-fb64b1e.md](docs/archive/review-fb64b1e.md): Group 1 landed cleanly (P1-C / P1-D / P1-E / registry gemini branch), 152/152 tests passing.
 - Group 2 (atomic-save durability) and Group 3 (/review CLI hard constraints) now have concrete per-file fix specs appended to the same doc, including test plans and scope guards.
-- Group 3 requires a Phase 1 research pass (per-provider CLI flag verification) before Phase 2 code changes; suggested output is a short memo at `docs/review-cli-flags.md`.
+- Group 3 requires a Phase 1 research pass (per-provider CLI flag verification) before Phase 2 code changes; suggested output is a short memo at `docs/archive/review-cli-flags.md`.
 
 ## 2026-04-22 — Claude — Follow-up review of commit fb64b1e
 
-- Authored [docs/review-fb64b1e.md](docs/review-fb64b1e.md): verdict A- on Codex's fix batch.
+- Authored [docs/archive/review-fb64b1e.md](docs/archive/review-fb64b1e.md): verdict A- on Codex's fix batch.
 - All 6 P0 items fixed with correct semantics + 23 new regression tests (npm test: 146/146).
 - P1 fixed: A (transient probe), B (session-id fall-through), G (jobs/<id>.json locking), H (stdout-as-error paths).
 - P1 deferred for next batch: C (generic event.text fallback), D (copilot/opencode type:"error" capture), E (gemini hasVisibleText), F (atomic-save fsync), I (/review CLI hard constraints), plus registry `isTerminalSummaryEvent` gemini branch.
@@ -295,7 +302,7 @@ Separate from `docs/release.md` (release-focused) and `docs/session-memory-*.md`
 
 ## 2026-04-22 — Claude — Full implementation review (for Codex handoff)
 
-- Authored [docs/review-2026-04-22.md](docs/review-2026-04-22.md): 4-agent parallel review across utils+timing, runtime core, 8 provider adapters, and host plugin (~5,200 LoC source, ~117 raw findings).
+- Authored [docs/archive/review-2026-04-22.md](docs/archive/review-2026-04-22.md): 4-agent parallel review across utils+timing, runtime core, 8 provider adapters, and host plugin (~5,200 LoC source, ~117 raw findings).
 - Report is structured as P0 (6 ship blockers) → P1 (9 high-risk themes) → P2 (parser / timing / process / host grouped) → P3 (gaps and nits).
 - Flagged one runtime-core agent recommendation to REJECT: `timing.js:66, 73` hardcoding `cold` / `retry` as `unsupported` is correct per the documented project decision; do not change to `missing`.
 - No source code touched; review doc only.

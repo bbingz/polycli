@@ -6,6 +6,8 @@
 
 **普段使っている AI ホストの中で、8 種類の AI コーディング CLI を 1 つのコマンド体系から操作できます。**
 
+[![GitHub release](https://img.shields.io/github/v/release/bbingz/polycli?label=release&color=111827)](https://github.com/bbingz/polycli/releases)
+[![npm: polycli-opencode](https://img.shields.io/npm/v/@bbingz/polycli-opencode?label=%40bbingz%2Fpolycli-opencode&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-opencode)
 [![npm: polycli-utils](https://img.shields.io/npm/v/@bbingz/polycli-utils?label=%40bbingz%2Fpolycli-utils&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-utils)
 [![npm: polycli-timing](https://img.shields.io/npm/v/@bbingz/polycli-timing?label=%40bbingz%2Fpolycli-timing&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-timing)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)

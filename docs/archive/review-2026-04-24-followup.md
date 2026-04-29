@@ -1,6 +1,6 @@
 # Follow-up Review — 2026-04-24 (post-Codex pass)
 
-Second-pass Codex handoff after the `4b1aae7 Harden polycli provider health and review flows` commit. Verifies completion of `docs/review-2026-04-24.md` F1–F5 and lists the remaining items needed to ship v0.4.1.
+Second-pass Codex handoff after the `4b1aae7 Harden polycli provider health and review flows` commit. Verifies completion of `docs/archive/review-2026-04-24.md` F1–F5 and lists the remaining items needed to ship v0.4.1.
 
 ## Status of the original spec
 

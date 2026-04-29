@@ -1,17 +1,17 @@
 # Roadmap
 
-Snapshot: 2026-04-24 (post-v0.6.0).
+Snapshot: 2026-04-29 (post-v0.6.2 prep).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
-Living document — update when items land, when priorities shift, or when a deferred item becomes urgent. New reviewers: read this **and** the latest `docs/review-*.md` to understand context before acting.
+Living document — update when items land, when priorities shift, or when a deferred item becomes urgent. New reviewers: read this **and** the latest `docs/archive/review-*.md` to understand context before acting.
 
 ---
 
 ## Current state
 
-- Last ship: **v0.6.0** @ `a95e3d8` — see `docs/release-notes-v0.6.0.md`.
-- Tests at release: **277/277** pass.
+- Last prepared release: **v0.6.2** @ `b00f9ab` — see `docs/release-notes-v0.6.2.md`.
+- Tests at release check: **286/286** pass.
 - 8 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode), each with an independent marketplace manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
@@ -26,16 +26,17 @@ Roadmap closure state:
 | Q1 publish utils/timing | Closed | `@bbingz/polycli-utils` and `@bbingz/polycli-timing` are public npm packages. |
 | Q2 model fallback sustainability | Closed as guardrail | Current fallback policy is documented in `docs/model-fallback-policy.md`; host integration locks cached `defaultModel` behavior when a provider stream omits model metadata. |
 | Q3 four-host surface convergence | Closed as accepted asymmetry | `docs/host-command-map.md` is the durable answer; `npm run validate:host-map` prevents command-map drift without forcing hosts into the same UI shape. |
+| Q4 release drift validation | Closed as guardrail | Bundle, fixture, manifest, host-map, open-source hygiene, and public package tarball checks are wired into the release path. |
 
 ---
 
 ## Open Work
 
-### Q4 — Release drift validation
+### Q5 — CI and release publication hygiene
 
-Source: post-v0.6.0 maintenance review.
+Source: post-v0.6.2 open-source readiness review.
 
-Goal: keep generated host bundles, fixture metadata, marketplace manifests, and host command maps from drifting silently during release prep.
+Goal: keep GitHub Actions, GitHub release state, npm package publication, and repository presentation aligned with the release artifacts.
 
 Current guardrails:
 
@@ -43,9 +44,15 @@ Current guardrails:
 - `npm run validate:fixtures` checks real runtime fixture metadata has provider/name/capturedAt/version/argv/expected response fields.
 - `npm run validate:manifests` keeps host plugin versions and marketplace entries aligned.
 - `npm run validate:host-map` keeps host command docs and registered command surfaces aligned.
+- `scripts/tests/open-source-hygiene.test.mjs` scans tracked files for maintainer-local paths and provider-private metadata.
+- `scripts/tests/open-source-packaging.test.mjs` verifies public package export targets, license files, and explicit publish surfaces.
+- GitHub Actions runs Node 20 install, audit, tests, generated-bundle validation, fixture metadata validation, release manifest validation, host-map validation, and tarball dry-runs.
 - `npm run check:review-drift` watches provider review hard-constraint flags that can be checked from local CLI help.
 
-Open watch item: env/config-based review constraints remain partially manual; document any newly automatable check in `docs/review-cli-flags.md` before adding it to `check:review-drift`.
+Open watch items:
+
+- env/config-based review constraints remain partially manual; document any newly automatable check in `docs/archive/review-cli-flags.md` before adding it to `check:review-drift`
+- after each publish, confirm GitHub latest release and npm registry versions match the repo release notes
 
 ---
 

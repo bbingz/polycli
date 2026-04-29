@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Node 20 verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Run tests
+        run: npm test
+
+      - name: Validate generated bundles
+        run: npm run validate:bundles
+
+      - name: Validate fixture metadata
+        run: npm run validate:fixtures
+
+      - name: Validate release manifests
+        run: npm run validate:manifests
+
+      - name: Validate host command map
+        run: npm run validate:host-map
+
+      - name: Check public package tarballs
+        run: |
+          npm pack ./plugins/polycli-opencode --dry-run
+          npm pack ./packages/polycli-utils --dry-run
+          npm pack ./packages/polycli-timing --dry-run

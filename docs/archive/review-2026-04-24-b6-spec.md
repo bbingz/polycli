@@ -21,7 +21,7 @@ Reviewer verdict against the spec:
 
 ---
 
-Original spec (authored before Codex executed) follows. It was the second-pass Codex handoff after commit `150ce3e fix: harden companion error and result handling` closed 7 of 8 bugs from `docs/review-2026-04-24-bugs.md`. B6 was the remaining one.
+Original spec (authored before Codex executed) follows. It was the second-pass Codex handoff after commit `150ce3e fix: harden companion error and result handling` closed 7 of 8 bugs from `docs/archive/review-2026-04-24-bugs.md`. B6 was the remaining one.
 
 ## Context
 

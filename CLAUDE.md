@@ -6,7 +6,7 @@ Claude Code 专属补丁。基础规则见 [AGENTS.md](AGENTS.md)，此处只列
 - [AGENTS.md](AGENTS.md) — repo map、editing rules、delivery expectations
 - [docs/roadmap.md](docs/roadmap.md) — 当前待做 / design questions / explicit non-goals
 - [docs/polycli-v1-public-surface.md](docs/polycli-v1-public-surface.md) — utils/timing 的 v1 npm 公共契约；runtime/provider adapters 仍是内部实现
-- [docs/session-memory-2026-04-22.md](docs/session-memory-2026-04-22.md) — 最近一次 Codex handoff；包含 release state
+- [docs/archive/session-memory-2026-04-22.md](docs/archive/session-memory-2026-04-22.md) — 最近一次 Codex handoff；包含 release state
 
 ## Architecture boundary（硬约束）
 这是 Path B monorepo，**不是** framework。违反以下任一条即为方向错误：

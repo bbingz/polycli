@@ -51,7 +51,7 @@ It is not a shared runtime base class, inheritance framework, or provider protoc
   - `docs/polycli-proposal.md` is the main architecture/product context if present.
   - `docs/roadmap.md` is the live open-work list.
   - `docs/release.md` is the release procedure.
-  - `docs/session-memory-2026-04-22.md` is handoff context from the earlier Codex session if present.
+  - `docs/archive/session-memory-2026-04-22.md` is handoff context from the earlier Codex session if present.
 
 ## Editing Rules
 

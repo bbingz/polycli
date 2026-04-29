@@ -10,7 +10,7 @@ Test rule for this memo:
 
 - "Confirmed" means the flag/config knob exists in the current locally installed CLI and was checked with `--help`, `--version`, local installed source, or official primary docs.
 - "Hard no-tools" means the model should not see or invoke tools at all, not just "write tools ask for approval".
-- Hypotheses from `docs/review-fb64b1e.md` were treated as starting points only. Several were wrong or incomplete.
+- Hypotheses from `docs/archive/review-fb64b1e.md` were treated as starting points only. Several were wrong or incomplete.
 
 ## Versions checked
 

@@ -327,7 +327,7 @@ Read these first in the next session:
 
 1. [README.md](/home/user/-Code-/polycli/README.md)
 2. [docs/release.md](/home/user/-Code-/polycli/docs/release.md)
-3. [docs/session-memory-2026-04-22.md](/home/user/-Code-/polycli/docs/session-memory-2026-04-22.md)
+3. [docs/archive/session-memory-2026-04-22.md](/home/user/-Code-/polycli/docs/archive/session-memory-2026-04-22.md)
 4. [packages/polycli-runtime/README.md](/home/user/-Code-/polycli/packages/polycli-runtime/README.md)
 
 Important implementation files:

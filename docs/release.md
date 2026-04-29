@@ -19,11 +19,13 @@ Verified release paths:
 - `Claude`: marketplace add/install from `bbingz/polycli`
 - `Codex`: marketplace add from `bbingz/polycli`
 - `Copilot`: marketplace add/install from `bbingz/polycli`
-- `OpenCode`: package publish command completed successfully
+- `OpenCode`: `@bbingz/polycli-opencode`
+- public utility packages: `@bbingz/polycli-utils`, `@bbingz/polycli-timing`
 
 Note:
 
-- npm registry read-after-write may briefly lag immediately after the first publish of a new scoped package.
+- npm registry read-after-write may briefly lag immediately after publishing a new package version.
+- GitHub social preview uses `docs/assets/social-preview.png`; upload it from the repository settings UI when the preview needs refreshing.
 
 ## Current Scope
 

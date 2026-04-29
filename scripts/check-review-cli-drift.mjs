@@ -6,7 +6,7 @@
 // Not wired into CI: depends on installed CLIs, which are developer-machine
 // specific. Skipped CLIs are reported as warnings, not failures.
 //
-// Source of truth for expected flags: docs/review-cli-flags.md (P1-I decision).
+// Source of truth for expected flags: docs/archive/review-cli-flags.md (P1-I decision).
 
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -119,7 +119,7 @@ function main() {
     notes: entry.notes,
   }));
 
-  console.log("Review CLI flag drift check — see docs/review-cli-flags.md for rationale.\n");
+  console.log("Review CLI flag drift check — see docs/archive/review-cli-flags.md for rationale.\n");
 
   console.log("CLI flag probes:");
   for (const row of results) {
@@ -137,7 +137,7 @@ function main() {
 
   console.log("");
   if (drifted.length > 0) {
-    console.log(`Drift detected in ${drifted.length} CLI${drifted.length === 1 ? "" : "s"}. Review docs/review-cli-flags.md and the provider's review hard-constraint block in plugins/polycli/scripts/lib/review.mjs.`);
+    console.log(`Drift detected in ${drifted.length} CLI${drifted.length === 1 ? "" : "s"}. Review docs/archive/review-cli-flags.md and the provider's review hard-constraint block in plugins/polycli/scripts/lib/review.mjs.`);
     process.exit(2);
   }
   if (skipped.length > 0) {

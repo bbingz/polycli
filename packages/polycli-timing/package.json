@@ -18,6 +18,9 @@
     "capability-aware"
   ],
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "files": [
     "src",
     "README.md",

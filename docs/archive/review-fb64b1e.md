@@ -1,6 +1,6 @@
 # Commit Review — fb64b1e `fix: harden review follow-up invariants`
 
-Follow-up review of Codex's response to `docs/review-2026-04-22.md`. Written for the next fix-batch.
+Follow-up review of Codex's response to `docs/archive/review-2026-04-22.md`. Written for the next fix-batch.
 
 **Commit stats:** 31 files, +2,350 / -700 lines, 23 new tests (123 → 146 total, all passing).
 
@@ -142,7 +142,7 @@ Group 1 executed cleanly. `npm test` → 152 / 152 passing (+6 new regression te
 **Final status for the original P1 scope:**
 
 - **Group 2 (P1-F atomic-save durability)** — complete. `writeFileAtomic` now uses fd-level flush plus parent-dir fsync, temp files get a `crypto.randomUUID()` suffix, and lock reclaim is owner-PID based with explicit live / dead / PID-reuse coverage.
-- **Group 3 (P1-I `/review` hard constraints)** — complete. Phase 1 findings are recorded in [review-cli-flags.md](/home/user/-Code-/polycli/docs/review-cli-flags.md). `/review` now applies provider-specific hard constraints for `claude`, `gemini`, `copilot`, `opencode`, `pi`, and `minimax`; the constraints are explicitly non-overridable.
+- **Group 3 (P1-I `/review` hard constraints)** — complete. Phase 1 findings are recorded in [review-cli-flags.md](/home/user/-Code-/polycli/docs/archive/review-cli-flags.md). `/review` now applies provider-specific hard constraints for `claude`, `gemini`, `copilot`, `opencode`, `pi`, and `minimax`; the constraints are explicitly non-overridable.
 
 Verification after Group 2 + 3: `npm test` → 171 / 171 passing.
 
@@ -150,7 +150,7 @@ Verification after Group 2 + 3: `npm test` → 171 / 171 passing.
 
 ## Release backlog
 
-Original `docs/review-2026-04-22.md` P0 / P1 scope is now fully cleared. Remaining work moves to release triage only:
+Original `docs/archive/review-2026-04-22.md` P0 / P1 scope is now fully cleared. Remaining work moves to release triage only:
 
 - **P2 items**: parser minor bugs (`args.js` short-option concat, double-quote escapes, `--flag=` empty), `stream.js` `maxBufferBytes`, `spawn.js` `AbortSignal`, host-plugin nits (O(n²) `appendPreview`, emoji slicing in `previewText`, `auto`-scope shallow-clone distinction, etc.).
 - **P3 items**: exit-code `130/143/124` mapping, `listModels` decision, test-fixture migration from synthetic to real-CLI saved stdout.
@@ -173,7 +173,7 @@ Group 2 and Group 3 both landed cleanly. `npm test` → 171 / 171 passing (+19 n
 
 **Group 3 — `/review` CLI hard constraints: complete.**
 
-- Codex delivered a Phase 1 research artifact at [docs/review-cli-flags.md](review-cli-flags.md) (230 lines, all findings verified against locally installed CLI versions with `--help` / official docs / installed source). Four of the six hypotheses from this doc were corrected:
+- Codex delivered a Phase 1 research artifact at [docs/archive/review-cli-flags.md](review-cli-flags.md) (230 lines, all findings verified against locally installed CLI versions with `--help` / official docs / installed source). Four of the six hypotheses from this doc were corrected:
   - claude: `--tools ""` works directly; the exhaustive `--disallowed-tools` list was unnecessary.
   - gemini: `--approval-mode plan` is read-only, not no-tools; correct shape is a one-shot Policy Engine TOML with `toolName = "*"` / `decision = "deny"`, passed via `--policy <tmpfile>`.
   - copilot: `--available-tools ''` is filtered out by the CLI's own normalizer; correct shape is an exhaustive `--excluded-tools` denylist (22 documented tool names).
@@ -204,7 +204,7 @@ Group 2 and Group 3 both landed cleanly. `npm test` → 171 / 171 passing (+19 n
 - **P2**: ~15 items deferred to release-backlog (parser minor bugs, stream/spawn robustness, host-plugin UX nits).
 - **P3**: ~20 items deferred to release-backlog (exit-code mapping, listModels, real-CLI fixture migration).
 
-The original `docs/review-2026-04-22.md` scope is now fully closed. Further work is tracked separately as release-candidate polish.
+The original `docs/archive/review-2026-04-22.md` scope is now fully closed. Further work is tracked separately as release-candidate polish.
 
 ---
 
@@ -500,7 +500,7 @@ claude plugin install polycli@polycli-hosts
 npm view @bbingz/polycli-opencode@0.4.0
 ```
 
-Expect brief 404 propagation lag immediately after first publish — documented in `docs/session-memory-2026-04-22.md`.
+Expect brief 404 propagation lag immediately after first publish — documented in `docs/archive/session-memory-2026-04-22.md`.
 
 ### What to tell Codex
 
