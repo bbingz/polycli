@@ -59,8 +59,8 @@
     </g>
   </g>
 
-  <g transform="translate(620 78)">
-    <text x="0" y="0" class="sans ink" font-size="28" font-weight="820">Hosts</text>
+  <g transform="translate(608 78)">
+    <text x="95" y="0" text-anchor="middle" class="sans ink" font-size="28" font-weight="820">Hosts</text>
     <text x="455" y="0" text-anchor="middle" class="sans ink" font-size="28" font-weight="820">Providers</text>
 
     <g transform="translate(0 28)">
@@ -79,10 +79,11 @@
 
     <g transform="translate(238 28)">
       <rect x="0" y="0" width="54" height="274" rx="27" fill="#121826" filter="url(#softShadow)"/>
-      <path d="M27 38 L27 236" class="wireAccent"/>
-      <circle cx="27" cy="62" r="9" fill="#18a999"/>
-      <circle cx="27" cy="137" r="9" fill="#3b82f6"/>
-      <circle cx="27" cy="212" r="9" fill="#f97316"/>
+      <path d="M27 42 L27 232" class="wireAccent"/>
+      <circle cx="27" cy="48" r="8" fill="#18a999"/>
+      <circle cx="27" cy="106" r="8" fill="#3b82f6"/>
+      <circle cx="27" cy="164" r="8" fill="#8b5cf6"/>
+      <circle cx="27" cy="222" r="8" fill="#f97316"/>
     </g>
 
     <g transform="translate(350 28)">
@@ -105,18 +106,19 @@
         <rect class="chip" x="114" y="174" width="78" height="34" rx="11"/>
         <text x="153" y="197" text-anchor="middle">mini</text>
       </g>
-      <rect x="18" y="228" width="174" height="24" rx="12" fill="#edf8f5" stroke="#9bded1"/>
-      <text x="105" y="245" text-anchor="middle" class="sans" font-size="14" font-weight="800" fill="#0d766c">flat adapters, honest differences</text>
+      <rect x="13" y="228" width="184" height="24" rx="12" fill="#edf8f5" stroke="#9bded1"/>
+      <text x="105" y="245" text-anchor="middle" class="sans" font-size="13.5" font-weight="800" fill="#0d766c">flat adapters, honest timing</text>
     </g>
 
-    <path d="M190 86 C220 86 220 91 238 91" class="wire"/>
-    <path d="M190 144 C220 144 220 137 238 137" class="wire"/>
-    <path d="M190 202 C220 202 220 183 238 183" class="wire"/>
-    <path d="M292 137 C320 137 320 137 350 137" class="wireAccent"/>
+    <path d="M190 76 C218 76 218 76 238 76" class="wire"/>
+    <path d="M190 134 C218 134 218 134 238 134" class="wire"/>
+    <path d="M190 192 C218 192 218 192 238 192" class="wire"/>
+    <path d="M190 250 C218 250 218 250 238 250" class="wire"/>
+    <path d="M292 165 C320 165 320 165 350 165" class="wireAccent"/>
   </g>
 
-  <g transform="translate(620 430)">
-    <rect class="panel" x="0" y="0" width="540" height="104" rx="24"/>
+  <g transform="translate(608 430)">
+    <rect class="panel" x="0" y="0" width="560" height="104" rx="24"/>
     <text x="28" y="38" class="sans label ink">Timing stays explicit</text>
     <g transform="translate(28 58)" class="sans" font-size="17" font-weight="800">
       <rect x="0" y="0" width="104" height="28" rx="14" fill="#defaf3" stroke="#18a999"/>
