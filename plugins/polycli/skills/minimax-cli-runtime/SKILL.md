@@ -13,14 +13,19 @@ Internal contract for code invoking `scripts/polycli-companion.bundle.mjs`. Not 
 - `~/.mini-agent/config/config.yaml` present with valid `api_key` (not placeholder `YOUR_API_KEY_HERE`)
 - Node.js ≥ 18
 
-## Companion script subcommands (Phase 1)
+## Companion script subcommands
 
 | Subcommand | Purpose | JSON shape |
 |---|---|---|
 | `setup --json` | Check availability + auth | `{installed, version, authenticated, authReason, authDetail, model, apiBase, apiKeyMasked, configPath, installers}` |
-| `write-key --api-key <k> [--api-base <u>] [--json]` | Atomic YAML api_key write | `{ok, reason?, form?, lineNumber?}` |
+| `health --json` | End-to-end ping (uses `POLYCLI_HEALTH_OK` sentinel) | `{provider, healthy, detail, model}` |
+| `ask [options] "<prompt>"` | One-shot query (120s timeout) | streaming events then `{response, sessionId}` |
+| `rescue [options] "<prompt>"` | Multi-step agent task (600s timeout, supports `--background`) | `{response, sessionId}` foreground; `{jobId, status}` background |
+| `review [options]` / `adversarial-review [options]` | Code review on current diff (adversarial = red-team variant) | `{verdict, summary, findings[]}` family — see `runReview` for exact keys |
+| `status [jobId]` / `result [jobId]` / `cancel [jobId]` | Background job lifecycle | parity with other providers |
+| `timing [options]` | Inspect persisted timing history | `{provider, history[]}` |
 
-Phase 2+ subcommands: `ask`, `review`, `task`, `status`, `result`, `cancel`, `task-resume-candidate`, `adversarial-review`.
+Atomic api_key writes are not exposed as a companion subcommand on the unified surface; users edit `~/.mini-agent/config/config.yaml` directly or via the upstream tooling.
 
 ## Mini-Agent CLI invocation facts (probe-confirmed)
 
@@ -60,15 +65,15 @@ Phase 2+ subcommands: `ask`, `review`, `task`, `status`, `result`, `cancel`, `ta
 - v0.1 `callMiniAgent` 直接 argv 传，不做 tmpfile 备选
 
 ### P0.5 — Failure sentinel matrix (16 samples, 4 locales)
-- **Layer 1 源码常量 sentinel**（跨 locale 稳定，ASCII 硬编码）：
+- **Layer 1 源码常量 sentinel**（纯 ASCII 字面量，源码硬编码，未观察到 i18n）：
   - `"Please configure a valid API Key"` — 仅当 api_key 是 placeholder / 空
   - `"Configuration file not found"` — config.yaml 不存在
   - `"ImportError: Using SOCKS proxy"` — httpx 缺 socksio extra
-- **Layer 3 stdout sentinel**（同样 ASCII 硬编码，跨 locale 稳定）：
+- **Layer 3 stdout sentinel**（同样纯 ASCII 字面量，未观察到 i18n）：
   - `"Retry failed"` — LLM retry 耗尽（命中 8/16 场景：401 × 4 + invalid_model × 4）
   - `"Session Statistics:"` — stdout 尾部总结（正常 + 401 失败都有）
   - `"Log file:"` — 前 30 行内（含 emoji 前缀，匹配用 `contains`）
-- **locale 敏感点**：OSError 消息在 Linux glibc 下可能 i18n；bad_cwd 检测用 exit 信号而非 strerror
+- **locale 敏感点**：OSError 消息在 Linux glibc 下可能被 i18n（OS 层翻译，不在 Mini-Agent 控制范围）；bad_cwd 检测用 exit 信号而非 strerror。Layer 1/3 的 ASCII 字面量经 4-locale 实测稳定；理论上若上游引入格式化字符串注入仍可能 i18n 化，匹配前应考虑用 `contains` 而非全等。
 - **重要**：invalid_model 与 invalid_key 在无有效 key 时行为**一致**（均 401）；需有效 key + parse error body JSON 才能区分。v0.1 不做，`authReason` 合并归 `llm-call-failed`
 - bad_cwd → exit code=1（无 sentinel）；SIGTERM → exit code=143（无 sentinel）
 - 所有 L3 sentinel 含 ANSI escape codes，匹配前必须 strip
@@ -90,8 +95,8 @@ Phase 2+ subcommands: `ask`, `review`, `task`, `status`, `result`, `cancel`, `ta
 - **v0.1 validateKeyContent 约束**：长度 1-4096，无控制字符，无换行/tab，UTF-16 代理对完整
 
 ### P0.9 — env-auth（已完成，无捷径）
-- Mini-Agent 源码全局 0 次 `os.environ` 调用
-- 实证：`MINIMAX_API_KEY=xxx` 无效
+- Mini-Agent **first-party 源码**（不含 transitive deps 如 httpx / pydantic）全局 0 次 `os.environ` 调用 for auth purposes
+- 实证：`MINIMAX_API_KEY=xxx` 无效（Mini-Agent 不读这个 env var）
 - 后果：Q2 决策锁定"AskUserQuestion + YAML 原地替换"（§3.4）
 
 ### P0.10 — Concurrent spawn log attribution (CONDITIONAL GATE FAILED)

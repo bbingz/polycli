@@ -344,7 +344,7 @@ export function runKimiPrompt({
     events: parsed.events,
     toolEvents: parsed.toolEvents,
     sessionId: session.sessionId,
-    model: parsed.model ?? model ?? defaultModel,
+    model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
     error: parsed.response.trim() ? null : "kimi produced no visible text",
   }, resume.sessionId);
 }
@@ -401,7 +401,7 @@ export function runKimiPromptStreaming({
       ...result,
       ...parsed,
       sessionId: session.sessionId,
-      model: parsed.model ?? model ?? defaultModel,
+      model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
       ok: result.ok && hasVisibleText,
       error: result.ok
         ? (hasVisibleText ? null : "kimi produced no visible text")

@@ -1700,7 +1700,7 @@ function runKimiPrompt({
     events: parsed.events,
     toolEvents: parsed.toolEvents,
     sessionId: session.sessionId,
-    model: parsed.model ?? model ?? defaultModel,
+    model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
     error: parsed.response.trim() ? null : "kimi produced no visible text"
   }, resume.sessionId);
 }
@@ -1759,7 +1759,7 @@ function runKimiPromptStreaming({
       ...result,
       ...parsed,
       sessionId: session.sessionId,
-      model: parsed.model ?? model ?? defaultModel,
+      model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
       ok: result.ok && hasVisibleText,
       error: result.ok ? hasVisibleText ? null : "kimi produced no visible text" : result.error
     }, resume.sessionId);
@@ -2335,11 +2335,12 @@ function runMiniMaxPrompt({
       try {
         const effectiveLogPath = logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR);
         const parsed = effectiveLogPath && fs2.existsSync(effectiveLogPath) ? extractMiniMaxResponseFromLogText(fs2.readFileSync(effectiveLogPath, "utf8")) : { response: "", finishReason: null, toolCalls: [] };
+        const resolvedModel = parsed.model ?? defaultModel ?? readMiniMaxConfig().model ?? null;
         resolve({
           ...result,
           logPath: effectiveLogPath,
           ...parsed,
-          model: parsed.model ?? defaultModel,
+          model: resolvedModel,
           ok: result.ok && Boolean(parsed.response.trim()),
           error: result.ok && parsed.response.trim() ? null : result.error
         });
@@ -4846,6 +4847,26 @@ var TIMEOUTS_MS = {
   "adversarial-review": 3e5,
   health: 6e4
 };
+var PROVIDER_TIMEOUT_MULTIPLIERS = {
+  gemini: {
+    "gemini-3.1-pro-preview": 2
+  },
+  // opencode's kimi-for-coding variant is a code-reasoning model that hits
+  // 120s+ on HumanEval-class problems (verified 2026-05-02 multiway bench R3).
+  opencode: {
+    "kimi-for-coding/k2p6": 2
+  }
+};
+function resolveTimeoutMs(provider, kind, { model = null, defaultModel = null } = {}) {
+  const base = TIMEOUTS_MS[kind];
+  if (!Number.isFinite(base)) return base;
+  const entry = PROVIDER_TIMEOUT_MULTIPLIERS[provider];
+  if (entry == null) return base;
+  if (typeof entry === "number") return base * entry;
+  const lookup = model || defaultModel;
+  const multiplier = lookup && entry[lookup] || 1;
+  return base * multiplier;
+}
 var HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
 var SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
 function printUsage() {
@@ -5451,6 +5472,7 @@ function parsePromptExecution(rawArgs, kind) {
   }
   const providerFlags = buildProviderFlagRuntimeOptions(provider, options);
   for (const note of providerFlags.notes) emitNote(note);
+  const cachedDefaultModel = readCachedProviderModel(workspaceRoot, provider);
   return {
     options,
     execution: {
@@ -5459,9 +5481,12 @@ function parsePromptExecution(rawArgs, kind) {
       prompt: userPrompt,
       userPrompt,
       model: options.model || null,
-      defaultModel: readCachedProviderModel(workspaceRoot, provider),
+      defaultModel: cachedDefaultModel,
       cwd: process5.cwd(),
-      timeout: TIMEOUTS_MS[kind],
+      timeout: resolveTimeoutMs(provider, kind, {
+        model: options.model || null,
+        defaultModel: cachedDefaultModel
+      }),
       meta: {},
       jobMeta: {},
       measurementScope: "request",
@@ -5532,7 +5557,10 @@ function buildReviewExecution(rawArgs, { adversarial }) {
       model: options.model || null,
       defaultModel: readCachedProviderModel(workspaceRoot, provider),
       cwd: process5.cwd(),
-      timeout: TIMEOUTS_MS[adversarial ? "adversarial-review" : "review"],
+      timeout: resolveTimeoutMs(provider, adversarial ? "adversarial-review" : "review", {
+        model: options.model || null,
+        defaultModel: readCachedProviderModel(workspaceRoot, provider)
+      }),
       meta: {
         scope: reviewContext.scope,
         baseRef: reviewContext.baseRef || null,

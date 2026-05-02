@@ -20,17 +20,20 @@ Internal contract for code invoking `scripts/polycli-companion.bundle.mjs`. Not 
 | Subcommand | Purpose | JSON shape |
 |---|---|---|
 | `setup --json` | Check install + auth + models | `{installed, version, authenticated, authDetail, model, configured_models[], installers}` |
-| `ask [options] "<prompt>"` | (Phase 2) One-shot query | streaming events then `{response, sessionId}` |
-| `review [options]` | (Phase 3) Review current diff | `{verdict, summary, findings[], next_steps[]}` |
-| `task [options] "<prompt>"` | (Phase 4) Background job | `{jobId, status}` |
-| `status` / `result <jobId>` / `cancel <jobId>` | (Phase 4) Job lifecycle | per Gemini provider parity |
-| `task-resume-candidate --json` | (Phase 4) Resumable session | `{available, sessionId, cwd}` |
+| `health --json` | End-to-end ping (uses `POLYCLI_HEALTH_OK` sentinel) | `{provider, healthy, detail, model}` |
+| `ask [options] "<prompt>"` | One-shot query (120s timeout) | streaming events then `{response, sessionId}` |
+| `rescue [options] "<prompt>"` | Multi-step agent task (600s timeout, supports `--background`) | `{response, sessionId}` foreground; `{jobId, status}` background |
+| `review [options]` / `adversarial-review [options]` | Code review on current diff (adversarial = red-team variant) | `{verdict, summary, findings[], next_steps[]}` family — see `runReview` for exact keys |
+| `status [jobId]` / `result [jobId]` / `cancel [jobId]` | Background job lifecycle | per Gemini provider parity |
+| `timing [options]` | Inspect persisted timing history | `{provider, history[]}` |
+
+Resumable session state is exposed via the `--resume-last` flag (Kimi-only on the unified surface), not a separate subcommand.
 
 ## Kimi CLI invocation facts (from doc/probe/probe-results.json v3)
 
 These constants are the direct result of Phase 0 probes + codex source-read. Do NOT re-derive or re-probe.
 
-- **Version flag**: `kimi -V` (**uppercase**). `-v` means verbose.
+- **Version flag**: `kimi -V` (**uppercase**) or `kimi --version` — both return e.g. `kimi, version 1.40.0`. `kimi -v` (lowercase) is **not** a verbose flag in 1.40.0+; it returns a click usage error. Earlier kimi versions may have aliased `-v` differently — do not rely on it.
 - **Headless format**: `kimi -p "<prompt>" --print --output-format stream-json` emits **per-message JSONL** (not per-token streaming).
 - **Event shape**:
   - Top-level keys: `role`, `content`
@@ -45,7 +48,7 @@ These constants are the direct result of Phase 0 probes + codex source-read. Do 
 - **Default model**: TOML scalar `default_model` at the top level of `~/.kimi/config.toml`.
 - **Configured models**: TOML sections `[models.<name>]` (one per name). Name may be bare (`[models.foo]`) or quoted with slashes (`[models."vendor/model"]`). Strip quotes when extracting.
 - **Large prompts**: pipe via stdin with `-p ""` when `prompt.length >= 100000` bytes.
-- **Auth ping**: `--max-steps-per-turn 1` is 3/3 reliable; use 30s timeout.
+- **Liveness probe** (NOT auth-fresh check): `kimi -p "POLYCLI_HEALTH_OK" --print --output-format stream-json --max-steps-per-turn 1` with 30s timeout is 3/3 reliable for verifying the binary launches and reaches the model. It does **not** validate that the OAuth token has not expired — an expired token may still let kimi exit 0 and emit text. For true auth state, use `setup --json` and check the `authenticated` field (which inspects `~/.kimi/credentials/`).
 - **Model preflight**: validate `-m <name>` exists in `configured_models` BEFORE calling kimi to avoid wasted sessions (exit 1 + "LLM not set" path).
 - **Stats / token usage**: NOT surfaced in stream-json. kimi emits `StatusUpdate` internally but `JsonPrinter` drops it. v0.1 cannot expose token stats.
 
@@ -90,8 +93,8 @@ Verified 2026-04-21 on local `kimi 1.37.0` via `kimi --help` + stdin probe. List
 
 | Flag | What it does | Companion uses? |
 |---|---|---|
-| `-V` / `--version` | Version (uppercase only) | ✓ in setup |
-| `-v` / `--verbose` | Verbose runtime info | — |
+| `-V` / `--version` | Version. Both forms work in 1.40.0+ | ✓ in setup |
+| `-v` (lowercase) | **Not a flag in 1.40.0+** — returns click usage error | — (do not use) |
 | `-w <dir>` / `--work-dir` | Working directory for the agent | ✓ all spawn calls (realpath'd) |
 | `--add-dir <dir>` | Add additional directory to workspace scope (repeatable) | — (v0.2 multi-root candidate) |
 | `-S <id>` / `-r <id>` / `--session <id>` / `--resume <id>` | Resume a session. **Without id** opens interactive picker (shell only, fails in `--print`). **With id** resumes. v1.37 aliases: `-S` / `--session` is a new synonym for `-r` / `--resume`. | ✓ `-r <sid>` path — regex `/kimi -r ([0-9a-f-]{36})/` still matches the stderr hint verbatim in 1.37 |

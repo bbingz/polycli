@@ -61,6 +61,30 @@ const TIMEOUTS_MS = {
   "adversarial-review": 300_000,
   health: 60_000,
 };
+const PROVIDER_TIMEOUT_MULTIPLIERS = {
+  gemini: {
+    "gemini-3.1-pro-preview": 2,
+  },
+  // opencode's kimi-for-coding variant is a code-reasoning model that hits
+  // 120s+ on HumanEval-class problems (verified 2026-05-02 multiway bench R3).
+  opencode: {
+    "kimi-for-coding/k2p6": 2,
+  },
+};
+
+function resolveTimeoutMs(provider, kind, { model = null, defaultModel = null } = {}) {
+  const base = TIMEOUTS_MS[kind];
+  if (!Number.isFinite(base)) return base;
+  const entry = PROVIDER_TIMEOUT_MULTIPLIERS[provider];
+  if (entry == null) return base;
+  if (typeof entry === "number") return base * entry;
+  // Explicit --model wins; fall back to the cached upstream-default model only
+  // if the caller did not pass one. This way, --model gemini-flash-2.5 stays
+  // at the base budget even when the cached default is a deep-reasoning model.
+  const lookup = model || defaultModel;
+  const multiplier = (lookup && entry[lookup]) || 1;
+  return base * multiplier;
+}
 const HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
 const SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
 
@@ -714,6 +738,7 @@ function parsePromptExecution(rawArgs, kind) {
   }
   const providerFlags = buildProviderFlagRuntimeOptions(provider, options);
   for (const note of providerFlags.notes) emitNote(note);
+  const cachedDefaultModel = readCachedProviderModel(workspaceRoot, provider);
   return {
     options,
     execution: {
@@ -722,9 +747,12 @@ function parsePromptExecution(rawArgs, kind) {
       prompt: userPrompt,
       userPrompt,
       model: options.model || null,
-      defaultModel: readCachedProviderModel(workspaceRoot, provider),
+      defaultModel: cachedDefaultModel,
       cwd: process.cwd(),
-      timeout: TIMEOUTS_MS[kind],
+      timeout: resolveTimeoutMs(provider, kind, {
+        model: options.model || null,
+        defaultModel: cachedDefaultModel,
+      }),
       meta: {},
       jobMeta: {},
       measurementScope: "request",
@@ -800,7 +828,10 @@ function buildReviewExecution(rawArgs, { adversarial }) {
       model: options.model || null,
       defaultModel: readCachedProviderModel(workspaceRoot, provider),
       cwd: process.cwd(),
-      timeout: TIMEOUTS_MS[adversarial ? "adversarial-review" : "review"],
+      timeout: resolveTimeoutMs(provider, adversarial ? "adversarial-review" : "review", {
+        model: options.model || null,
+        defaultModel: readCachedProviderModel(workspaceRoot, provider),
+      }),
       meta: {
         scope: reviewContext.scope,
         baseRef: reviewContext.baseRef || null,

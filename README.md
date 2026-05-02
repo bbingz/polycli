@@ -24,6 +24,8 @@
 
 `polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, and **`mini-agent`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing` — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
 
+> **polycli is an in-host plugin, not a standalone shell binary.** There is no `polycli` executable on your `PATH`. Each host adapter exposes the same `health / ask / review / rescue / timing` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, `/polycli-codex:polycli health` in Codex). See [Outside a supported host](#outside-a-supported-host) if you are not running one of the four hosts.
+
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
 ## Why polycli?
@@ -99,16 +101,16 @@ opencode plugin @bbingz/polycli-opencode
 After installing, verify the integration in your host:
 
 ```text
-# Claude Code
+# Claude Code (slash command)
 /polycli:health
 
-# Codex
+# Codex (slash command)
 /polycli-codex:polycli health
 
-# GitHub Copilot CLI
+# GitHub Copilot CLI (skill word — NOT a PATH binary; only inside the copilot prompt)
 polycli health
 
-# OpenCode (call polycli_run with ["health","--json"])
+# OpenCode (tool call — call polycli_run with ["health","--json"])
 ```
 
 `health` runs an end-to-end probe against every provider with valid auth and reports which ones are alive in `healthyProviders`. After that, daily use is direct:
@@ -120,6 +122,25 @@ rescue --provider gemini "..."      # longer task, can be backgrounded
 ```
 
 For longer tasks, append `--background` and use `status <jobId>` / `result <jobId>` to retrieve.
+
+## Outside a supported host
+
+If your agent / harness is **not** Claude Code, Codex, Copilot CLI, or OpenCode (e.g. Aider, Cursor, a bare shell script, a CI runner, or a Codex session that did not install the polycli-codex marketplace), there is no first-class polycli entry point. You have three honest options, in order of preference:
+
+1. **Install the host adapter for your environment.** Codex users: run `codex plugin marketplace add bbingz/polycli`, then call `/polycli-codex:polycli <subcommand>` from inside the codex prompt. The same pattern applies to Copilot CLI and OpenCode (see [Installation](#installation)). This is the only supported public surface.
+
+2. **Call the underlying provider CLI directly.** polycli is a thin wrapper over `gemini` / `qwen` / `kimi` / etc. — if you only need a one-shot prompt, `qwen -p "..."` works without polycli. You lose: probing-cost amortization, four-state timing, background job control, multi-host consistency. You keep: simplicity.
+
+3. **Escape hatch (unstable, internal).** You can invoke the bundled companion directly:
+
+   ```bash
+   PLUGIN_ROOT=/path/to/plugins/polycli \
+     node /path/to/plugins/polycli/scripts/polycli-companion.bundle.mjs <subcommand> --provider <name> ...
+   ```
+
+   `PLUGIN_ROOT` (or `CLAUDE_PLUGIN_ROOT` as a fallback) must point at the directory containing `scripts/polycli-companion.bundle.mjs`. This is the same script every host adapter shells out to. It is **not a stable API** — flag names, JSON shapes, and the env contract may change without notice. Do not script against it for anything load-bearing; if you need a programmatic surface, open an issue describing the use case so a real public API can be designed.
+
+The npm packages (`@bbingz/polycli-utils`, `@bbingz/polycli-timing`) are libraries, not routing entry points. `@bbingz/polycli-runtime` exposes the registry but is documented as internal — see [`docs/polycli-v1-public-surface.md`](./docs/polycli-v1-public-surface.md) for the v1 contract.
 
 ## Core commands
 

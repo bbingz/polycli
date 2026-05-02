@@ -75,17 +75,19 @@ opencode plugin @bbingz/polycli-opencode
 
 装完之后在 host 里验证：
 
+> **polycli 是 in-host plugin，不是独立的 shell 二进制。** `PATH` 里没有 `polycli` 可执行文件——每个 host 适配器在该 host 自己的命令体系里暴露同一套 `health / ask / review / rescue / timing` 词汇。如果你不在这 4 个 host 内（如 Aider / Cursor / 裸脚本），见英文 README 的 [Outside a supported host](./README.md#outside-a-supported-host) 段。
+
 ```text
-# Claude Code
+# Claude Code（slash command）
 /polycli:health
 
-# Codex
+# Codex（slash command）
 /polycli-codex:polycli health
 
-# GitHub Copilot CLI
+# GitHub Copilot CLI（在 copilot prompt 里的 skill 词，**不是** PATH 二进制）
 polycli health
 
-# OpenCode（调 polycli_run 传 ["health","--json"]）
+# OpenCode（tool 调用 — 调 polycli_run 传 ["health","--json"]）
 ```
 
 `health` 会对所有已认证的 provider 跑一次端到端探针，并把存活的列在 `healthyProviders` 里。之后日常使用就直接调：

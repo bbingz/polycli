@@ -75,17 +75,19 @@ opencode plugin @bbingz/polycli-opencode
 
 インストール後、ホスト内で動作確認します:
 
+> **polycli は in-host plugin であり、スタンドアロンの shell バイナリではありません。** `PATH` 上に `polycli` 実行ファイルは存在しません。各ホストアダプタが、そのホスト固有の呼び出し方法で同じ `health / ask / review / rescue / timing` ボキャブラリを公開します。サポート対象の 4 ホスト外（Aider / Cursor / 素のスクリプトなど）から使う場合は英語版 README の [Outside a supported host](./README.md#outside-a-supported-host) を参照してください。
+
 ```text
-# Claude Code
+# Claude Code (slash command)
 /polycli:health
 
-# Codex
+# Codex (slash command)
 /polycli-codex:polycli health
 
-# GitHub Copilot CLI
+# GitHub Copilot CLI (copilot prompt 内の skill ワード — **PATH バイナリではありません**)
 polycli health
 
-# OpenCode (polycli_run を ["health","--json"] で呼び出す)
+# OpenCode (tool 呼び出し — polycli_run を ["health","--json"] で呼び出す)
 ```
 
 `health` は認証済みのすべてのプロバイダに対してエンドツーエンドのプローブを実行し、生きているものを `healthyProviders` に報告します。その後の日常利用は直接呼び出すだけです:

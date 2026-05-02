@@ -6,6 +6,117 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-02 — Claude — opencode added to timeout multiplier + multiway benchmark doc
+
+Triggered by a second 5-round multiway run using **real HuggingFace dataset rows** (offsets 5/1000/130/400/0 from MMLU college_math / GSM8K / HumanEval/130 / TruthfulQA / BBH), as opposed to the first run which used benchmark-flavored re-creations.
+
+**Multiplier extended to opencode:**
+
+- `plugins/polycli/scripts/polycli-companion.mjs`: `PROVIDER_TIMEOUT_MULTIPLIERS.opencode = { "kimi-for-coding/k2p6": 2 }`. Same pattern as gemini — model-scoped, only the reasoning variant gets ×2; other opencode models stay at base.
+- Trigger: HumanEval/130 (Tribonacci with awkward forward-reference recurrence) made opencode hit `timedOut: true, signal: "SIGTERM"` at exactly 120021 ms — the 120s `ask` ceiling. Verified post-fix that opencode background job timeout is 240000ms (gemini still 240000ms, qwen unchanged at 120000ms).
+- `gemini-cli-runtime/SKILL.md` Latency expectations section updated to show the multiplier is a registry, not gemini-only — the same pattern can be extended as new reasoning model ids appear.
+
+**Benchmark doc persisted:**
+
+- `docs/benchmarks/multiway-validation-2026-05-02.md` captures: exact dataset offsets and prompt verbatim text, full result matrix for both rounds (40/40 easy + 37/40 hard), per-provider behavior notes (kimi misreads complex prompts, minimax reasons shallowly on puzzle-class, opencode is a code-reasoning model), and **3 grader bugs** that bit me during the run (`.strip()` ate Python indent, prefix-only negation regex missed kimi's "not because" answer, single-language regex misclassified claude's Chinese reply). The grader-lessons section is the durable artifact — future benchmark scripts should not repeat these.
+
+**What we did NOT do:**
+
+- Did not write a reusable benchmark grader utility module (`tasks/benchmark-grader.mjs` style). polycli is not a benchmark suite; persisting the lessons in a doc is sufficient.
+- Did not extend the multiplier to other providers preemptively — opencode addition was driven by a real timeout observation, not speculation.
+
+## 2026-05-02 — Claude — kimi/minimax model id fix + gemini multiplier stress test
+
+Followups discovered during a 5-round 9-way validation (8 polycli providers + codex via subagent, prompts from MMLU / GSM8K / HumanEval / TruthfulQA / open-ended).
+
+**Fix: kimi & minimax `model` field was null in ask result**
+
+- `packages/polycli-runtime/src/kimi.js:347` and `:404` — fall back to `readKimiDefaultModel()` (already existed but was unused) when `parsed.model ?? model ?? defaultModel` is all null. Reads `~/.kimi/config.toml` `default_model` scalar.
+- `packages/polycli-runtime/src/minimax.js:238` — fall back to `readMiniMaxConfig().model` (reads `~/.mini-agent/config/config.yaml`) under the same condition.
+- Root cause: `cacheProviderModel` only writes when `result.model` is non-empty. kimi stream-json and mini-agent log don't carry a model id, so cache stayed empty, so subsequent runs got null `defaultModel`, so model stayed null. Chicken-and-egg. Direct config read breaks the loop.
+- Verified post-fix: `kimi` returns `kimi-code/kimi-for-coding`, `minimax` returns `MiniMax-M2.7-highspeed`. Resolves the "null for kimi/mini-agent" caveat in `reference_default_model_extraction_caveats.md`.
+
+**Stress test: gemini timeout multiplier**
+
+Goal: prove the `gemini-3.1-pro-preview` ×2 multiplier was actually necessary, not just defensive.
+
+| prompt class | gemini wall | gemini ttft | observation |
+|---|---|---|---|
+| Standard 5-round (MMLU / GSM8K / HumanEval / TruthfulQA / open-ended) | 7-22s | (mostly < total) | far below 120s base — multiplier irrelevant |
+| GPQA-style physics reasoning + algebra (453 byte prompt, ask) | 55s | 44s | half the base 120s — comfortable headroom but base would have worked |
+| Heavy structured output: 800-byte rate-limit design prompt (rescue) | 55s | 37s + 18s gen | far below 600s rescue base |
+
+Result: under prompts I could construct, `gemini-3.1-pro-preview` peaks around 55s — never approaches even the 120s `ask` base, much less the 240s multiplier ceiling. The multiplier is defensive headroom for the original observation (user reported gemini "self-admitted long thinking time" on review of large diffs), not a tight fit. Documented this honestly: the multiplier provides safety margin for the worst case rather than reacting to a routine ceiling breach. No timeout tuning change.
+
+**Side observations from the 5-round validation (no fixes needed, recorded for posterity):**
+
+- All 9 entities (8 polycli + codex) returned correct answers on R1/R2/R4. Code-completion (R3) instruction-following varied: 7/8 polycli wrapped the function in markdown despite "no extra commentary" — only `minimax` and `codex` gave a true one-liner. This is upstream LLM behavior, not polycli routing.
+- `claude` provider answered the English R4 prompt in Chinese because the user's global `CLAUDE.md` says "Always respond in Chinese". CLAUDE.md inheritance only reaches the `claude` provider; other providers respect prompt language. Documented in memory as expected behavior.
+- 5 rounds × 8 providers wall time: 113s (parallel start per round, sequential rounds). Codex reference run (subagent `a48de540074220012`): all 5 prompts correct, 7-9s latency each.
+
+## 2026-05-02 — Claude — multi-way self-review: 4 doc fixes + 1 verified bug + multiplier scope tightening
+
+Ran a 4-way self-review where each provider audited polycli's claims about itself (`gemini` / `qwen` / `kimi` / `minimax` each reading their own `*-cli-runtime/SKILL.md`). Triaged findings into red (true defects, fix), yellow (LLM claims to verify against real CLIs), and green (engineering choices).
+
+**Red — 4 doc defects fixed:**
+
+- `minimax-cli-runtime/SKILL.md` P0.5: removed self-contradiction. Section claimed Layer 1/3 sentinels were "跨 locale 稳定" while the same paragraph noted OSError messages may be i18n'd by glibc. Reworded as "纯 ASCII 字面量, 未观察到 i18n" and clarified the i18n caveat is OS-layer (outside Mini-Agent's control).
+- `minimax-cli-runtime/SKILL.md` P0.9: scoped the "0 次 `os.environ`" claim to first-party Mini-Agent code (excludes transitive deps like httpx / pydantic) and clarified the implication is auth-purpose only.
+- `qwen-cli-runtime/SKILL.md`: documented `--unsafe` vs `--approval-mode` precedence with source-verified semantics. Initial draft said "--unsafe wins", but reading `buildQwenInvocation` in `packages/polycli-runtime/src/qwen.js:73-76` showed the opposite: an explicit `--approval-mode` wins; `--unsafe` is only a shortcut to `yolo` when `--approval-mode` is omitted. Background-mode `yolo` still requires `--unsafe` as an independent safety guard.
+- `kimi-cli-runtime/SKILL.md`: "Auth ping" was misleading — `--max-steps-per-turn 1 + 30s` is a liveness probe (verifies binary launches and reaches the model) but does not validate token freshness. Renamed to "Liveness probe" and pointed to `setup --json` `authenticated` field for true auth state.
+
+**Yellow — 6 claims verified against real CLIs (gemini 0.40.1, kimi 1.40.0, qwen 0.15.6):**
+
+| # | Claim | Verdict |
+|---|---|---|
+| 5 | gemini `--write` → `--approval-mode auto_edit` | ✅ help confirms `auto_edit` is a valid enum |
+| 6 | kimi `-V` and `-v` flags | ⚠️ partially wrong — `-V` and `--version` both work, but `-v` returns a click usage error in 1.40.0+, not verbose. Doc updated. |
+| 7 | kimi stream-json `role` set | ✅ live probe shows only `assistant` (kimi's self-claim of "user/system" was a hallucination) |
+| 8 | kimi `--approval-mode` acceptance | ✅ kimi 1.40 has no `--approval-mode` (only `--yolo`/`--plan`/`--afk`/`--print`); doc was correct |
+| 9 | `--print` ≈ `--yolo` | ✅ `kimi --help` 1.40 says "Print mode auto-dismisses AskUserQuestion and auto-approves tool calls"; doc was correct |
+| 10 | kimi auth paths | ✅ subcommand list is `login/logout/term/acp/info/export/mcp/plugin/vis/web` — no API-key/SSO subcommands; doc was correct |
+
+Net: kimi's self-review hallucinated 5 of 6 — LLMs are unreliable narrators about their own CLI surfaces. Real probes are necessary. Only Q6 produced a doc edit (`-v` wording in `kimi-cli-runtime/SKILL.md` lines 36 and 97).
+
+**Green — multiplier tightened to model scope:**
+
+- Refactored `PROVIDER_TIMEOUT_MULTIPLIERS = { gemini: 2 }` → `{ gemini: { "gemini-3.1-pro-preview": 2 } }`. Refactored `resolveTimeoutMs` signature to `(provider, kind, { model, defaultModel })`. Resolution: explicit `--model` wins; falls back to cached upstream-default model only if caller did not pass one. So `--model gemini-flash-2.5` stays at base 120s/600s/300s even though the cached default is a reasoning model — addresses gemini self-review's complaint that the multiplier was over-broad.
+- `gemini-cli-runtime/SKILL.md`: Latency expectations rewritten with explicit resolution rules and a note that adding new reasoning model ids (when upstream releases them) is the maintenance path — do not blanket-multiply the whole provider.
+- `qwen-cli-runtime/SKILL.md`: Safety rule "If Bash call fails, return nothing" gets a Rationale clarifying this is a forwarder contract — the companion already encodes failure in `error`/exit code, the subagent re-emitting prose would only duplicate or paraphrase. (Addresses qwen self-review #2.)
+
+**Side check — mini-agent upstream:** verified via GitHub API (`/repos/MiniMax-AI/Mini-Agent`): no releases, no tags, latest commit `d76a4f63` 2026-02-14 (cosmetic fix). Still 0.1.0; minimax self-review's hint about "possibly newer version" was unsupported. Memory entry stays accurate.
+
+## 2026-05-02 — Claude — README clarifies polycli is an in-host plugin, not a shell binary
+
+- Triggered by a real Codex session that grepped the user's `PATH` directories for a `polycli` binary, found nothing, concluded "polycli has no callable entry point", and fell back to invoking `qwen` directly — defeating the routing purpose of polycli. Codex-rescue review (agent `afee5f7a594387551`) confirmed the misleading signals: hero SVG showed `$ polycli health --json` (shell prompt), and README L25/L36/L108 used cross-host vocabulary phrasing that read as if `polycli` were a portable shell command.
+- `docs/assets/readme-header.svg:54`: `$ polycli health --json` → `/polycli:health --json`. Removes the shell-prompt visual cue from the first thing every reader sees.
+- `README.md` "What is polycli?" gets a callout: polycli is an in-host plugin, no `polycli` binary on `PATH`, each host adapter exposes the same vocabulary in its own invocation style. Quick-start Copilot row annotated as "skill word — NOT a PATH binary; only inside the copilot prompt" so that line cannot be screenshot-grepped out of context.
+- `README.md` adds **`## Outside a supported host`** section listing three honest options for non-Claude-Code/Codex/Copilot/OpenCode agents: (1) install the host adapter for the environment, (2) call the underlying provider CLI directly with explicit trade-offs, (3) escape hatch — `PLUGIN_ROOT=... node scripts/polycli-companion.bundle.mjs ...` marked unstable and internal. Verified against `plugins/polycli-codex/skills/polycli/SKILL.md:11` (uses `${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}`).
+- `README.zh-CN.md` and `README.ja.md` get the in-host callout + Quick-start row clarification, but link back to the English `Outside a supported host` section instead of duplicating the full block (translation drift > terse cross-link).
+- Docs only — no code, no test changes.
+
+## 2026-05-02 — Claude — gemini timeout multiplier + latency documentation
+
+- `plugins/polycli/scripts/polycli-companion.mjs` introduces `PROVIDER_TIMEOUT_MULTIPLIERS = { gemini: 2 }` and a `resolveTimeoutMs(provider, kind)` helper. Applied to the two prompt-execution code paths (`parsePromptExecution` for ask/rescue, `runReview` for review/adversarial-review). `health` retains the universal 60s budget — gemini's health probe is sentinel-only and does not exercise reasoning.
+- Effective ceilings for gemini: `ask` 240s (was 120s), `rescue` 1200s (was 600s), `review` / `adversarial-review` 600s (was 300s). All other providers unchanged.
+- Motivation: gemini is a deep-reasoning model that routinely spends 30s–several minutes thinking before emitting visible text (live observation across 2026-04-29 bench + this session: rescue PONG took 44.7s vs qwen 2.9s on identical prompt). Hard-coded 300s `review` ceiling was the closest one to silently masquerade as "polycli broken".
+- `plugins/polycli/skills/gemini-cli-runtime/SKILL.md` adds a `## Latency expectations` section explaining the multiplier, listing the new vs old ceilings per kind, and recommending `--background` + `/polycli:status` polling for prompts of unknown duration. Subcommand table updated to reflect the gemini-specific timeouts.
+- Background worker (`runJobWorker`) reuses `execution.timeout`, so the multiplier propagates to background jobs as well — no separate code path needed.
+
+## 2026-05-02 — Claude — fix stale `task` subcommand references in 4 cli-runtime SKILLs
+
+- `plugins/polycli/skills/{qwen,gemini,kimi,minimax}-cli-runtime/SKILL.md` referenced a `task` companion subcommand that does not exist on the unified surface (companion exposes `setup`, `health`, `ask`, `rescue`, `review`, `adversarial-review`, `status`, `result`, `cancel`, `timing`). The references were inherited verbatim from the legacy `*-plugin-cc` repos in R8c (commit 193078f) where each plugin had its own companion with a `task` command; on the unified surface that role split into `ask` (120s, one-shot) and `rescue` (600s, multi-step). A `polycli:polycli-provider-agent` subagent that read the SKILL literally would have invoked `task` and crashed with `Unknown subcommand 'task'.`
+- Same edit also dropped non-existent `task-resume-candidate` (resumable state lives behind `--resume-last`) and the legacy `write-key` helper from minimax (no longer on the unified surface).
+- End-to-end smoke: `polycli-companion.bundle.mjs rescue --provider qwen` returns `ok=true`, `kind=rescue`, response present (real qwen-cli 0.15.6, qwen3.6-plus). `ask --provider qwen` already worked.
+- Docs only — no companion / runtime / bundle changes.
+
+## 2026-04-30 — Claude — landscape check + daily watcher for official LLM-provider plugins
+
+- Verified `openai/codex-plugin-cc` (the only LLM-provider-official Claude Code plugin) is at v1.0.4 / `807e03a` and matches the locally installed marketplace clone — no upstream updates since 2026-04-18.
+- Surveyed 25+ AI-provider GitHub orgs, the `*-plugin-cc` naming convention, and Anthropic's `claude-plugins-official` (171) + `claude-plugins-community` (1921) marketplaces. Result: as of 2026-04-30, OpenAI is still the **only** LLM provider with an official Claude Code plugin. Google / xAI / Mistral / DeepSeek / Qwen / Kimi / MiniMax / Cohere / Meta / Groq / Zhipu / 01-ai / Perplexity / OpenRouter — all absent. Microsoft has platform skills (`skills-for-fabric`, `power-platform-skills`, `skills-for-copilot-studio`) but no LLM-provider bridge.
+- Created daily-running remote routine `trig_01RLU5aqzYkuPFA8LMQKcnzo` (https://claude.ai/code/routines/trig_01RLU5aqzYkuPFA8LMQKcnzo) to watch this signal: 02:00 UTC every day, sonnet-4-6, scans the same orgs/marketplaces and is loud only when a new official provider plugin appears.
+- No code changes in polycli itself.
+
 ## 2026-04-29 — Claude — capability matrix for workflows with no bare-shell equivalent
 
 - Added `docs/benchmarks/capability-matrix.md` listing workflows where bare-shell has no meaningful equivalent: adversarial-review, background job control, session resume, stop-review-gate hook, 4-state timing, multi-host consistency (Claude Code / Codex / Copilot / OpenCode), provider `health` probe, probing-cost amortization. Companion to `bench-vs-bare-cli-spec.md`. These are presence/absence claims, not byte ratios — forcing them into a token comparison would be dishonest because there's nothing to compare against.

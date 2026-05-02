@@ -231,11 +231,12 @@ export function runMiniMaxPrompt({
           ? extractMiniMaxResponseFromLogText(fs.readFileSync(effectiveLogPath, "utf8"))
           : { response: "", finishReason: null, toolCalls: [] };
 
+        const resolvedModel = parsed.model ?? defaultModel ?? readMiniMaxConfig().model ?? null;
         resolve({
           ...result,
           logPath: effectiveLogPath,
           ...parsed,
-          model: parsed.model ?? defaultModel,
+          model: resolvedModel,
           ok: result.ok && Boolean(parsed.response.trim()),
           error: result.ok && parsed.response.trim() ? null : result.error,
         });
