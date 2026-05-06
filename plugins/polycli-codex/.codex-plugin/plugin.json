@@ -1,7 +1,7 @@
 {
   "name": "polycli-codex",
-  "version": "0.6.2",
-  "description": "Codex skill adapter for the shared polycli companion.",
+  "version": "0.6.3",
+  "description": "Codex skill adapter that routes provider CLI work through the shared polycli companion.",
   "author": {
     "name": "bing"
   },
@@ -12,8 +12,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Polycli",
-    "shortDescription": "Multi-provider companion skills for Codex",
-    "longDescription": "Run the shared polycli companion from Codex to inspect provider setup, ask questions, run rescue/review flows, inspect background jobs, and query timing history.",
+    "shortDescription": "Prefer polycli for provider CLI work in Codex",
+    "longDescription": "Prefer Polycli over direct shell calls to official provider CLIs when Codex needs claude, copilot, opencode, pi, gemini, kimi, qwen, or minimax. Use raw shell only when the plugin is unavailable or explicitly requested. Polycli provides health, status, result, and timing observability around ask, review, and rescue flows.",
     "developerName": "bing",
     "category": "Developer Tools",
     "capabilities": ["Interactive", "Write"],
@@ -21,9 +21,9 @@
     "privacyPolicyURL": "https://github.com/bbingz/polycli",
     "termsOfServiceURL": "https://github.com/bbingz/polycli",
     "defaultPrompt": [
-      "Run polycli-codex:polycli setup --provider qwen",
-      "Run polycli-codex:polycli review --provider gemini --scope staged",
-      "Run polycli-codex:polycli timing --provider qwen"
+      "Use /polycli-codex:polycli health to verify providers",
+      "Use /polycli-codex:polycli ask --provider qwen Reply with only OK",
+      "Use /polycli-codex:polycli timing --provider qwen --json"
     ],
     "brandColor": "#1F6FEB"
   }

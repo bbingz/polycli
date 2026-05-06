@@ -53,6 +53,7 @@ run("npm", ["run", "validate:bundles"]);
 run("npm", ["run", "validate:fixtures"]);
 run("npm", ["run", "validate:manifests"]);
 run("npm", ["run", "validate:host-map"]);
+run("npm", ["run", "validate:codex-adapter"]);
 run("claude", ["plugin", "validate", ".claude-plugin/marketplace.json"]);
 run("claude", ["plugin", "validate", "plugins/polycli/.claude-plugin/plugin.json"]);
 

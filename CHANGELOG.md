@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-06 — Codex — prepare v0.6.3 Codex adapter operability patch
+
+- Strengthened the `polycli-codex` manifest and skill so Codex is explicitly told to prefer `/polycli-codex:polycli ...` over direct official CLI shell calls for `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, and `minimax`; raw shell is now documented as an explicit-user-intent or unavailable-plugin fallback only.
+- Updated the root README, Codex plugin README, and host command map with Codex slash examples for `health`, `ask`, `review`, `status`, `result`, and `timing`, so daily examples no longer look like a generic shell command.
+- Added `docs/codex-adapter-operability.md` as the routing, fallback, first-run, and observability contract for Codex sessions.
+- Added `scripts/validate-codex-adapter.mjs`, `npm run validate:codex-adapter`, unit coverage, CI wiring, and `release:check` wiring so Codex provider triggers, fallback language, and health/status/result/timing guidance cannot drift silently.
+- Prepared release notes and host package metadata for `v0.6.3`; OpenCode package moves to `@bbingz/polycli-opencode@0.6.3`, while utils/timing stay on `1.0.1`.
+
 ## 2026-05-02 — Claude — opencode added to timeout multiplier + multiway benchmark doc
 
 Triggered by a second 5-round multiway run using **real HuggingFace dataset rows** (offsets 5/1000/130/400/0 from MMLU college_math / GSM8K / HumanEval/130 / TruthfulQA / BBH), as opposed to the first run which used benchmark-flavored re-creations.

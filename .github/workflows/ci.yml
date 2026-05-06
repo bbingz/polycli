@@ -47,6 +47,9 @@ jobs:
       - name: Validate host command map
         run: npm run validate:host-map
 
+      - name: Validate Codex adapter guidance
+        run: npm run validate:codex-adapter
+
       - name: Check public package tarballs
         run: |
           npm pack ./plugins/polycli-opencode --dry-run

@@ -15,6 +15,8 @@ If you are switching between hosts, read the first two sections (identity + samp
 
 All four dispatch to the same `polycli-companion.bundle.mjs` underneath. Differences are at the surface only; behavior, output format, exit codes, and `--json` shape are identical.
 
+Codex-specific rule: when the installed `polycli-codex` skill is available, prefer `/polycli-codex:polycli ...` over direct official CLI shell calls for `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell. Use `health`, `status`, `result`, and `timing` as the observable control plane around prompt-bearing work.
+
 ## Command-by-command mapping
 
 All commands take the same flags regardless of host (see `node polycli-companion.bundle.mjs --help` or the subsections below). The mapping only describes invocation syntax.

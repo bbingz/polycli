@@ -83,6 +83,8 @@ claude plugin install polycli@polycli-hosts
 codex plugin marketplace add bbingz/polycli
 ```
 
+After install, prefer `/polycli-codex:polycli ...` over direct official CLI shell calls when Codex needs `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell.
+
 ### GitHub Copilot CLI
 
 ```bash
@@ -113,12 +115,15 @@ polycli health
 # OpenCode (tool call — call polycli_run with ["health","--json"])
 ```
 
-`health` runs an end-to-end probe against every provider with valid auth and reports which ones are alive in `healthyProviders`. After that, daily use is direct:
+`health` runs an end-to-end probe against every provider with valid auth and reports which ones are alive in `healthyProviders`. After that, daily use is direct. In Codex, keep the slash prefix so the plugin remains the visible path:
 
 ```text
-ask --provider qwen "explain this stack trace ..."
-review --provider claude            # reviews current git diff
-rescue --provider gemini "..."      # longer task, can be backgrounded
+/polycli-codex:polycli ask --provider qwen "explain this stack trace ..."
+/polycli-codex:polycli review --provider claude --scope staged
+/polycli-codex:polycli rescue --provider gemini --background "audit flaky tests"
+/polycli-codex:polycli status --wait
+/polycli-codex:polycli result pr-1234abcd
+/polycli-codex:polycli timing --provider qwen --json
 ```
 
 For longer tasks, append `--background` and use `status <jobId>` / `result <jobId>` to retrieve.
@@ -222,6 +227,7 @@ npm install
 npm test                                       # build:plugins + full suite
 node --test packages/polycli-runtime/test/     # focused per-package run
 npm run build:plugins                          # rebundle plugin distributions
+npm run validate:codex-adapter                 # Codex trigger/fallback/observability guard
 npm run release:check                          # publish-readiness checks
 ```
 
@@ -239,6 +245,7 @@ Read these before opening a PR:
 - [`AGENTS.md`](./AGENTS.md) — repository map, editing rules, delivery expectations
 - [`CLAUDE.md`](./CLAUDE.md) — Claude Code-specific patches
 - [`docs/polycli-proposal.md`](./docs/polycli-proposal.md) — main architecture and product context
+- [`docs/codex-adapter-operability.md`](./docs/codex-adapter-operability.md) — Codex routing, fallback, and observability contract
 - [`docs/roadmap.md`](./docs/roadmap.md) — live open-work list
 
 Security reports: see [`SECURITY.md`](./SECURITY.md).

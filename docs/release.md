@@ -7,11 +7,11 @@ This repository publishes in two different ways:
 
 ## Current Release State
 
-As of `2026-04-29`, the current public patch release is:
+As of `2026-05-06`, the current public patch release is:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
-- GitHub release: `v0.6.2`
-- npm package: `@bbingz/polycli-opencode@0.6.2`
+- GitHub release: `v0.6.3`
+- npm package: `@bbingz/polycli-opencode@0.6.3`
 - npm packages: `@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`
 
 Verified release paths:
@@ -77,6 +77,7 @@ npm run release:check
 - `npm run validate:fixtures`
 - `npm run validate:manifests`
 - `npm run validate:host-map`
+- `npm run validate:codex-adapter`
 - `claude plugin validate` for the marketplace and Claude host plugin manifests
 - dry-run or pack checks for OpenCode, utils, and timing npm packages
 
