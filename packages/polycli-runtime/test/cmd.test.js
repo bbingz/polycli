@@ -41,6 +41,20 @@ test("buildCmdInvocation targets documented Command Code headless print mode", (
   ]);
 });
 
+test("buildCmdInvocation ignores resume flags because Command Code headless runs are standalone", () => {
+  const invocation = buildCmdInvocation({
+    prompt: "ping",
+    resumeSessionId: "cmd-session",
+    continueLast: true,
+  });
+
+  assert.deepEqual(invocation.args, [
+    "--skip-onboarding",
+    "-p",
+    "ping",
+  ]);
+});
+
 test("parseCmdTextResult treats plain stdout as the visible answer", () => {
   const parsed = parseCmdTextResult("hello world\n");
 

@@ -114,6 +114,20 @@ test("opencode adapter exports a plugin function", async () => {
   assert.equal(typeof plugin.tool.polycli_timing.execute, "function");
 });
 
+test("opencode adapter returns structured companion errors from stdout", async () => {
+  const moduleUrl = pathToFileURL(path.join(REPO_ROOT, "plugins/polycli-opencode/index.mjs")).href;
+  const module = await import(moduleUrl);
+  const plugin = await module.PolycliPlugin();
+
+  const output = await plugin.tool.polycli_run.execute({
+    argv: ["timing", "--provider", "definitely-not-a-provider", "--json"],
+  });
+  const payload = JSON.parse(output);
+
+  assert.equal(payload.code, "unknown_provider");
+  assert.match(payload.error, /definitely-not-a-provider/);
+});
+
 test("opencode package resolves through node package resolution", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-opencode-pkg-"));
   const scopeDir = path.join(tempRoot, "node_modules", "@bbingz");

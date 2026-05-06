@@ -212,7 +212,6 @@ function buildMiniMaxReviewEnv(parentEnv = process.env) {
   );
 
   return {
-    ...parentEnv,
     MINI_AGENT_CONFIG_PATH: writeReviewTempFile("minimax-config", ".yaml", lines.join("\n")),
   };
 }
@@ -249,7 +248,6 @@ const REVIEW_HARD_CONSTRAINTS = {
       skipPermissions: false,
       extraArgs: ["--agent", "plan"],
       env: {
-        ...(env || process.env),
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
           $schema: "https://opencode.ai/config.json",
           permission: "deny",

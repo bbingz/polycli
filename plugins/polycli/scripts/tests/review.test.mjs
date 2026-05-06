@@ -115,6 +115,19 @@ test("buildReviewRuntimeOptions applies opencode plan agent and deny-all config"
   });
 });
 
+test("buildReviewRuntimeOptions does not persist parent env for opencode review jobs", () => {
+  const options = buildReviewRuntimeOptions({
+    provider: "opencode",
+    cwd: process.cwd(),
+    env: {
+      PATH: "/bin",
+      SECRET_TOKEN: "do-not-persist",
+    },
+  });
+
+  assert.deepEqual(Object.keys(options.env).sort(), ["OPENCODE_CONFIG_CONTENT"]);
+});
+
 test("buildReviewRuntimeOptions applies pi hard constraints", () => {
   const options = buildReviewRuntimeOptions({
     provider: "pi",
@@ -159,6 +172,28 @@ test("buildReviewRuntimeOptions writes a tool-disabled minimax config override",
   assert.match(configText, /enable_note: false/);
   assert.match(configText, /enable_skills: false/);
   assert.match(configText, /enable_mcp: false/);
+});
+
+test("buildReviewRuntimeOptions does not persist parent env for minimax review jobs", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-minimax-"));
+  const baseConfigPath = path.join(root, "config.yaml");
+  fs.writeFileSync(baseConfigPath, "provider: minimax\nmodel: MiniMax-M1\n", "utf8");
+
+  try {
+    const options = buildReviewRuntimeOptions({
+      provider: "minimax",
+      cwd: process.cwd(),
+      env: {
+        MINI_AGENT_CONFIG_PATH: baseConfigPath,
+        SECRET_TOKEN: "do-not-persist",
+      },
+    });
+
+    assert.deepEqual(Object.keys(options.env), ["MINI_AGENT_CONFIG_PATH"]);
+    assert.notEqual(options.env.MINI_AGENT_CONFIG_PATH, baseConfigPath);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("buildReviewRuntimeOptions reads minimax YAML scalar forms", () => {

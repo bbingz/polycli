@@ -3021,16 +3021,12 @@ var TRANSIENT_PROBE_ERROR_PATTERNS6 = [
 ];
 function buildCmdInvocation({
   prompt,
-  resumeSessionId = null,
-  continueLast = false,
   skipOnboarding = true,
   extraArgs = [],
   bin = CMD_BIN
 } = {}) {
   const args = [];
   if (skipOnboarding) args.push("--skip-onboarding");
-  if (resumeSessionId) args.push("--resume", resumeSessionId);
-  else if (continueLast) args.push("--continue");
   if (extraArgs.length > 0) args.push(...extraArgs);
   args.push("-p", String(prompt ?? ""));
   return { bin, args };
@@ -3095,15 +3091,11 @@ function runCmdPrompt({
   timeout = DEFAULT_TIMEOUT_MS9,
   env = process.env,
   extraArgs = [],
-  resumeSessionId = null,
-  continueLast = false,
   defaultModel = null,
   bin = CMD_BIN
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
-    resumeSessionId,
-    continueLast,
     extraArgs,
     bin
   });
@@ -3138,8 +3130,6 @@ function runCmdPromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS9,
   env = process.env,
   extraArgs = [],
-  resumeSessionId = null,
-  continueLast = false,
   defaultModel = null,
   onEvent = () => {
   },
@@ -3148,8 +3138,6 @@ function runCmdPromptStreaming({
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
-    resumeSessionId,
-    continueLast,
     extraArgs,
     bin
   });
@@ -4490,7 +4478,6 @@ function buildMiniMaxReviewEnv(parentEnv = process.env) {
     ""
   );
   return {
-    ...parentEnv,
     MINI_AGENT_CONFIG_PATH: writeReviewTempFile("minimax-config", ".yaml", lines.join("\n"))
   };
 }
@@ -4526,7 +4513,6 @@ var REVIEW_HARD_CONSTRAINTS = {
       skipPermissions: false,
       extraArgs: ["--agent", "plan"],
       env: {
-        ...env || process.env,
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
           $schema: "https://opencode.ai/config.json",
           permission: "deny"
@@ -5282,6 +5268,15 @@ function cleanupRuntimeOptions(runtimeOptions = {}) {
     }
   }
 }
+function hydrateRuntimeOptions(runtimeOptions = {}) {
+  if (!runtimeOptions.env) {
+    return runtimeOptions;
+  }
+  return {
+    ...runtimeOptions,
+    env: { ...process5.env, ...runtimeOptions.env }
+  };
+}
 async function runForegroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
   let result;
@@ -5296,7 +5291,7 @@ async function runForegroundExecution(execution, asJson) {
       kind: execution.kind,
       measurementScope: execution.measurementScope || "request",
       meta: execution.meta || null,
-      ...execution.runtimeOptions || {},
+      ...hydrateRuntimeOptions(execution.runtimeOptions),
       onEvent() {
       }
     });
@@ -5972,7 +5967,7 @@ async function runJobWorker(rawArgs) {
       kind: execution.kind,
       measurementScope: execution.measurementScope || "job",
       meta: execution.meta || null,
-      ...execution.runtimeOptions || {},
+      ...hydrateRuntimeOptions(execution.runtimeOptions),
       onEvent(event) {
         appendPreview(current.logFile, execution.provider, event);
       }

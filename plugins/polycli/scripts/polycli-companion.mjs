@@ -326,6 +326,16 @@ function cleanupRuntimeOptions(runtimeOptions = {}) {
   }
 }
 
+function hydrateRuntimeOptions(runtimeOptions = {}) {
+  if (!runtimeOptions.env) {
+    return runtimeOptions;
+  }
+  return {
+    ...runtimeOptions,
+    env: { ...process.env, ...runtimeOptions.env },
+  };
+}
+
 async function runForegroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
   let result;
@@ -340,7 +350,7 @@ async function runForegroundExecution(execution, asJson) {
       kind: execution.kind,
       measurementScope: execution.measurementScope || "request",
       meta: execution.meta || null,
-      ...(execution.runtimeOptions || {}),
+      ...hydrateRuntimeOptions(execution.runtimeOptions),
       onEvent() {},
     });
   } finally {
@@ -1086,7 +1096,7 @@ async function runJobWorker(rawArgs) {
       kind: execution.kind,
       measurementScope: execution.measurementScope || "job",
       meta: execution.meta || null,
-      ...(execution.runtimeOptions || {}),
+      ...hydrateRuntimeOptions(execution.runtimeOptions),
       onEvent(event) {
         appendPreview(current.logFile, execution.provider, event);
       },

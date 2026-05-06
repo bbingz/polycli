@@ -15,16 +15,12 @@ export const TRANSIENT_PROBE_ERROR_PATTERNS = [
 
 export function buildCmdInvocation({
   prompt,
-  resumeSessionId = null,
-  continueLast = false,
   skipOnboarding = true,
   extraArgs = [],
   bin = CMD_BIN,
 } = {}) {
   const args = [];
   if (skipOnboarding) args.push("--skip-onboarding");
-  if (resumeSessionId) args.push("--resume", resumeSessionId);
-  else if (continueLast) args.push("--continue");
   if (extraArgs.length > 0) args.push(...extraArgs);
   args.push("-p", String(prompt ?? ""));
   return { bin, args };
@@ -102,15 +98,11 @@ export function runCmdPrompt({
   timeout = DEFAULT_TIMEOUT_MS,
   env = process.env,
   extraArgs = [],
-  resumeSessionId = null,
-  continueLast = false,
   defaultModel = null,
   bin = CMD_BIN,
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
-    resumeSessionId,
-    continueLast,
     extraArgs,
     bin,
   });
@@ -153,8 +145,6 @@ export function runCmdPromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS,
   env = process.env,
   extraArgs = [],
-  resumeSessionId = null,
-  continueLast = false,
   defaultModel = null,
   onEvent = () => {},
   bin = CMD_BIN,
@@ -162,8 +152,6 @@ export function runCmdPromptStreaming({
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
-    resumeSessionId,
-    continueLast,
     extraArgs,
     bin,
   });

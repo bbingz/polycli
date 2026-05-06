@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,10 +14,21 @@ function tool(input) {
 tool.schema = z;
 
 function runCompanion(argv) {
-  return execFileSync(process.execPath, [COMPANION, ...argv], {
+  const result = spawnSync(process.execPath, [COMPANION, ...argv], {
     cwd: process.cwd(),
     encoding: "utf8",
   });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0 && !result.stdout) {
+    const detail = String(result.stderr || "").trim() || `polycli companion exited with status ${result.status}`;
+    const error = new Error(detail);
+    error.status = result.status;
+    error.stderr = result.stderr;
+    throw error;
+  }
+  return result.stdout;
 }
 
 export const PolycliPlugin = async () => ({
