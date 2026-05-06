@@ -24,7 +24,7 @@
 
 `polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, and **`mini-agent`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing` — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
 
-> **polycli is an in-host plugin, not a standalone shell binary.** There is no `polycli` executable on your `PATH`. Each host adapter exposes the same `health / ask / review / rescue / timing` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, `/polycli-codex:polycli health` in Codex). See [Outside a supported host](#outside-a-supported-host) if you are not running one of the four hosts.
+> **polycli is an in-host plugin, not a standalone shell binary.** There is no `polycli` executable on your `PATH`. Each host adapter exposes the same `health / ask / review / rescue / timing` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, an installed `polycli` skill in Codex). See [Outside a supported host](#outside-a-supported-host) if you are not running one of the four hosts.
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
@@ -83,7 +83,9 @@ claude plugin install polycli@polycli-hosts
 codex plugin marketplace add bbingz/polycli
 ```
 
-After install, prefer `/polycli-codex:polycli ...` over direct official CLI shell calls when Codex needs `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell.
+Then open a new Codex TUI session, run `/plugins`, choose the `polycli-hosts` marketplace, install `Polycli`, and start a new thread so the bundled skill is available.
+
+After install, prefer the installed `Polycli` plugin or bundled `polycli` skill over direct official CLI shell calls when Codex needs `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell.
 
 ### GitHub Copilot CLI
 
@@ -106,8 +108,8 @@ After installing, verify the integration in your host:
 # Claude Code (slash command)
 /polycli:health
 
-# Codex (slash command)
-/polycli-codex:polycli health
+# Codex (installed plugin/skill, not a slash command)
+Choose Polycli with @, then ask it to run: health
 
 # GitHub Copilot CLI (skill word — NOT a PATH binary; only inside the copilot prompt)
 polycli health
@@ -115,15 +117,15 @@ polycli health
 # OpenCode (tool call — call polycli_run with ["health","--json"])
 ```
 
-`health` runs an end-to-end probe against every provider with valid auth and reports which ones are alive in `healthyProviders`. After that, daily use is direct. In Codex, keep the slash prefix so the plugin remains the visible path:
+`health` runs an end-to-end probe against every provider with valid auth and reports which ones are alive in `healthyProviders`. After that, daily use is direct. In Codex, either describe the task directly or type `@`, choose Polycli, and ask it to run the companion command:
 
 ```text
-/polycli-codex:polycli ask --provider qwen "explain this stack trace ..."
-/polycli-codex:polycli review --provider claude --scope staged
-/polycli-codex:polycli rescue --provider gemini --background "audit flaky tests"
-/polycli-codex:polycli status --wait
-/polycli-codex:polycli result pr-1234abcd
-/polycli-codex:polycli timing --provider qwen --json
+Choose Polycli with @, then ask it to run: ask --provider qwen "explain this stack trace ..."
+Choose Polycli with @, then ask it to run: review --provider claude --scope staged
+Choose Polycli with @, then ask it to run: rescue --provider gemini --background "audit flaky tests"
+Choose Polycli with @, then ask it to run: status --wait
+Choose Polycli with @, then ask it to run: result pr-1234abcd
+Choose Polycli with @, then ask it to run: timing --provider qwen --json
 ```
 
 For longer tasks, append `--background` and use `status <jobId>` / `result <jobId>` to retrieve.
@@ -132,7 +134,7 @@ For longer tasks, append `--background` and use `status <jobId>` / `result <jobI
 
 If your agent / harness is **not** Claude Code, Codex, Copilot CLI, or OpenCode (e.g. Aider, Cursor, a bare shell script, a CI runner, or a Codex session that did not install the polycli-codex marketplace), there is no first-class polycli entry point. You have three honest options, in order of preference:
 
-1. **Install the host adapter for your environment.** Codex users: run `codex plugin marketplace add bbingz/polycli`, then call `/polycli-codex:polycli <subcommand>` from inside the codex prompt. The same pattern applies to Copilot CLI and OpenCode (see [Installation](#installation)). This is the only supported public surface.
+1. **Install the host adapter for your environment.** Codex users: run `codex plugin marketplace add bbingz/polycli`, install `Polycli` from `/plugins`, then start a new thread and ask Codex to use Polycli for the desired subcommand. The same host-native pattern applies to Copilot CLI and OpenCode (see [Installation](#installation)). This is the only supported public surface.
 
 2. **Call the underlying provider CLI directly.** polycli is a thin wrapper over `gemini` / `qwen` / `kimi` / etc. — if you only need a one-shot prompt, `qwen -p "..."` works without polycli. You lose: probing-cost amortization, four-state timing, background job control, multi-host consistency. You keep: simplicity.
 

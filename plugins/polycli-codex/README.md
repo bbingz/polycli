@@ -8,22 +8,25 @@ Codex host adapter for the shared `polycli` companion. Prefer the installed Code
 codex plugin marketplace add bbingz/polycli
 ```
 
+Open a new Codex TUI session, run `/plugins`, choose the `polycli-hosts` marketplace, install `Polycli`, then start a new thread so Codex rebuilds the available skill list.
+
 ## First Run
 
-Use the installed skill directly:
+Use the installed `Polycli` plugin or bundled `polycli` skill directly. This is a prompt or `@` selector flow, not a Codex slash command:
 
 ```text
-/polycli-codex:polycli health
-/polycli-codex:polycli ask --provider qwen "Reply with only OK"
-/polycli-codex:polycli review --provider gemini --scope staged
-/polycli-codex:polycli status --wait
-/polycli-codex:polycli result pr-1234abcd
-/polycli-codex:polycli timing --provider qwen --json
+Choose Polycli with @, then ask it to run: health
+Choose Polycli with @, then ask it to run: ask --provider qwen "Reply with only OK"
+Choose Polycli with @, then ask it to run: review --provider gemini --scope staged
+Choose Polycli with @, then ask it to run: status --wait
+Choose Polycli with @, then ask it to run: result pr-1234abcd
+Choose Polycli with @, then ask it to run: timing --provider qwen --json
 ```
 
 That sequence verifies:
 
 - the Codex plugin is installed
+- the `polycli` skill appears in the Codex session
 - the bundled companion executes correctly
 - the target provider CLI can complete a real short prompt
 - timing records are being persisted
@@ -34,7 +37,7 @@ For observability, use `status` to inspect background progress, `result` to retr
 
 ## What It Exposes
 
-- Skill: `polycli-codex:polycli`
+- Skill: `polycli`
 
 The skill runs `scripts/polycli-companion.bundle.mjs`, so the plugin remains self-contained after marketplace install.
 
@@ -54,14 +57,14 @@ The skill runs `scripts/polycli-companion.bundle.mjs`, so the plugin remains sel
 ## Common Examples
 
 ```text
-/polycli-codex:polycli setup --provider gemini
-/polycli-codex:polycli health
-/polycli-codex:polycli ask --provider kimi "Summarize this stack trace"
-/polycli-codex:polycli rescue --provider gemini --background "audit flaky tests"
-/polycli-codex:polycli review --provider qwen --scope staged
-/polycli-codex:polycli status --wait
-/polycli-codex:polycli result pr-1234abcd
-/polycli-codex:polycli timing --provider qwen --json
+Choose Polycli with @, then ask it to run: setup --provider gemini
+Choose Polycli with @, then ask it to run: health
+Choose Polycli with @, then ask it to run: ask --provider kimi "Summarize this stack trace"
+Choose Polycli with @, then ask it to run: rescue --provider gemini --background "audit flaky tests"
+Choose Polycli with @, then ask it to run: review --provider qwen --scope staged
+Choose Polycli with @, then ask it to run: status --wait
+Choose Polycli with @, then ask it to run: result pr-1234abcd
+Choose Polycli with @, then ask it to run: timing --provider qwen --json
 ```
 
 ## Operator Notes

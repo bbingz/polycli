@@ -14,6 +14,7 @@ const HOST_COMMAND_MAP = "docs/host-command-map.md";
 const PROVIDERS = ["claude", "copilot", "opencode", "pi", "gemini", "kimi", "qwen", "minimax"];
 const OBSERVABILITY_COMMANDS = ["health", "status", "result", "timing"];
 const DAILY_COMMANDS = ["health", "ask", "review", "timing"];
+const INVALID_CODEX_SLASH = /\/polycli-codex:polycli\b/;
 
 function read(root, relativePath) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -59,12 +60,20 @@ function assertObservability(text, label) {
   }
 }
 
-function assertCodexSlashExamples(text, label) {
+function assertNoCodexSlashExamples(text, label) {
+  assert.doesNotMatch(
+    text,
+    INVALID_CODEX_SLASH,
+    `${label} must not document /polycli-codex:polycli as a Codex slash command`
+  );
+}
+
+function assertCodexSkillExamples(text, label) {
   for (const command of DAILY_COMMANDS) {
     assert.match(
       text,
-      new RegExp(`/polycli-codex:polycli ${command}\\b`),
-      `${label} must include Codex slash example for ${command}`
+      new RegExp(`(?:@|skill|polycli)[\\s\\S]{0,180}\\b${command}\\b|\\b${command}\\b[\\s\\S]{0,180}(?:@|skill|polycli)`, "i"),
+      `${label} must include Codex plugin/skill example for ${command}`
     );
   }
 }
@@ -73,9 +82,8 @@ function assertDefaultPrompts(manifest) {
   const prompts = manifest.interface?.defaultPrompt;
   assert.equal(Array.isArray(prompts), true, "Codex defaultPrompt must be an array");
   assert.ok(prompts.length >= 3, "Codex defaultPrompt must include health, ask, and timing examples");
-  assert.match(prompts.join("\n"), /\/polycli-codex:polycli health\b/, "Codex defaultPrompt must use slash health");
-  assert.match(prompts.join("\n"), /\/polycli-codex:polycli ask\b/, "Codex defaultPrompt must use slash ask");
-  assert.match(prompts.join("\n"), /\/polycli-codex:polycli timing\b/, "Codex defaultPrompt must use slash timing");
+  assertNoCodexSlashExamples(prompts.join("\n"), "Codex defaultPrompt");
+  assertCodexSkillExamples(prompts.join("\n"), "Codex defaultPrompt");
   assert.doesNotMatch(prompts[0], /\bsetup\b/, "Codex defaultPrompt must not make setup the first-run default");
 }
 
@@ -103,13 +111,25 @@ export function validateCodexAdapter({ root = REPO_ROOT } = {}) {
   assertSkillDescription(skill);
   assertPrefersPolycli(skill, "Codex skill body");
   assertObservability(skill, "Codex skill body");
+  assertNoCodexSlashExamples(skill, "Codex skill body");
+  assert.match(
+    skill,
+    /plugin root[\s\S]{0,220}`?SKILL\.md`? file path|`?SKILL\.md`? file path[\s\S]{0,220}plugin root/i,
+    "Codex skill body must resolve the plugin root from its installed SKILL.md file path"
+  );
+  assert.doesNotMatch(
+    skill,
+    /PLUGIN_ROOT is not set/,
+    "Codex skill body must not require a manually exported PLUGIN_ROOT"
+  );
 
   for (const [text, label] of [
     [codexReadme, CODEX_README],
     [rootReadme, ROOT_README],
     [hostCommandMap, HOST_COMMAND_MAP],
   ]) {
-    assertCodexSlashExamples(text, label);
+    assertNoCodexSlashExamples(text, label);
+    assertCodexSkillExamples(text, label);
     assertPrefersPolycli(text, label);
     assertObservability(text, label);
   }

@@ -1,6 +1,6 @@
 {
   "name": "polycli-codex",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Codex skill adapter that routes provider CLI work through the shared polycli companion.",
   "author": {
     "name": "bing"
@@ -21,9 +21,10 @@
     "privacyPolicyURL": "https://github.com/bbingz/polycli",
     "termsOfServiceURL": "https://github.com/bbingz/polycli",
     "defaultPrompt": [
-      "Use /polycli-codex:polycli health to verify providers",
-      "Use /polycli-codex:polycli ask --provider qwen Reply with only OK",
-      "Use /polycli-codex:polycli timing --provider qwen --json"
+      "Choose Polycli with @ and ask it to run `health` to verify providers",
+      "Choose Polycli with @ and ask it to run `ask --provider qwen Reply with only OK`",
+      "Choose Polycli with @ and ask it to run `review --provider qwen --scope staged`",
+      "Choose Polycli with @ and ask it to run `timing --provider qwen --json`"
     ],
     "brandColor": "#1F6FEB"
   }

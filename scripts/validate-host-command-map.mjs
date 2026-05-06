@@ -62,9 +62,14 @@ function assertHostCommandMap() {
   for (const command of EXPECTED_COMMANDS) {
     assert.match(text, new RegExp(`\\| ${command.replaceAll("-", "\\-")}\\s+\\|`), `host-command-map missing row for ${command}`);
     assert.match(text, new RegExp(`/polycli:${command}\\b`), `host-command-map missing Claude invocation for ${command}`);
-    assert.match(text, new RegExp(`/polycli-codex:polycli ${command}\\b`), `host-command-map missing Codex invocation for ${command}`);
+    assert.match(
+      text,
+      new RegExp(`Choose Polycli with @, then ask it to run: ${command}\\b`),
+      `host-command-map missing Codex skill invocation for ${command}`
+    );
     assert.match(text, new RegExp(`polycli ${command}\\b`), `host-command-map missing Copilot invocation for ${command}`);
   }
+  assert.doesNotMatch(text, /\/polycli-codex:polycli\b/, "host-command-map must not document fake Codex slash invocation");
   assert.match(text, /polycli_run\(\["timing"/, "host-command-map missing OpenCode generic timing invocation");
   assert.match(text, /polycli_timing/, "host-command-map missing OpenCode timing wrapper");
 }

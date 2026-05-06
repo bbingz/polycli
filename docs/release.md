@@ -10,14 +10,14 @@ This repository publishes in two different ways:
 As of `2026-05-06`, the current public patch release is:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
-- GitHub release: `v0.6.3`
-- npm package: `@bbingz/polycli-opencode@0.6.3`
+- GitHub release: `v0.6.4`
+- npm package: `@bbingz/polycli-opencode@0.6.4`
 - npm packages: `@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`
 
 Verified release paths:
 
 - `Claude`: marketplace add/install from `bbingz/polycli`
-- `Codex`: marketplace add from `bbingz/polycli`
+- `Codex`: marketplace add from `bbingz/polycli`, then install `Polycli` from TUI `/plugins`
 - `Copilot`: marketplace add/install from `bbingz/polycli`
 - `OpenCode`: `@bbingz/polycli-opencode`
 - public utility packages: `@bbingz/polycli-utils`, `@bbingz/polycli-timing`
@@ -119,6 +119,7 @@ claude plugin marketplace add bbingz/polycli
 claude plugin install polycli@polycli-hosts
 
 codex plugin marketplace add bbingz/polycli
+# then open Codex TUI /plugins and install Polycli from polycli-hosts
 
 copilot plugin marketplace add bbingz/polycli
 copilot plugin install polycli-copilot@polycli-hosts

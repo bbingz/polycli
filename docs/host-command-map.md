@@ -9,13 +9,13 @@ If you are switching between hosts, read the first two sections (identity + samp
 | host plugin          | host           | invocation style                      | example                                      |
 |----------------------|----------------|---------------------------------------|----------------------------------------------|
 | `polycli`            | Claude Code    | 10 slash commands                     | `/polycli:health`                            |
-| `polycli-codex`      | Codex          | 1 skill with subcommands              | `/polycli-codex:polycli health`              |
+| `polycli-codex`      | Codex          | 1 installed skill with subcommands    | `Choose Polycli with @, then ask it to run: health` |
 | `polycli-copilot`    | GitHub Copilot CLI | skill with subcommands (top-level) | `polycli health`                             |
 | `polycli-opencode`   | OpenCode       | 2 tool functions                      | `polycli_run(["health", "--json"])`          |
 
 All four dispatch to the same `polycli-companion.bundle.mjs` underneath. Differences are at the surface only; behavior, output format, exit codes, and `--json` shape are identical.
 
-Codex-specific rule: when the installed `polycli-codex` skill is available, prefer `/polycli-codex:polycli ...` over direct official CLI shell calls for `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell. Use `health`, `status`, `result`, and `timing` as the observable control plane around prompt-bearing work.
+Codex-specific rule: when the installed `polycli` skill from `polycli-codex` is available, prefer the skill over direct official CLI shell calls for `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell. Use `health`, `status`, `result`, and `timing` as the observable control plane around prompt-bearing work.
 
 ## Command-by-command mapping
 
@@ -23,16 +23,16 @@ All commands take the same flags regardless of host (see `node polycli-companion
 
 | capability            | Claude Code (`polycli`)               | Codex (`polycli-codex`)                     | Copilot (`polycli-copilot`) | OpenCode (`polycli-opencode`)                                  |
 |-----------------------|---------------------------------------|---------------------------------------------|------------------------------|----------------------------------------------------------------|
-| setup                 | `/polycli:setup`                      | `/polycli-codex:polycli setup`              | `polycli setup`              | `polycli_run(["setup"])`                                       |
-| health                | `/polycli:health`                     | `/polycli-codex:polycli health`             | `polycli health`             | `polycli_run(["health"])`                                      |
-| ask                   | `/polycli:ask`                        | `/polycli-codex:polycli ask`                | `polycli ask`                | `polycli_run(["ask", ...])`                                    |
-| rescue                | `/polycli:rescue`                     | `/polycli-codex:polycli rescue`             | `polycli rescue`             | `polycli_run(["rescue", ...])`                                 |
-| review                | `/polycli:review`                     | `/polycli-codex:polycli review`             | `polycli review`             | `polycli_run(["review", ...])`                                 |
-| adversarial-review    | `/polycli:adversarial-review`         | `/polycli-codex:polycli adversarial-review` | `polycli adversarial-review` | `polycli_run(["adversarial-review", ...])`                     |
-| status                | `/polycli:status`                     | `/polycli-codex:polycli status`             | `polycli status`             | `polycli_run(["status", ...])`                                 |
-| result                | `/polycli:result`                     | `/polycli-codex:polycli result`             | `polycli result`             | `polycli_run(["result", ...])`                                 |
-| cancel                | `/polycli:cancel`                     | `/polycli-codex:polycli cancel`             | `polycli cancel`             | `polycli_run(["cancel", ...])`                                 |
-| timing                | `/polycli:timing`                     | `/polycli-codex:polycli timing`             | `polycli timing`             | `polycli_timing({provider, history, json})` **or** `polycli_run(["timing", ...])` |
+| setup                 | `/polycli:setup`                      | `Choose Polycli with @, then ask it to run: setup` | `polycli setup`              | `polycli_run(["setup"])`                                       |
+| health                | `/polycli:health`                     | `Choose Polycli with @, then ask it to run: health` | `polycli health`             | `polycli_run(["health"])`                                      |
+| ask                   | `/polycli:ask`                        | `Choose Polycli with @, then ask it to run: ask` | `polycli ask`                | `polycli_run(["ask", ...])`                                    |
+| rescue                | `/polycli:rescue`                     | `Choose Polycli with @, then ask it to run: rescue` | `polycli rescue`             | `polycli_run(["rescue", ...])`                                 |
+| review                | `/polycli:review`                     | `Choose Polycli with @, then ask it to run: review` | `polycli review`             | `polycli_run(["review", ...])`                                 |
+| adversarial-review    | `/polycli:adversarial-review`         | `Choose Polycli with @, then ask it to run: adversarial-review` | `polycli adversarial-review` | `polycli_run(["adversarial-review", ...])`                     |
+| status                | `/polycli:status`                     | `Choose Polycli with @, then ask it to run: status` | `polycli status`             | `polycli_run(["status", ...])`                                 |
+| result                | `/polycli:result`                     | `Choose Polycli with @, then ask it to run: result` | `polycli result`             | `polycli_run(["result", ...])`                                 |
+| cancel                | `/polycli:cancel`                     | `Choose Polycli with @, then ask it to run: cancel` | `polycli cancel`             | `polycli_run(["cancel", ...])`                                 |
+| timing                | `/polycli:timing`                     | `Choose Polycli with @, then ask it to run: timing` | `polycli timing`             | `polycli_timing({provider, history, json})` **or** `polycli_run(["timing", ...])` |
 
 Notes:
 
@@ -48,7 +48,7 @@ The same four operations, across all four hosts.
 | host          | invocation                                                   |
 |---------------|--------------------------------------------------------------|
 | Claude Code   | `/polycli:health`                                            |
-| Codex         | `/polycli-codex:polycli health`                              |
+| Codex         | `Choose Polycli with @, then ask it to run: health`                |
 | Copilot       | `polycli health`                                             |
 | OpenCode      | `polycli_run(["health"])`                                    |
 
@@ -57,7 +57,7 @@ The same four operations, across all four hosts.
 | host          | invocation                                                                 |
 |---------------|----------------------------------------------------------------------------|
 | Claude Code   | `/polycli:ask --provider qwen Reply with only: OK`                         |
-| Codex         | `/polycli-codex:polycli ask --provider qwen Reply with only: OK`           |
+| Codex         | `Choose Polycli with @, then ask it to run: ask --provider qwen Reply with only: OK` |
 | Copilot       | `polycli ask --provider qwen "Reply with only: OK"`                        |
 | OpenCode      | `polycli_run(["ask", "--provider", "qwen", "Reply with only: OK"])`        |
 
@@ -66,7 +66,7 @@ The same four operations, across all four hosts.
 | host          | invocation                                                                                      |
 |---------------|-------------------------------------------------------------------------------------------------|
 | Claude Code   | `/polycli:review --provider claude --scope staged --background` → `/polycli:status <jobId> --wait` → `/polycli:result <jobId>` |
-| Codex         | same with `/polycli-codex:polycli review …`                                                     |
+| Codex         | same with `Choose Polycli with @, then ask it to run: review ...`                                    |
 | Copilot       | same with `polycli review …`                                                                    |
 | OpenCode      | `polycli_run(["review","--provider","claude","--scope","staged","--background"])` → `polycli_run(["status",jobId,"--wait"])` → `polycli_run(["result",jobId])` |
 
@@ -75,13 +75,13 @@ The same four operations, across all four hosts.
 | host          | invocation                                                               |
 |---------------|--------------------------------------------------------------------------|
 | Claude Code   | `/polycli:timing --provider qwen --history 20 --json`                    |
-| Codex         | `/polycli-codex:polycli timing --provider qwen --history 20 --json`      |
+| Codex         | `Choose Polycli with @, then ask it to run: timing --provider qwen --history 20 --json` |
 | Copilot       | `polycli timing --provider qwen --history 20 --json`                     |
 | OpenCode      | `polycli_timing({"provider":"qwen","history":20,"json":true})`           |
 
 ## Why the surfaces differ
 
-Claude Code first-classes user-visible slash-commands, so ten separate command files produce better autocomplete and discoverability. Codex and Copilot express the same capabilities as a skill with an `$ARGUMENTS`-style dispatcher — the subcommand is data, not a separate registered handler. OpenCode is a tool-calling host, so the natural surface is JSON-schema'd tool functions. See `docs/roadmap.md` Q3 for the deeper question of whether to converge these surfaces; the current answer is "no, document the asymmetry instead."
+Claude Code first-classes user-visible slash-commands, so ten separate command files produce better autocomplete and discoverability. Codex and Copilot express the same capabilities as a skill with an `$ARGUMENTS`-style dispatcher — the subcommand is data, not a separate registered handler. Codex does not register a user slash command for `polycli-codex`; install it from `/plugins` and invoke it as a skill. OpenCode is a tool-calling host, so the natural surface is JSON-schema'd tool functions. See `docs/roadmap.md` Q3 for the deeper question of whether to converge these surfaces; the current answer is "no, document the asymmetry instead."
 
 ## When this doc goes stale
 

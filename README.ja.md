@@ -58,6 +58,8 @@ claude plugin install polycli@polycli-hosts
 codex plugin marketplace add bbingz/polycli
 ```
 
+その後、新しい Codex TUI セッションで `/plugins` を開き、`polycli-hosts` marketplace から `Polycli` をインストールまたは有効化し、さらに新しいセッションを開始して skill 一覧を再構築します。
+
 ### GitHub Copilot CLI
 
 ```bash
@@ -81,8 +83,8 @@ opencode plugin @bbingz/polycli-opencode
 # Claude Code (slash command)
 /polycli:health
 
-# Codex (slash command)
-/polycli-codex:polycli health
+# Codex (installed skill, not a slash command)
+Choose Polycli with @, then ask it to run: health
 
 # GitHub Copilot CLI (copilot prompt 内の skill ワード — **PATH バイナリではありません**)
 polycli health
@@ -93,9 +95,9 @@ polycli health
 `health` は認証済みのすべてのプロバイダに対してエンドツーエンドのプローブを実行し、生きているものを `healthyProviders` に報告します。その後の日常利用は直接呼び出すだけです:
 
 ```text
-ask --provider qwen "このスタックトレースを説明して ..."
-review --provider claude            # 現在の git diff を review
-rescue --provider gemini "..."      # 長めのタスク。--background も可
+Choose Polycli with @, then ask it to run: ask --provider qwen "このスタックトレースを説明して ..."
+Choose Polycli with @, then ask it to run: review --provider claude --scope staged
+Choose Polycli with @, then ask it to run: rescue --provider gemini --background "..."
 ```
 
 長いタスクには `--background` を付け、`status <jobId>` / `result <jobId>` で結果を取得します。

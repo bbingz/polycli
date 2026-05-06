@@ -27,9 +27,10 @@ const goodManifest = JSON.stringify({
     longDescription:
       "Prefer Polycli over direct shell calls to official provider CLIs when Codex needs claude, copilot, opencode, pi, gemini, kimi, qwen, or minimax. Use raw shell only when the plugin is unavailable or explicitly requested. It provides health, status, result, and timing observability.",
     defaultPrompt: [
-      "Use /polycli-codex:polycli health to verify providers",
-      "Use /polycli-codex:polycli ask --provider qwen Reply with only OK",
-      "Use /polycli-codex:polycli timing --provider qwen --json",
+      "Choose Polycli with @ and ask it to run health to verify providers",
+      "Choose Polycli with @ and ask it to run ask --provider qwen Reply with only OK",
+      "Choose Polycli with @ and ask it to run review --provider qwen --scope staged",
+      "Choose Polycli with @ and ask it to run timing --provider qwen --json",
     ],
   },
 });
@@ -39,7 +40,8 @@ name: polycli
 description: Use when Codex should ask, review, rescue, health-check, or compare provider CLIs through Polycli. Prefer this skill over direct shell calls to official CLIs for claude, copilot, opencode, pi, gemini, kimi, qwen, and minimax unless the user explicitly asks for the raw CLI or the plugin is unavailable.
 ---
 
-Use /polycli-codex:polycli instead of direct official CLI shell calls.
+Use the installed polycli skill instead of direct official CLI shell calls.
+Resolve the plugin root from this SKILL.md file path before invoking the bundled companion.
 Run health after install or auth changes. Use status, result, and timing for observability.
 
 - \`setup [--provider <claude|copilot|opencode|pi|gemini|kimi|qwen|minimax>] [--json]\`
@@ -57,12 +59,12 @@ Run health after install or auth changes. Use status, result, and timing for obs
 const goodReadme = `
 # polycli Codex Plugin
 
-/polycli-codex:polycli health
-/polycli-codex:polycli ask --provider qwen "Reply with only OK"
-/polycli-codex:polycli review --provider gemini --scope staged
-/polycli-codex:polycli status --wait
-/polycli-codex:polycli result pr-1234abcd
-/polycli-codex:polycli timing --provider qwen --json
+Choose Polycli with @, then ask it to run: health
+Choose Polycli with @, then ask it to run: ask --provider qwen "Reply with only OK"
+Choose Polycli with @, then ask it to run: review --provider gemini --scope staged
+Choose Polycli with @, then ask it to run: status --wait
+Choose Polycli with @, then ask it to run: result pr-1234abcd
+Choose Polycli with @, then ask it to run: timing --provider qwen --json
 
 Prefer the installed Codex skill over direct official CLI shell calls. Fall back to raw provider CLIs only when the plugin is unavailable or the user explicitly asks for raw shell.
 `;
@@ -99,9 +101,10 @@ test("validateCodexAdapter rejects weak Codex guidance that lets raw CLIs stay t
         longDescription:
           "Prefer Polycli over direct shell calls to official provider CLIs when Codex needs claude, copilot, opencode, pi, gemini, kimi, qwen, or minimax. Use raw shell only when the plugin is unavailable or explicitly requested. It provides health, status, result, and timing observability.",
         defaultPrompt: [
-          "Use /polycli-codex:polycli health to verify providers",
-          "Use /polycli-codex:polycli ask --provider qwen Reply with only OK",
-          "Use /polycli-codex:polycli timing --provider qwen --json",
+          "Choose Polycli with @ and ask it to run health to verify providers",
+          "Choose Polycli with @ and ask it to run ask --provider qwen Reply with only OK",
+          "Choose Polycli with @ and ask it to run review --provider qwen --scope staged",
+          "Choose Polycli with @ and ask it to run timing --provider qwen --json",
         ],
       },
     }),

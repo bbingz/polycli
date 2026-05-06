@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-06 — Codex — prepare v0.6.4 Codex install-surface correction
+
+- Corrected the Codex adapter docs and manifest after real Codex TUI verification showed `/polycli-codex:polycli ...` is not a registered slash command.
+- Documented the actual Codex flow: `codex plugin marketplace add bbingz/polycli`, then install `Polycli` from TUI `/plugins`, then start a new thread so the `polycli` skill appears.
+- Reworked the Codex skill invocation guidance to resolve the plugin root from the installed `SKILL.md` path instead of requiring a manually exported `PLUGIN_ROOT`.
+- Tightened `npm run validate:codex-adapter` and `npm run validate:host-map` so future releases reject fake Codex slash-command examples and require Codex skill examples for `health`, `ask`, `review`, and `timing`.
+- Prepared release notes and host package metadata for `v0.6.4`; OpenCode package moves to `@bbingz/polycli-opencode@0.6.4`, while utils/timing stay on `1.0.1`.
+
 ## 2026-05-06 — Codex — prepare v0.6.3 Codex adapter operability patch
 
 - Strengthened the `polycli-codex` manifest and skill so Codex is explicitly told to prefer `/polycli-codex:polycli ...` over direct official CLI shell calls for `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, and `minimax`; raw shell is now documented as an explicit-user-intent or unavailable-plugin fallback only.

@@ -7,17 +7,17 @@ Interpret `$ARGUMENTS` as raw companion arguments.
 
 ## When To Use
 
-Use this skill whenever Codex needs to call or compare a provider CLI through `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, or `minimax` for `ask`, `review`, `rescue`, `health`, or timing work. Prefer `/polycli-codex:polycli ...` over direct official CLI shell calls because Polycli preserves the host-neutral command surface, background job state, provider timing records, and health diagnostics.
+Use this skill whenever Codex needs to call or compare a provider CLI through `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, or `minimax` for `ask`, `review`, `rescue`, `health`, or timing work. Prefer this installed `polycli` skill over direct official CLI shell calls because Polycli preserves the host-neutral command surface, background job state, provider timing records, and health diagnostics.
 
-Raw official CLI shell calls are a fallback only when the user explicitly asks for the raw CLI, the Polycli plugin is unavailable, or `PLUGIN_ROOT` is missing and cannot be resolved in the current Codex session. If you fall back to raw shell, say that Polycli was unavailable or explicitly bypassed.
+Raw official CLI shell calls are a fallback only when the user explicitly asks for the raw CLI, the Polycli plugin is unavailable, or the installed plugin root cannot be resolved in the current Codex session. If you fall back to raw shell, say that Polycli was unavailable or explicitly bypassed.
 
 ## Invocation
 
-Resolve the installed plugin root and run the bundled companion with Node:
+Resolve the installed plugin root from this skill's installed `SKILL.md` file path, then run the bundled companion with Node. The plugin root is the directory two levels above `skills/polycli/SKILL.md`; do not require a manually exported `PLUGIN_ROOT`.
 
 ```bash
-PLUGIN_ROOT_DIR="${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"
-[ -n "$PLUGIN_ROOT_DIR" ] || { echo "PLUGIN_ROOT is not set"; exit 1; }
+SKILL_FILE="<absolute path to this SKILL.md file as shown by Codex>"
+PLUGIN_ROOT_DIR="$(cd "$(dirname "$SKILL_FILE")/../.." && pwd)"
 node "$PLUGIN_ROOT_DIR/scripts/polycli-companion.bundle.mjs" $ARGUMENTS
 ```
 

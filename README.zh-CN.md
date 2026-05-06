@@ -58,6 +58,8 @@ claude plugin install polycli@polycli-hosts
 codex plugin marketplace add bbingz/polycli
 ```
 
+然后打开新的 Codex TUI 会话，运行 `/plugins`，从 `polycli-hosts` marketplace 安装或启用 `Polycli`，再开一个新会话让 skill 列表刷新。
+
 ### GitHub Copilot CLI
 
 ```bash
@@ -81,8 +83,8 @@ opencode plugin @bbingz/polycli-opencode
 # Claude Code（slash command）
 /polycli:health
 
-# Codex（slash command）
-/polycli-codex:polycli health
+# Codex（已安装 skill，不是 slash command）
+Choose Polycli with @, then ask it to run: health
 
 # GitHub Copilot CLI（在 copilot prompt 里的 skill 词，**不是** PATH 二进制）
 polycli health
@@ -93,9 +95,9 @@ polycli health
 `health` 会对所有已认证的 provider 跑一次端到端探针，并把存活的列在 `healthyProviders` 里。之后日常使用就直接调：
 
 ```text
-ask --provider qwen "解释这个 stack trace ..."
-review --provider claude            # 对当前 git diff 做 review
-rescue --provider gemini "..."      # 较长的任务，可以加 --background
+Choose Polycli with @, then ask it to run: ask --provider qwen "解释这个 stack trace ..."
+Choose Polycli with @, then ask it to run: review --provider claude --scope staged
+Choose Polycli with @, then ask it to run: rescue --provider gemini --background "..."
 ```
 
 长任务加 `--background`，再用 `status <jobId>` / `result <jobId>` 取结果。

@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-06 (v0.6.3 Codex adapter operability patch).
+Snapshot: 2026-05-06 (v0.6.4 Codex adapter install-surface correction).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,8 +10,8 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.3** — see `docs/release-notes-v0.6.3.md`.
-- Current release commit is the `v0.6.3` tag target.
+- Latest public release: **v0.6.4** — see `docs/release-notes-v0.6.4.md`.
+- Current release commit is the `v0.6.4` tag target.
 - Tests at release check: **289/289** pass.
 - 8 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode), each with an independent marketplace manifest.
