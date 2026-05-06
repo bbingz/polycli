@@ -1,6 +1,6 @@
 ---
 description: Run a provider-backed code review on the current diff through polycli
-argument-hint: '--provider <claude|copilot|opencode|pi|gemini|kimi|qwen|minimax> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [focus ...]'
+argument-hint: '--provider <claude|copilot|opencode|pi|cmd|gemini|kimi|qwen|minimax> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [focus ...]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*)
 ---

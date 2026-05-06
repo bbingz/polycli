@@ -58,4 +58,4 @@ Then either:
 - `--provider` is still required on prompt-bearing commands.
 - `health` is the canonical end-to-end provider check after install, login, or provider config changes. With no provider it probes every integrated provider and reports `healthyProviders`; use `--provider` only for single-provider diagnosis. Do not run `setup` or `health` before every normal provider call.
 - `setup` is the cheaper way to separate package/plugin problems from provider CLI problems when you do not want to spend a model request.
-- `minimax` is currently the one integrated provider without session resume support.
+- `minimax` and `cmd` are currently the integrated providers without session resume support. `cmd` uses documented Command Code headless mode, where each invocation is a standalone session.

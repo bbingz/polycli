@@ -47,6 +47,13 @@ const CHECKS = [
     expect: ["--no-tools"],
     notes: "Review hard constraint uses --no-tools.",
   },
+  {
+    provider: "cmd",
+    bin: "cmd",
+    helpArgs: ["--help"],
+    expect: ["--permission-mode"],
+    notes: "Review hard constraint uses --permission-mode plan.",
+  },
 ];
 
 const ENV_ONLY = [

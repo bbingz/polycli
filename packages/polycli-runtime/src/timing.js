@@ -8,6 +8,7 @@ import { extractQwenText } from "./qwen.js";
 import { extractMiniMaxEventText } from "./minimax.js";
 import { extractOpenCodeText } from "./opencode.js";
 import { extractPiText } from "./pi.js";
+import { extractCmdText } from "./cmd.js";
 
 function measuredOrZero(ms) {
   if (!Number.isFinite(ms) || ms < 0) {
@@ -46,6 +47,7 @@ export function extractProviderEventText(provider, event) {
   if (provider === "minimax") return extractMiniMaxEventText(event);
   if (provider === "opencode") return extractOpenCodeText(event);
   if (provider === "pi") return extractPiText(event);
+  if (provider === "cmd") return extractCmdText(event);
   return "";
 }
 

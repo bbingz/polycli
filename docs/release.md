@@ -10,8 +10,8 @@ This repository publishes in two different ways:
 As of `2026-05-06`, the current public patch release is:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
-- GitHub release: `v0.6.4`
-- npm package: `@bbingz/polycli-opencode@0.6.4`
+- GitHub release: `v0.6.5`
+- npm package: `@bbingz/polycli-opencode@0.6.5`
 - npm packages: `@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`
 
 Verified release paths:
@@ -35,6 +35,7 @@ Current runtime scope in-repo:
 - `copilot`
 - `opencode`
 - `pi`
+- `cmd`
 - `gemini`
 - `kimi`
 - `qwen`

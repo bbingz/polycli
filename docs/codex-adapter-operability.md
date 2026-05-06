@@ -10,7 +10,7 @@ When the `Polycli` plugin is installed and visible in the Codex session, provide
 Choose Polycli with @, then ask it to run: <command> ...
 ```
 
-Use that path for `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, and `minimax` whenever the user asks for `ask`, `review`, `rescue`, `health`, background jobs, or timing history.
+Use that path for `claude`, `copilot`, `opencode`, `pi`, `cmd`, `gemini`, `kimi`, `qwen`, and `minimax` whenever the user asks for `ask`, `review`, `rescue`, `health`, background jobs, or timing history.
 
 Raw official CLI shell calls are acceptable only when:
 

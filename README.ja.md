@@ -4,7 +4,7 @@
 
 # polycli
 
-**普段使っている AI ホストの中で、8 種類の AI コーディング CLI を 1 つのコマンド体系から操作できます。**
+**普段使っている AI ホストの中で、9 種類の AI コーディング CLI を 1 つのコマンド体系から操作できます。**
 
 [![GitHub release](https://img.shields.io/github/v/release/bbingz/polycli?label=release&color=111827)](https://github.com/bbingz/polycli/releases)
 [![CI](https://github.com/bbingz/polycli/actions/workflows/ci.yml/badge.svg)](https://github.com/bbingz/polycli/actions/workflows/ci.yml)
@@ -22,7 +22,7 @@
 
 ## polycli とは？
 
-`polycli` は、Claude Code・Codex・GitHub Copilot CLI・OpenCode のいずれかのホスト上で、共通のコマンド (`health`・`ask`・`review`・`rescue`・`timing`) を使って 8 種類の AI コーディング CLI — **`claude`**・**`gemini`**・**`kimi`**・**`qwen`**・**`copilot`**・**`opencode`**・**`pi`**・**`mini-agent`** (MiniMax) — を操作できるツールです。
+`polycli` は、Claude Code・Codex・GitHub Copilot CLI・OpenCode のいずれかのホスト上で、共通のコマンド (`health`・`ask`・`review`・`rescue`・`timing`) を使って 9 種類の AI コーディング CLI — **`claude`**・**`gemini`**・**`kimi`**・**`qwen`**・**`copilot`**・**`opencode`**・**`pi`**・**`cmd`** (Command Code)・**`mini-agent`** (MiniMax) — を操作できるツールです。
 
 これは **ユーティリティ専用の Path B モノレポ** です。プロバイダ間の差異を偽の抽象化で覆い隠したり、ランタイム基底クラスを発明したりはしません。公式の上流 CLI をサブプロセスとして組み合わせ、単一のコマンド面を公開し、4 状態の timing スキーマで能力の違いを正直に表現します。
 
@@ -39,7 +39,7 @@
 
 | ホスト (polycli のインストール先) | プロバイダ (polycli が呼び出せる対象) |
 |---|---|
-| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `mini-agent` |
+| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `mini-agent` |
 
 各プロバイダの対応能力は [Capability matrix](#capability-matrix) を参照してください。
 
@@ -133,11 +133,12 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 | `mini-agent` | ✓ | — | — | — | — | — | — |
 | `opencode` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `pi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `cmd` | ✓ | — | — | ✓ | ✓ | ✓ | — |
 
 補足:
 
 - `cold` と `retry` は全プロバイダで `unsupported` です。上流 CLI に安定したシグナルがなく、polycli は偽装を拒否します。`total` は常に `measured` です。
-- `mini-agent` はログ再生方式で、session resume・構造化出力・細粒度 streaming timing をサポートしません。これは上流側の制約であり、polycli のバグではありません。
+- `mini-agent` はログ再生方式で、session resume・構造化出力・細粒度 streaming timing をサポートしません。`cmd` は Command Code 公式の headless mode を使うため、各呼び出しは standalone session で、stdout が可視回答になります。
 - `tool: true` を宣言しているのは `qwen` のみです。`qwen` がツールを呼び出さなかったとき `missing` (観測可能だが今回は発生せず) を、他のプロバイダは `unsupported` (能力レベルで追跡しない) を報告します。両者の意味は異なるため、混同しないでください。
 
 ## Timing のセマンティクス

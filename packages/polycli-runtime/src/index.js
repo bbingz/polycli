@@ -7,4 +7,5 @@ export * from "./qwen.js";
 export * from "./minimax.js";
 export * from "./opencode.js";
 export * from "./pi.js";
+export * from "./cmd.js";
 export * from "./registry.js";

@@ -124,6 +124,15 @@ test("buildReviewRuntimeOptions applies pi hard constraints", () => {
   assert.deepEqual(options.extraArgs, ["--no-tools"]);
 });
 
+test("buildReviewRuntimeOptions applies cmd plan-mode hard constraints", () => {
+  const options = buildReviewRuntimeOptions({
+    provider: "cmd",
+    cwd: process.cwd(),
+  });
+
+  assert.deepEqual(options.extraArgs, ["--permission-mode", "plan"]);
+});
+
 test("buildReviewRuntimeOptions writes a tool-disabled minimax config override", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-minimax-"));
   const baseConfigPath = path.join(root, "config.yaml");

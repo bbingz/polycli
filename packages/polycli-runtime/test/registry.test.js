@@ -11,8 +11,8 @@ import {
   runProviderPromptStreaming,
 } from "../src/index.js";
 
-test("provider registry exposes the eight integrated runtimes", () => {
-  assert.deepEqual(PROVIDER_IDS, ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi"]);
+test("provider registry exposes the nine integrated runtimes", () => {
+  assert.deepEqual(PROVIDER_IDS, ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd"]);
   assert.deepEqual(PROVIDER_OPERATION_NAMES, ["prompt"]);
 
   const runtimes = listProviderRuntimes();
@@ -24,8 +24,14 @@ test("provider registry exposes the eight integrated runtimes", () => {
     assert.equal(typeof runtime.runPrompt, "function");
     assert.equal(typeof runtime.runPromptStreaming, "function");
     assert.equal(typeof runtime.capabilities.streaming, "boolean");
+    assert.equal(typeof runtime.capabilities.sessionResume, "boolean");
     assert.deepEqual(runtime.capabilities.operations, PROVIDER_OPERATION_NAMES);
   }
+});
+
+test("cmd runtime reflects documented standalone headless session scope", () => {
+  const runtime = getProviderRuntime("cmd");
+  assert.equal(runtime.capabilities.sessionResume, false);
 });
 
 test("getProviderRuntime returns a stable runtime for each provider id", () => {
@@ -142,6 +148,41 @@ test("runProviderPromptStreaming ignores duplicate terminal summary text for pro
   } finally {
     Date.now = realNow;
   }
+});
+
+test("runProviderPromptStreaming records cmd timing from plain stdout text", async () => {
+  let now = 1_000;
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+  child.unref = () => {};
+
+  const result = await runProviderPromptStreaming({
+    provider: "cmd",
+    prompt: "ping",
+    cwd: process.cwd(),
+    timeout: 5_000,
+    nowMs: () => now,
+    spawnImpl() {
+      queueMicrotask(() => {
+        now = 1_200;
+        child.stdout.emit("data", "hello\n");
+        now = 1_300;
+        child.stdout.emit("data", "world\n");
+        now = 1_700;
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.response, "hello\nworld");
+  assert.equal(result.timing.runtimePersistence, "ephemeral");
+  assert.equal(result.timing.metrics.ttft.ms, 200);
+  assert.equal(result.timing.metrics.tail.ms, 400);
 });
 
 test("runProviderPromptStreaming passes defaultModel as final model fallback", async () => {

@@ -85,7 +85,7 @@ function parseArgs(argv, config = {}) {
 }
 
 // packages/polycli-runtime/src/constants.js
-var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi"];
+var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd"];
 var PROVIDER_OPERATION_NAMES = ["prompt"];
 
 // packages/polycli-utils/src/parse-stream-json.js
@@ -3010,6 +3010,180 @@ function runPiPromptStreaming({
   });
 }
 
+// packages/polycli-runtime/src/cmd.js
+var CMD_BIN = process.env.CMD_CLI_BIN || "cmd";
+var DEFAULT_CMD_MODEL = "deepseek";
+var DEFAULT_TIMEOUT_MS9 = 9e5;
+var AUTH_CHECK_TIMEOUT_MS9 = 3e4;
+var CMD_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS6 = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
+function buildCmdInvocation({
+  prompt,
+  resumeSessionId = null,
+  continueLast = false,
+  skipOnboarding = true,
+  extraArgs = [],
+  bin = CMD_BIN
+} = {}) {
+  const args = [];
+  if (skipOnboarding) args.push("--skip-onboarding");
+  if (resumeSessionId) args.push("--resume", resumeSessionId);
+  else if (continueLast) args.push("--continue");
+  if (extraArgs.length > 0) args.push(...extraArgs);
+  args.push("-p", String(prompt ?? ""));
+  return { bin, args };
+}
+function extractCmdText(event) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+  if (event.type === "text_delta" && typeof event.delta === "string") {
+    return event.delta;
+  }
+  if (event.type === "result" && typeof event.text === "string") {
+    return event.text;
+  }
+  return "";
+}
+function textEventsFromStdout(stdout) {
+  return String(stdout ?? "").split(/\r?\n/).map((line) => line.trimEnd()).filter((line) => line.trim()).map((line) => ({ type: "text_delta", delta: line }));
+}
+function parseCmdTextResult(stdout) {
+  const response = String(stdout ?? "").trim();
+  const events = textEventsFromStdout(stdout);
+  return { response, events };
+}
+function getCmdAvailability(cwd) {
+  return binaryAvailable(CMD_BIN, ["--version"], { cwd });
+}
+function buildCmdAuthStatus(result) {
+  const detail = `${result.stdout ?? ""}
+${result.stderr ?? ""}`.trim();
+  if (result.status === 0 && /\bauthenticated\b/i.test(detail)) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: DEFAULT_CMD_MODEL
+    };
+  }
+  if (result.error) {
+    const message = result.error.code === "ETIMEDOUT" ? `cmd auth probe timed out after ${Math.round(AUTH_CHECK_TIMEOUT_MS9 / 1e3)}s` : result.error.message;
+    if (TRANSIENT_PROBE_ERROR_PATTERNS6.some((pattern) => pattern.test(message))) {
+      return { loggedIn: true, detail: `auth probe inconclusive: ${message}`, model: DEFAULT_CMD_MODEL };
+    }
+    return { loggedIn: false, detail: message };
+  }
+  const fallback = detail || "cmd auth probe failed";
+  if (CMD_EXPLICIT_AUTH_ERROR_RE.test(fallback)) {
+    return { loggedIn: false, detail: fallback };
+  }
+  if (TRANSIENT_PROBE_ERROR_PATTERNS6.some((pattern) => pattern.test(fallback))) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${fallback}`, model: DEFAULT_CMD_MODEL };
+  }
+  return { loggedIn: false, detail: fallback };
+}
+function getCmdAuthStatus(cwd, { bin = CMD_BIN } = {}) {
+  const result = runCommand(bin, ["status"], { cwd, timeout: AUTH_CHECK_TIMEOUT_MS9 });
+  return buildCmdAuthStatus(result);
+}
+function runCmdPrompt({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS9,
+  env = process.env,
+  extraArgs = [],
+  resumeSessionId = null,
+  continueLast = false,
+  defaultModel = null,
+  bin = CMD_BIN
+} = {}) {
+  const invocation = buildCmdInvocation({
+    prompt,
+    resumeSessionId,
+    continueLast,
+    extraArgs,
+    bin
+  });
+  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
+  if (result.error) {
+    return {
+      ok: false,
+      error: result.error.code === "ETIMEDOUT" ? `cmd timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+    };
+  }
+  const parsed = parseCmdTextResult(result.stdout);
+  const resolvedSession = resolveSessionId({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    priority: ["stdout", "stderr", "file"]
+  });
+  const hasVisibleText = Boolean(parsed.response.trim());
+  return {
+    ok: result.status === 0 && hasVisibleText,
+    response: parsed.response,
+    events: parsed.events,
+    sessionId: resolvedSession.sessionId,
+    model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
+    error: result.status === 0 ? hasVisibleText ? null : "cmd produced no visible text" : result.stderr.trim() || formatProviderExitError("cmd", result.status),
+    status: result.status
+  };
+}
+function runCmdPromptStreaming({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS9,
+  env = process.env,
+  extraArgs = [],
+  resumeSessionId = null,
+  continueLast = false,
+  defaultModel = null,
+  onEvent = () => {
+  },
+  bin = CMD_BIN,
+  spawnImpl
+} = {}) {
+  const invocation = buildCmdInvocation({
+    prompt,
+    resumeSessionId,
+    continueLast,
+    extraArgs,
+    bin
+  });
+  return spawnStreamingCommand({
+    bin: invocation.bin,
+    args: invocation.args,
+    cwd,
+    env: { ...env },
+    timeout,
+    spawnImpl,
+    onStdoutLine(line) {
+      const trimmed = line.trimEnd();
+      if (!trimmed.trim()) return;
+      onEvent({ type: "text_delta", delta: trimmed });
+    }
+  }).then((result) => {
+    const parsed = parseCmdTextResult(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
+    const hasVisibleText = Boolean(parsed.response.trim());
+    return {
+      ...result,
+      ...parsed,
+      sessionId: resolvedSession.sessionId,
+      model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
+      ok: result.ok && hasVisibleText,
+      error: result.ok ? hasVisibleText ? null : "cmd produced no visible text" : result.error
+    };
+  });
+}
+
 // packages/polycli-runtime/src/registry.js
 import { performance } from "node:perf_hooks";
 
@@ -3245,6 +3419,7 @@ function extractProviderEventText(provider, event) {
   if (provider === "minimax") return extractMiniMaxEventText(event);
   if (provider === "opencode") return extractOpenCodeText(event);
   if (provider === "pi") return extractPiText(event);
+  if (provider === "cmd") return extractCmdText(event);
   return "";
 }
 function buildPromptTimingRecord({
@@ -3329,7 +3504,8 @@ var TIMING_SUPPORT = {
   qwen: { ttft: true, gen: true, tail: true, tool: true, runtimePersistence: "session" },
   minimax: { ttft: false, gen: false, tail: false, tool: false, runtimePersistence: "ephemeral" },
   opencode: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
-  pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" }
+  pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
+  cmd: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "ephemeral" }
 };
 var RUNTIMES = Object.freeze({
   claude: {
@@ -3435,6 +3611,19 @@ var RUNTIMES = Object.freeze({
     getAuthStatus: getPiAuthStatus,
     runPrompt: runPiPrompt,
     runPromptStreaming: runPiPromptStreaming
+  },
+  cmd: {
+    id: "cmd",
+    capabilities: {
+      streaming: true,
+      sessionResume: false,
+      structuredOutput: false,
+      operations: PROVIDER_OPERATION_NAMES
+    },
+    getAvailability: getCmdAvailability,
+    getAuthStatus: getCmdAuthStatus,
+    runPrompt: runCmdPrompt,
+    runPromptStreaming: runCmdPromptStreaming
   }
 });
 for (const runtime of Object.values(RUNTIMES)) {
@@ -4347,6 +4536,9 @@ var REVIEW_HARD_CONSTRAINTS = {
   },
   pi() {
     return { extraArgs: ["--no-tools"] };
+  },
+  cmd() {
+    return { extraArgs: ["--permission-mode", "plan"] };
   },
   minimax({ env } = {}) {
     return { env: buildMiniMaxReviewEnv(env) };

@@ -1,6 +1,6 @@
 ---
 description: Ask one provider a question through polycli, optionally in the background
-argument-hint: '--provider <claude|copilot|opencode|pi|gemini|kimi|qwen|minimax> [--model <model>] [--background] [--resume-last|--resume <uuid>|--fresh] [--write] [--effort low|medium|high] <prompt>'
+argument-hint: '--provider <claude|copilot|opencode|pi|cmd|gemini|kimi|qwen|minimax> [--model <model>] [--background] [--resume-last|--resume <uuid>|--fresh] [--write] [--effort low|medium|high] <prompt>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---

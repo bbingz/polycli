@@ -260,6 +260,9 @@ const REVIEW_HARD_CONSTRAINTS = {
   pi() {
     return { extraArgs: ["--no-tools"] };
   },
+  cmd() {
+    return { extraArgs: ["--permission-mode", "plan"] };
+  },
   minimax({ env } = {}) {
     return { env: buildMiniMaxReviewEnv(env) };
   },

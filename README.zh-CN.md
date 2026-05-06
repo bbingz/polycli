@@ -4,7 +4,7 @@
 
 # polycli
 
-**在你已经在用的 AI host 里，用一套命令驱动 8 个 AI coding CLI。**
+**在你已经在用的 AI host 里，用一套命令驱动 9 个 AI coding CLI。**
 
 [![GitHub release](https://img.shields.io/github/v/release/bbingz/polycli?label=release&color=111827)](https://github.com/bbingz/polycli/releases)
 [![CI](https://github.com/bbingz/polycli/actions/workflows/ci.yml/badge.svg)](https://github.com/bbingz/polycli/actions/workflows/ci.yml)
@@ -22,7 +22,7 @@
 
 ## polycli 是什么？
 
-`polycli` 让你在 Claude Code、Codex、GitHub Copilot CLI 或 OpenCode 中，用同一套命令（`health`、`ask`、`review`、`rescue`、`timing`）驱动 8 个 AI coding CLI：**`claude`**、**`gemini`**、**`kimi`**、**`qwen`**、**`copilot`**、**`opencode`**、**`pi`** 和 **`mini-agent`**（MiniMax）。
+`polycli` 让你在 Claude Code、Codex、GitHub Copilot CLI 或 OpenCode 中，用同一套命令（`health`、`ask`、`review`、`rescue`、`timing`）驱动 9 个 AI coding CLI：**`claude`**、**`gemini`**、**`kimi`**、**`qwen`**、**`copilot`**、**`opencode`**、**`pi`**、**`cmd`**（Command Code）和 **`mini-agent`**（MiniMax）。
 
 这是一个 **utility-only 的 Path B monorepo**：不假装能抹平 provider 之间的差异，也不引入 runtime 基类。它把官方上游 CLI 作为子进程组合起来，统一命令面，并通过四态 timing schema 如实暴露能力差异。
 
@@ -39,7 +39,7 @@
 
 | Host（polycli 安装在哪里） | Provider（polycli 能调什么） |
 |---|---|
-| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `mini-agent` |
+| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `mini-agent` |
 
 各 provider 支持的能力详见 [Capability matrix](#capability-matrix)。
 
@@ -133,11 +133,12 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 | `mini-agent` | ✓ | — | — | — | — | — | — |
 | `opencode` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `pi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `cmd` | ✓ | — | — | ✓ | ✓ | ✓ | — |
 
 说明：
 
 - `cold` 和 `retry` 对所有 provider 都是 `unsupported`：上游 CLI 没有稳定信号，polycli 拒绝伪造。`total` 永远是 `measured`。
-- `mini-agent` 走日志回放协议，不支持 session resume、不支持结构化输出、不支持细粒度 streaming timing —— 这是上游限制，不是 polycli 的 bug。
+- `mini-agent` 走日志回放协议，不支持 session resume、不支持结构化输出、不支持细粒度 streaming timing。`cmd` 走 Command Code 官方 headless 模式，每次调用都是 standalone session，stdout 就是可见答案。
 - 只有 `qwen` 声明 `tool: true`。当 `qwen` 没触发 tool 调用时报 `missing`（可观测但本次未发生），其他 provider 报 `unsupported`（能力上不跟踪）。两个状态语义不同，不要合并。
 
 ## Timing 语义

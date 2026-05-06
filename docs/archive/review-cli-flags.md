@@ -1,8 +1,8 @@
 # Review CLI Hard-Constraints Research
 
-Date: 2026-04-22
+Date: 2026-04-22; updated 2026-05-06 for `cmd` / Command Code
 
-Scope: `claude`, `gemini`, `copilot`, `opencode`, `pi`, `minimax`
+Scope: `claude`, `gemini`, `copilot`, `opencode`, `pi`, `cmd`, `minimax`
 
 Goal: find a provider-specific way to make `/review` one-shot and tool-disabled, or record that no direct CLI flag exists and a one-shot config/policy override is required instead.
 
@@ -21,6 +21,7 @@ Test rule for this memo:
 | copilot | `1.0.34` | `copilot --version` |
 | opencode | `1.14.20` | `opencode -v` |
 | pi | `0.68.1` | `pi -v` |
+| cmd / Command Code | `0.25.2` | `cmd --version`, official CLI reference |
 | minimax / mini-agent | `0.1.0` | `mini-agent -v` |
 
 ## Findings
@@ -32,6 +33,7 @@ Test rule for this memo:
 | copilot | No direct "disable all tools" flag. `--available-tools=''` is not usable: current local parser filters empty strings and treats the option as absent. Official docs confirm `--excluded-tools` hides tools from the model. | Exhaustive `--excluded-tools=...` denylist over all documented tool-availability values; keep `--no-ask-user`; do not rely on empty allowlist |
 | opencode | No direct no-tools CLI flag. `--agent plan` is restricted but only downgrades permissions to `ask`; with current runtime `--dangerously-skip-permissions` that is not safe. Official docs support one-shot config override through `OPENCODE_CONFIG_CONTENT` / `OPENCODE_CONFIG`, and `permission: "deny"` disables all actions. | Remove `--dangerously-skip-permissions` for review runs, set `--agent plan`, inject one-shot config with `permission: "deny"` |
 | pi | Direct flag exists. `--no-tools` disables built-in and extension tools. | `--no-tools` |
+| cmd | Direct documented permission mode exists. Command Code plan mode can read/search/analyze but cannot modify files, run shell commands, or apply patches. | `--permission-mode plan` |
 | minimax | No no-tools CLI flag. Local installed source shows config YAML booleans for every tool family and `MINI_AGENT_CONFIG_PATH` selects the config file. | Generate one-shot config YAML with every tool family disabled, point `MINI_AGENT_CONFIG_PATH` at it |
 
 ## Provider Notes
@@ -160,6 +162,26 @@ Conclusion:
 - `--no-tools` is the correct `/review` hard constraint.
 - The earlier "maybe pi has no tool support" hypothesis is false. Pi exposes `read`, `bash`, `edit`, `write`, and extension tools.
 
+### Command Code
+
+Official Command Code CLI reference confirms:
+
+- `-p`, `--print [query]` runs in headless mode, writes the response to stdout, and exits.
+- `--skip-onboarding` skips taste onboarding for automated runs.
+- `--permission-mode <mode>` accepts `standard`, `plan`, and `auto-accept`.
+- `cmd status` is the documented auth-status subcommand.
+
+Official plan-mode docs confirm:
+
+- Plan mode can read the codebase, search files, analyze architecture, and propose plans.
+- Plan mode cannot modify files, run shell commands, or apply patches.
+
+Conclusion:
+
+- `/review` should pass `--permission-mode plan`.
+- Normal `ask` / `rescue` should use headless mode without `--yolo`, relying on Command Code's documented default headless behavior that denies file writes, file edits, and shell commands.
+- Headless mode documents each invocation as a standalone session, so runtime capability should not advertise session resume.
+
 ### MiniMax / mini-agent
 
 Local `mini-agent --help` exposes no tool-control CLI flag.
@@ -218,6 +240,10 @@ Implementation shape:
   - https://geminicli.com/docs/reference/policy-engine/
 - OpenCode docs:
   - https://opencode.ai/docs/tools
+- Command Code docs:
+  - https://commandcode.ai/docs/reference/cli
+  - https://commandcode.ai/docs/core-concepts/headless
+  - https://commandcode.ai/docs/core-concepts/plan-mode
   - https://opencode.ai/docs/permissions
   - https://opencode.ai/docs/agents/
   - https://opencode.ai/docs/config/

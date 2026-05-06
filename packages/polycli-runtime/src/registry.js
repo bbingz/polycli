@@ -49,6 +49,12 @@ import {
   runPiPrompt,
   runPiPromptStreaming,
 } from "./pi.js";
+import {
+  getCmdAvailability,
+  getCmdAuthStatus,
+  runCmdPrompt,
+  runCmdPromptStreaming,
+} from "./cmd.js";
 import { attachPromptTiming, extractProviderEventText } from "./timing.js";
 
 const TIMING_SUPPORT = {
@@ -60,6 +66,7 @@ const TIMING_SUPPORT = {
   minimax: { ttft: false, gen: false, tail: false, tool: false, runtimePersistence: "ephemeral" },
   opencode: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
+  cmd: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "ephemeral" },
 };
 
 const RUNTIMES = Object.freeze({
@@ -166,6 +173,19 @@ const RUNTIMES = Object.freeze({
     getAuthStatus: getPiAuthStatus,
     runPrompt: runPiPrompt,
     runPromptStreaming: runPiPromptStreaming,
+  },
+  cmd: {
+    id: "cmd",
+    capabilities: {
+      streaming: true,
+      sessionResume: false,
+      structuredOutput: false,
+      operations: PROVIDER_OPERATION_NAMES,
+    },
+    getAvailability: getCmdAvailability,
+    getAuthStatus: getCmdAuthStatus,
+    runPrompt: runCmdPrompt,
+    runPromptStreaming: runCmdPromptStreaming,
   },
 });
 

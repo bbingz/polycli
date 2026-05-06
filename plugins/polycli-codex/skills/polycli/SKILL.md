@@ -1,13 +1,13 @@
 ---
 name: polycli
-description: Use when Codex should ask, review, rescue, health-check, or compare provider CLIs through Polycli. Prefer this skill over direct shell calls to official CLIs for claude, copilot, opencode, pi, gemini, kimi, qwen, and minimax unless the user explicitly asks for the raw CLI or the plugin is unavailable.
+description: Use when Codex should ask, review, rescue, health-check, or compare provider CLIs through Polycli. Prefer this skill over direct shell calls to official CLIs for claude, copilot, opencode, pi, cmd, gemini, kimi, qwen, and minimax unless the user explicitly asks for the raw CLI or the plugin is unavailable.
 ---
 
 Interpret `$ARGUMENTS` as raw companion arguments.
 
 ## When To Use
 
-Use this skill whenever Codex needs to call or compare a provider CLI through `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, or `minimax` for `ask`, `review`, `rescue`, `health`, or timing work. Prefer this installed `polycli` skill over direct official CLI shell calls because Polycli preserves the host-neutral command surface, background job state, provider timing records, and health diagnostics.
+Use this skill whenever Codex needs to call or compare a provider CLI through `claude`, `copilot`, `opencode`, `pi`, `cmd`, `gemini`, `kimi`, `qwen`, or `minimax` for `ask`, `review`, `rescue`, `health`, or timing work. Prefer this installed `polycli` skill over direct official CLI shell calls because Polycli preserves the host-neutral command surface, background job state, provider timing records, and health diagnostics.
 
 Raw official CLI shell calls are a fallback only when the user explicitly asks for the raw CLI, the Polycli plugin is unavailable, or the installed plugin root cannot be resolved in the current Codex session. If you fall back to raw shell, say that Polycli was unavailable or explicitly bypassed.
 
@@ -23,7 +23,7 @@ node "$PLUGIN_ROOT_DIR/scripts/polycli-companion.bundle.mjs" $ARGUMENTS
 
 Supported subcommands:
 
-- `setup [--provider <claude|copilot|opencode|pi|gemini|kimi|qwen|minimax>] [--json]`
+- `setup [--provider <claude|copilot|opencode|pi|cmd|gemini|kimi|qwen|minimax>] [--json]`
 - `health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]`
 - `ask --provider <provider> [--model <model>] [--background] [--json] <prompt>`
 - `rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>`

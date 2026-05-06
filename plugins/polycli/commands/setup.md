@@ -1,6 +1,6 @@
 ---
 description: Check which polycli providers are installed and authenticated
-argument-hint: '[--provider <claude|copilot|opencode|pi|gemini|kimi|qwen|minimax>] [--enable-review-gate|--disable-review-gate]'
+argument-hint: '[--provider <claude|copilot|opencode|pi|cmd|gemini|kimi|qwen|minimax>] [--enable-review-gate|--disable-review-gate]'
 allowed-tools: Bash(node:*)
 ---
 

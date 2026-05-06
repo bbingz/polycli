@@ -853,6 +853,7 @@ test("integration: health without provider returns every healthy provider", asyn
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
       CLAUDE_CLI_BIN: missingBin,
+      CMD_CLI_BIN: missingBin,
       COPILOT_CLI_BIN: missingBin,
       GEMINI_CLI_BIN: missingBin,
       KIMI_CLI_BIN: fakeKimi.bin,
@@ -873,8 +874,8 @@ test("integration: health without provider returns every healthy provider", asyn
     assert.equal(payload.anyHealthy, true);
     assert.equal(payload.allHealthy, false);
     assert.deepEqual(payload.healthyProviders, ["qwen"]);
-    assert.deepEqual(payload.unhealthyProviders.sort(), ["claude", "copilot", "gemini", "kimi", "minimax", "opencode", "pi"].sort());
-    assert.equal(payload.results.length, 8);
+    assert.deepEqual(payload.unhealthyProviders.sort(), ["claude", "cmd", "copilot", "gemini", "kimi", "minimax", "opencode", "pi"].sort());
+    assert.equal(payload.results.length, 9);
     assert.equal(payload.results.find((result) => result.provider === "qwen").ok, true);
     assert.equal(payload.results.find((result) => result.provider === "kimi").ok, false);
     assert.equal(payload.results.find((result) => result.provider === "kimi").probe.responseMatched, false);
@@ -895,6 +896,7 @@ test("integration: health without provider probes providers concurrently", async
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
       CLAUDE_CLI_BIN: missingBin,
+      CMD_CLI_BIN: missingBin,
       COPILOT_CLI_BIN: missingBin,
       GEMINI_CLI_BIN: missingBin,
       KIMI_CLI_BIN: fakeKimi.bin,

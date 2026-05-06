@@ -4,7 +4,7 @@
 
 # polycli
 
-**One command surface across 8 AI coding CLIs, inside the host you already use.**
+**One command surface across 9 AI coding CLIs, inside the host you already use.**
 
 [![GitHub release](https://img.shields.io/github/v/release/bbingz/polycli?label=release&color=111827)](https://github.com/bbingz/polycli/releases)
 [![CI](https://github.com/bbingz/polycli/actions/workflows/ci.yml/badge.svg)](https://github.com/bbingz/polycli/actions/workflows/ci.yml)
@@ -22,7 +22,7 @@
 
 ## What is polycli?
 
-`polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, and **`mini-agent`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing` — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
+`polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, **`cmd`** (Command Code), and **`mini-agent`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing` — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
 
 > **polycli is an in-host plugin, not a standalone shell binary.** There is no `polycli` executable on your `PATH`. Each host adapter exposes the same `health / ask / review / rescue / timing` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, an installed `polycli` skill in Codex). See [Outside a supported host](#outside-a-supported-host) if you are not running one of the four hosts.
 
@@ -64,7 +64,7 @@ Workflows where bare-shell has **no equivalent at all** (adversarial-review, bac
 
 | Hosts (where polycli is installed) | Providers (what polycli can call) |
 |---|---|
-| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `mini-agent` |
+| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `mini-agent` |
 
 See [Capability matrix](#capability-matrix) for what each provider supports.
 
@@ -85,7 +85,7 @@ codex plugin marketplace add bbingz/polycli
 
 Then open a new Codex TUI session, run `/plugins`, choose the `polycli-hosts` marketplace, install `Polycli`, and start a new thread so the bundled skill is available.
 
-After install, prefer the installed `Polycli` plugin or bundled `polycli` skill over direct official CLI shell calls when Codex needs `claude`, `copilot`, `opencode`, `pi`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell.
+After install, prefer the installed `Polycli` plugin or bundled `polycli` skill over direct official CLI shell calls when Codex needs `claude`, `copilot`, `opencode`, `pi`, `cmd`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell.
 
 ### GitHub Copilot CLI
 
@@ -180,11 +180,12 @@ Source of truth: [`packages/polycli-runtime/src/registry.js`](./packages/polycli
 | `mini-agent` | ✓ | — | — | — | — | — | — |
 | `opencode` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `pi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `cmd` | ✓ | — | — | ✓ | ✓ | ✓ | — |
 
 Notes:
 
 - `cold` and `retry` are `unsupported` for every provider. Upstream CLIs lack a stable signal, and polycli refuses to fake them. `total` is always `measured`.
-- `mini-agent` uses log replay; no session resume, no structured output, no fine-grained streaming timing. This is an upstream limitation, not a polycli bug.
+- `mini-agent` uses log replay; no session resume, no structured output, no fine-grained streaming timing. `cmd` uses documented Command Code headless mode, where each invocation is a standalone session and stdout is the visible answer.
 - Only `qwen` declares `tool: true`. When no tool is invoked, `qwen` reports `missing` (observable but absent); the others report `unsupported` (capability-level not tracked). The two states are not interchangeable.
 
 ## Timing semantics

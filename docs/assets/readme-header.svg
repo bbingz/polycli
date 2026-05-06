@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
   <title id="title">polycli README header</title>
-  <desc id="desc">A command surface connecting four AI coding hosts to eight provider CLIs with honest timing states.</desc>
+  <desc id="desc">A command surface connecting four AI coding hosts to nine provider CLIs with honest timing states.</desc>
   <defs>
     <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#fbfaf6"/>
@@ -89,22 +89,24 @@
     <g transform="translate(350 28)">
       <rect class="panel" x="0" y="0" width="210" height="274" rx="22" filter="url(#softShadow)"/>
       <g class="sans tiny ink">
-        <rect class="chip" x="18" y="24" width="78" height="34" rx="11"/>
-        <text x="57" y="47" text-anchor="middle">claude</text>
-        <rect class="chip" x="114" y="24" width="78" height="34" rx="11"/>
-        <text x="153" y="47" text-anchor="middle">gemini</text>
-        <rect class="chip" x="18" y="74" width="78" height="34" rx="11"/>
-        <text x="57" y="97" text-anchor="middle">kimi</text>
-        <rect class="chip" x="114" y="74" width="78" height="34" rx="11"/>
-        <text x="153" y="97" text-anchor="middle">qwen</text>
-        <rect class="chip" x="18" y="124" width="78" height="34" rx="11"/>
-        <text x="57" y="147" text-anchor="middle">copilot</text>
-        <rect class="chip" x="114" y="124" width="78" height="34" rx="11"/>
-        <text x="153" y="147" text-anchor="middle">opencode</text>
-        <rect class="chip" x="18" y="174" width="78" height="34" rx="11"/>
-        <text x="57" y="197" text-anchor="middle">pi</text>
-        <rect class="chip" x="114" y="174" width="78" height="34" rx="11"/>
-        <text x="153" y="197" text-anchor="middle">mini</text>
+        <rect class="chip" x="18" y="22" width="78" height="30" rx="10"/>
+        <text x="57" y="43" text-anchor="middle">claude</text>
+        <rect class="chip" x="114" y="22" width="78" height="30" rx="10"/>
+        <text x="153" y="43" text-anchor="middle">gemini</text>
+        <rect class="chip" x="18" y="62" width="78" height="30" rx="10"/>
+        <text x="57" y="83" text-anchor="middle">kimi</text>
+        <rect class="chip" x="114" y="62" width="78" height="30" rx="10"/>
+        <text x="153" y="83" text-anchor="middle">qwen</text>
+        <rect class="chip" x="18" y="102" width="78" height="30" rx="10"/>
+        <text x="57" y="123" text-anchor="middle">copilot</text>
+        <rect class="chip" x="114" y="102" width="78" height="30" rx="10"/>
+        <text x="153" y="123" text-anchor="middle">opencode</text>
+        <rect class="chip" x="18" y="142" width="78" height="30" rx="10"/>
+        <text x="57" y="163" text-anchor="middle">pi</text>
+        <rect class="chip" x="114" y="142" width="78" height="30" rx="10"/>
+        <text x="153" y="163" text-anchor="middle">cmd</text>
+        <rect class="chip" x="66" y="182" width="78" height="30" rx="10"/>
+        <text x="105" y="203" text-anchor="middle">mini</text>
       </g>
       <rect x="13" y="228" width="184" height="24" rx="12" fill="#edf8f5" stroke="#9bded1"/>
       <text x="105" y="245" text-anchor="middle" class="sans" font-size="13.5" font-weight="800" fill="#0d766c">flat adapters, honest timing</text>
