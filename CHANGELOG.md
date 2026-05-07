@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — v0.6.8 released
+
+- Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.8, npm `@bbingz/polycli-opencode@0.6.8`, npm `@bbingz/polycli@0.6.8`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`).
+- Includes Q6 Spec 2 — background-job ledger plumbing (`runContext` persisted into per-job config; parent writes `job_started`; `_job-worker` writes `attempt_started` / `attempt_result` / `provider_decision` against the originating `runId`; worker-observed cancellation produces `attempt_result status=cancelled` + `provider_decision status=cancelled reason=job_cancelled`).
+- Includes Q6 Spec 3 — read-only `polycli tui` inspector (terminal-only; navigation `up`/`down`/`k`/`j` + `enter`/`b` + `tab` + `?` + `r` refresh + `q` quit; renders `started` / `attempt_started` events without a terminal result as `unfinished` / `unknown`; `--history <count>` validated and applied; raw-mode try/finally with idempotent restore).
+- Real-pty `q`-exit fix: explicit `process.stdin.resume()` after `setRawMode(true)` plus `process.stdin.pause()` in `restoreRawMode()`. Previously, in some real-PTY sessions the `q` keypress never reached the handler and only Ctrl-C escaped (with exit 1).
+- Run-ledger debug examples doc surface (`docs/polycli-v1-public-surface.md`) walks through the original Q6 narrative (`cmd` health passed but two `ask` attempts failed → not adopted; `pi` health failed → skipped before prompt-bearing work) using `polycli debug runs / show / explain`.
+
 ## 2026-05-07 — Claude — v0.6.8 release prep (manifests + notes; not published)
 
 - Bumped 7 release manifests from `0.6.7` to `0.6.8` (9 occurrences): `.claude-plugin/marketplace.json`, `.github/plugin/marketplace.json`, `plugins/polycli/.claude-plugin/plugin.json`, `plugins/polycli-codex/.codex-plugin/plugin.json`, `plugins/polycli-copilot/plugin.json`, `plugins/polycli-opencode/package.json`, `packages/polycli-terminal/package.json`. Utility packages unchanged on independent v1.x cadence.

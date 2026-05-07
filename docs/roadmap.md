@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-07 (v0.6.8 prepared: background-job ledger plumbing + read-only TUI inspector; v0.6.7 still the latest published release).
+Snapshot: 2026-05-07 (v0.6.8 published: background-job ledger plumbing + read-only TUI inspector).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,8 +10,7 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.7** — see `docs/release-notes-v0.6.7.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.7` + `@bbingz/polycli@0.6.7` (new terminal CLI) all on the registry.
-- Next release prepared: **v0.6.8** — see `docs/release-notes-v0.6.8.md`. Manifests bumped, release notes drafted, local `release:check` green; tag / GitHub release / npm publish still pending real-TTY user smoke.
+- Latest public release: **v0.6.8** — see `docs/release-notes-v0.6.8.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.8` + `@bbingz/polycli@0.6.8` all on the registry. Adds background-job ledger plumbing (Q6 Spec 2) + read-only TUI inspector MVP (Q6 Spec 3) + run-ledger debug examples + a real-PTY `q`-exit fix.
 - 9 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
@@ -63,7 +62,7 @@ Source: real Codex multi-provider review after the v0.6.x host-adapter hardening
 
 Goal: add a real terminal entry point plus a persistent run ledger so users and host agents can run, inspect, compare, and debug provider calls outside host-specific plugin UX without depending on private companion bundle paths.
 
-Status: Spec 1 released in v0.6.7; remainder is an active track. Full follow-up, roadmap, and implementation todo are tracked in `tasks/terminal-cli-tui-observability.md`.
+Status: Spec 1 released in v0.6.7; Spec 2 (background-job ledger plumbing) and Spec 3 (read-only TUI inspector MVP) released in v0.6.8. Killed-worker perfect recovery is the remaining open ledger-side hardening item; full follow-up and implementation todo are tracked in `tasks/terminal-cli-tui-observability.md`.
 
 Phase plan:
 
@@ -75,7 +74,7 @@ Phase plan:
 
 Sequencing rule: do not start TUI implementation until the headless CLI and run ledger can answer why a provider was adopted, skipped, or failed.
 
-Spec 1 released in v0.6.7 (2026-05-07): terminal package wrapper (`@bbingz/polycli` on npm), shared `debug` companion vocabulary (`debug runs/show/explain`), and redacted run ledger foundation (per-workspace NDJSON with `--run-id` / `POLYCLI_RUN_ID`). Phases 1–3 are shipped. Background-worker ledger plumbing landed on main after v0.6.7 (Spec 2): the parent process persists `runContext` into the per-job config, then writes `job_started` after spawn, and `_job-worker` writes `attempt_started` / `attempt_result` / `provider_decision` against the originating `runId`. With Spec 2 in place, adopted, failed, and unfinished background jobs are all explainable from the persisted ledger. The next planned implementation slice is the read-only TUI inspector MVP: it must render any job with `started` / `attempt_started` but no terminal `attempt_result` / `provider_decision` as `unfinished` / `unknown` rather than inventing a result. Killed-worker (`kill -9` between provider return and ledger write) perfect recovery is open hardening on the ledger side, not a TUI gate.
+Spec 1 released in v0.6.7 (2026-05-07): terminal package wrapper (`@bbingz/polycli` on npm), shared `debug` companion vocabulary (`debug runs/show/explain`), and redacted run ledger foundation (per-workspace NDJSON with `--run-id` / `POLYCLI_RUN_ID`). Spec 2 + Spec 3 released in v0.6.8 (2026-05-07): background-worker ledger plumbing (parent persists `runContext` into the per-job config and writes `job_started` after spawn; `_job-worker` writes `attempt_started` / `attempt_result` / `provider_decision` against the originating `runId`) and the read-only `polycli tui` inspector (run list, provider matrix, event timeline, detail / explanation / repro panes; renders `started` / `attempt_started` without a terminal `attempt_result` / `provider_decision` as `unfinished` / `unknown` rather than inventing a result; real-pty `q` exit fixed by explicit stdin resume). Killed-worker (`kill -9` between provider return and ledger write) perfect recovery remains open hardening on the ledger side.
 
 ---
 
