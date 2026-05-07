@@ -12,6 +12,10 @@ const PUBLIC_PACKAGES = [
   "plugins/polycli-opencode",
 ];
 
+const PUBLIC_BIN_PACKAGES = [
+  "packages/polycli-terminal",
+];
+
 function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8"));
 }
@@ -79,4 +83,61 @@ test("terminal package exposes polycli bin and keeps runtime private", () => {
     "terminal package must publish bin/polycli-companion.bundle.mjs",
   );
   assert.equal(pkg.engines?.node, ">=20", "terminal package must require Node >=20");
+});
+
+test("public bin packages declare a publishable bin surface", () => {
+  for (const packageDir of PUBLIC_BIN_PACKAGES) {
+    const packageJson = readJson(`${packageDir}/package.json`);
+    assert.equal(packageJson.engines?.node, ">=20", `${packageJson.name} must declare Node >=20`);
+    assert.notEqual(packageJson.private, true, `${packageJson.name} must not be private`);
+    assert.equal(Array.isArray(packageJson.files), true, `${packageJson.name} must declare files`);
+    assert.notEqual(packageJson.files.length, 0, `${packageJson.name} files must not be empty`);
+    assert.equal(
+      typeof packageJson.bin,
+      "object",
+      `${packageJson.name} must declare a bin object so npm installs a PATH entry`,
+    );
+    const binEntries = Object.entries(packageJson.bin);
+    assert.notEqual(binEntries.length, 0, `${packageJson.name} bin must not be empty`);
+    for (const [binName, binTarget] of binEntries) {
+      assert.match(binName, /^[a-z][a-z0-9-]*$/, `${packageJson.name} bin name ${binName} must be lowercase`);
+      assert.equal(
+        typeof binTarget,
+        "string",
+        `${packageJson.name} bin entry ${binName} must point at a file`,
+      );
+      const relativeTarget = binTarget.replace(/^\.\//, "");
+      assert.ok(
+        packageJson.files.includes(relativeTarget),
+        `${packageJson.name} bin entry ${binName} (${binTarget}) must be listed in files`,
+      );
+    }
+  }
+});
+
+test("public bin packages include MIT license text in the tarball", () => {
+  for (const packageDir of PUBLIC_BIN_PACKAGES) {
+    const packageJson = readJson(`${packageDir}/package.json`);
+    const packedFiles = packFileList(packageDir);
+    assert.equal(
+      packedFiles.has("LICENSE") || packedFiles.has("LICENSE.md"),
+      true,
+      `${packageJson.name} tarball must include a LICENSE file`,
+    );
+  }
+});
+
+test("public bin packages publish every declared bin target in the tarball", () => {
+  for (const packageDir of PUBLIC_BIN_PACKAGES) {
+    const packageJson = readJson(`${packageDir}/package.json`);
+    const packedFiles = packFileList(packageDir);
+    for (const [binName, binTarget] of Object.entries(packageJson.bin ?? {})) {
+      const relativeTarget = binTarget.replace(/^\.\//, "");
+      assert.equal(
+        packedFiles.has(relativeTarget),
+        true,
+        `${packageJson.name} bin ${binName} target ${binTarget} must ship in the tarball`,
+      );
+    }
+  }
 });

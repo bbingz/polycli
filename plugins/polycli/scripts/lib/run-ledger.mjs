@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import { appendNdjson, readNdjson } from '@bbingz/polycli-utils/ndjson';
-import { resolveStateDir } from './state.mjs';
+import { computeWorkspaceSlug, resolveStateDir } from './state.mjs';
 
 const MAX_LEDGER_BYTES = 2_000_000;
 const KEEP_RATIO = 0.5;
@@ -10,6 +10,19 @@ const RUN_ID_RE = /^[A-Za-z0-9_.-]{1,96}$/;
 const SECRET_LONG_OPT_RE = /(token|secret|password|api-?key|access-?key|credential)/i;
 const SECRET_ENV_KEY_RE = /(TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_KEY|CREDENTIAL)/i;
 const PROMPT_COMMANDS = new Set(['ask', 'rescue', 'review', 'adversarial-review']);
+const VALUE_OPTIONS = new Set([
+  '--provider',
+  '--model',
+  '--base',
+  '--scope',
+  '--resume',
+  '--effort',
+  '--run-id',
+  '--timeout-ms',
+  '--history',
+]);
+const SHORT_VALUE_OPTIONS = new Set(['-m']);
+const FOCUS_VALUE_OPTIONS = new Set(['--focus']);
 const VALID_HOST_SURFACES = new Set([
   'terminal',
   'claude-plugin',
@@ -78,6 +91,8 @@ function redactInlineValue(arg) {
 
 export function redactArgv(argv, { command } = {}) {
   const redacted = [];
+  const isPromptCommand = PROMPT_COMMANDS.has(command);
+  let sawSubcommand = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (typeof arg !== 'string') {
@@ -89,26 +104,49 @@ export function redactArgv(argv, { command } = {}) {
         redacted.push(redactInlineValue(arg));
         continue;
       }
-      const isSecretFlag = SECRET_LONG_OPT_RE.test(arg);
-      const isReviewFocus = command === 'review' && arg === '--focus';
       redacted.push(arg);
-      if ((isSecretFlag || isReviewFocus) && i + 1 < argv.length) {
-        redacted.push(isSecretFlag ? '<secret:redacted>' : '<prompt:redacted>');
+      const hasNext = i + 1 < argv.length;
+      if (!hasNext) continue;
+      if (SECRET_LONG_OPT_RE.test(arg)) {
+        redacted.push('<secret:redacted>');
+        i += 1;
+        continue;
+      }
+      if (FOCUS_VALUE_OPTIONS.has(arg) && (command === 'review' || command === 'adversarial-review')) {
+        redacted.push('<prompt:redacted>');
+        i += 1;
+        continue;
+      }
+      if (VALUE_OPTIONS.has(arg)) {
+        redacted.push(argv[i + 1]);
+        i += 1;
+        continue;
+      }
+      continue;
+    }
+    if (arg.startsWith('-') && arg.length > 1) {
+      redacted.push(arg);
+      if (SHORT_VALUE_OPTIONS.has(arg) && i + 1 < argv.length) {
+        redacted.push(argv[i + 1]);
         i += 1;
       }
       continue;
     }
-    redacted.push(redactInlineValue(arg));
-  }
-  if (PROMPT_COMMANDS.has(command) && redacted.length > 0) {
-    const last = redacted.length - 1;
-    const tail = redacted[last];
-    if (typeof tail === 'string' && !tail.startsWith('-') && !tail.includes('=')) {
-      const wasPlaceholder = tail === '<prompt:redacted>' || tail === '<secret:redacted>';
-      if (!wasPlaceholder && tail !== command) {
-        redacted[last] = '<prompt:redacted>';
-      }
+    if (!sawSubcommand && command && arg === command) {
+      sawSubcommand = true;
+      redacted.push(arg);
+      continue;
     }
+    const inlineRedacted = redactInlineValue(arg);
+    if (inlineRedacted !== arg) {
+      redacted.push(inlineRedacted);
+      continue;
+    }
+    if (isPromptCommand) {
+      redacted.push('<prompt:redacted>');
+      continue;
+    }
+    redacted.push(arg);
   }
   return redacted;
 }
@@ -150,7 +188,12 @@ export function createRunLedgerEvent(event = {}) {
 
 export async function appendRunLedgerEvent(workspaceRoot, event) {
   const file = resolveRunLedgerFile(workspaceRoot);
-  const full = createRunLedgerEvent({ ...event, workspaceRoot });
+  const workspaceSlug = workspaceRoot ? computeWorkspaceSlug(workspaceRoot) : null;
+  const full = createRunLedgerEvent({
+    ...event,
+    workspaceRoot: workspaceRoot ?? event.workspaceRoot ?? null,
+    workspaceSlug: event.workspaceSlug ?? workspaceSlug,
+  });
   appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO });
   return full;
 }

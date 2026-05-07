@@ -130,7 +130,7 @@ function runCommand(command, args = [], options = {}) {
   };
 }
 
-function computeWorkspaceSlug(workspaceRoot) {
+export function computeWorkspaceSlug(workspaceRoot) {
   const base = path.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
   const hash = crypto.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
   return `${base}-${hash}`;

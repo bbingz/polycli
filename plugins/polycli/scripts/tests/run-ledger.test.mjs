@@ -47,6 +47,81 @@ test('redactArgv removes prompts and token-like values', () => {
   );
 });
 
+test('redactArgv redacts every prompt positional, not only the last token', () => {
+  assert.deepEqual(
+    redactArgv(['ask', '--provider', 'qwen', 'hello', 'private', 'world'], { command: 'ask' }),
+    ['ask', '--provider', 'qwen', '<prompt:redacted>', '<prompt:redacted>', '<prompt:redacted>'],
+  );
+  assert.deepEqual(
+    redactArgv(['rescue', '--provider', 'qwen', '--model', 'foo', 'triage', 'these', 'tests'], { command: 'rescue' }),
+    ['rescue', '--provider', 'qwen', '--model', 'foo', '<prompt:redacted>', '<prompt:redacted>', '<prompt:redacted>'],
+  );
+});
+
+test('redactArgv redacts every focus positional for review and adversarial-review', () => {
+  assert.deepEqual(
+    redactArgv(['adversarial-review', '--provider', 'qwen', 'private', 'focus', 'words'], { command: 'adversarial-review' }),
+    ['adversarial-review', '--provider', 'qwen', '<prompt:redacted>', '<prompt:redacted>', '<prompt:redacted>'],
+  );
+  assert.deepEqual(
+    redactArgv(['review', '--provider', 'cmd', '--scope', 'staged', 'sensitive', 'context'], { command: 'review' }),
+    ['review', '--provider', 'cmd', '--scope', 'staged', '<prompt:redacted>', '<prompt:redacted>'],
+  );
+});
+
+test('redactArgv preserves non-sensitive control flags (provider/model/json/background/run-id)', () => {
+  assert.deepEqual(
+    redactArgv(
+      ['ask', '--provider', 'qwen', '--model', 'qwen-test', '--json', '--background', '--run-id', 'run-keep', 'prompt'],
+      { command: 'ask' },
+    ),
+    [
+      'ask',
+      '--provider',
+      'qwen',
+      '--model',
+      'qwen-test',
+      '--json',
+      '--background',
+      '--run-id',
+      'run-keep',
+      '<prompt:redacted>',
+    ],
+  );
+  assert.deepEqual(
+    redactArgv(['health', '--provider', 'cmd', '--json', '--run-id=run-keep'], { command: 'health' }),
+    ['health', '--provider', 'cmd', '--json', '--run-id=run-keep'],
+  );
+});
+
+test('appendRunLedgerEvent stamps a stable non-null workspaceSlug', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const first = await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-slug',
+      command: 'health',
+      phase: 'run_started',
+      status: 'started',
+      hostSurface: 'terminal',
+    });
+    const second = await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-slug',
+      command: 'health',
+      phase: 'run_summary',
+      status: 'completed',
+      hostSurface: 'terminal',
+    });
+    assert.equal(typeof first.workspaceSlug, 'string');
+    assert.notEqual(first.workspaceSlug, '');
+    assert.notEqual(first.workspaceSlug, null);
+    assert.equal(first.workspaceSlug, second.workspaceSlug);
+    const events = await readRunLedgerEvents(workspaceRoot);
+    assert.equal(events.length, 2);
+    for (const event of events) {
+      assert.equal(event.workspaceSlug, first.workspaceSlug);
+    }
+  });
+});
+
 test('appendRunLedgerEvent and readRunLedgerEvents tolerate corrupt lines', async () => {
   await withTempWorkspace(async (workspaceRoot) => {
     await appendRunLedgerEvent(workspaceRoot, {

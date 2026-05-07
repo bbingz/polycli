@@ -5019,6 +5019,19 @@ var RUN_ID_RE = /^[A-Za-z0-9_.-]{1,96}$/;
 var SECRET_LONG_OPT_RE = /(token|secret|password|api-?key|access-?key|credential)/i;
 var SECRET_ENV_KEY_RE = /(TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_KEY|CREDENTIAL)/i;
 var PROMPT_COMMANDS = /* @__PURE__ */ new Set(["ask", "rescue", "review", "adversarial-review"]);
+var VALUE_OPTIONS = /* @__PURE__ */ new Set([
+  "--provider",
+  "--model",
+  "--base",
+  "--scope",
+  "--resume",
+  "--effort",
+  "--run-id",
+  "--timeout-ms",
+  "--history"
+]);
+var SHORT_VALUE_OPTIONS = /* @__PURE__ */ new Set(["-m"]);
+var FOCUS_VALUE_OPTIONS = /* @__PURE__ */ new Set(["--focus"]);
 var VALID_HOST_SURFACES = /* @__PURE__ */ new Set([
   "terminal",
   "claude-plugin",
@@ -5080,6 +5093,8 @@ function redactInlineValue(arg) {
 }
 function redactArgv(argv, { command } = {}) {
   const redacted = [];
+  const isPromptCommand = PROMPT_COMMANDS.has(command);
+  let sawSubcommand = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (typeof arg !== "string") {
@@ -5091,26 +5106,49 @@ function redactArgv(argv, { command } = {}) {
         redacted.push(redactInlineValue(arg));
         continue;
       }
-      const isSecretFlag = SECRET_LONG_OPT_RE.test(arg);
-      const isReviewFocus = command === "review" && arg === "--focus";
       redacted.push(arg);
-      if ((isSecretFlag || isReviewFocus) && i + 1 < argv.length) {
-        redacted.push(isSecretFlag ? "<secret:redacted>" : "<prompt:redacted>");
+      const hasNext = i + 1 < argv.length;
+      if (!hasNext) continue;
+      if (SECRET_LONG_OPT_RE.test(arg)) {
+        redacted.push("<secret:redacted>");
+        i += 1;
+        continue;
+      }
+      if (FOCUS_VALUE_OPTIONS.has(arg) && (command === "review" || command === "adversarial-review")) {
+        redacted.push("<prompt:redacted>");
+        i += 1;
+        continue;
+      }
+      if (VALUE_OPTIONS.has(arg)) {
+        redacted.push(argv[i + 1]);
+        i += 1;
+        continue;
+      }
+      continue;
+    }
+    if (arg.startsWith("-") && arg.length > 1) {
+      redacted.push(arg);
+      if (SHORT_VALUE_OPTIONS.has(arg) && i + 1 < argv.length) {
+        redacted.push(argv[i + 1]);
         i += 1;
       }
       continue;
     }
-    redacted.push(redactInlineValue(arg));
-  }
-  if (PROMPT_COMMANDS.has(command) && redacted.length > 0) {
-    const last = redacted.length - 1;
-    const tail = redacted[last];
-    if (typeof tail === "string" && !tail.startsWith("-") && !tail.includes("=")) {
-      const wasPlaceholder = tail === "<prompt:redacted>" || tail === "<secret:redacted>";
-      if (!wasPlaceholder && tail !== command) {
-        redacted[last] = "<prompt:redacted>";
-      }
+    if (!sawSubcommand && command && arg === command) {
+      sawSubcommand = true;
+      redacted.push(arg);
+      continue;
     }
+    const inlineRedacted = redactInlineValue(arg);
+    if (inlineRedacted !== arg) {
+      redacted.push(inlineRedacted);
+      continue;
+    }
+    if (isPromptCommand) {
+      redacted.push("<prompt:redacted>");
+      continue;
+    }
+    redacted.push(arg);
   }
   return redacted;
 }
@@ -5148,7 +5186,12 @@ function createRunLedgerEvent(event = {}) {
 }
 async function appendRunLedgerEvent(workspaceRoot, event) {
   const file = resolveRunLedgerFile(workspaceRoot);
-  const full = createRunLedgerEvent({ ...event, workspaceRoot });
+  const workspaceSlug = workspaceRoot ? computeWorkspaceSlug(workspaceRoot) : null;
+  const full = createRunLedgerEvent({
+    ...event,
+    workspaceRoot: workspaceRoot ?? event.workspaceRoot ?? null,
+    workspaceSlug: event.workspaceSlug ?? workspaceSlug
+  });
   appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO });
   return full;
 }
