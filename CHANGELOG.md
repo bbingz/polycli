@@ -6,6 +6,13 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — v0.6.12 released
+
+- Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.12, npm `@bbingz/polycli-opencode@0.6.12`, npm `@bbingz/polycli@0.6.12`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`); `@bbingz/polycli-runtime` remains internal.
+- Standardize `ask`/`rescue` permission default to YOLO across all 9 providers. Path B principle: surface real provider capabilities, don't fake uniformity by mixing tiers across providers. Until v0.6.11 polycli's permission stance was an asymmetric mix (copilot/opencode already YOLO; claude `acceptEdits`; qwen `auto-edit`; gemini `plan`; kimi/cmd no flag at all; pi/mini-agent no permission gate). v0.6.12 makes every provider that has a YOLO-equivalent flag pass it by default: claude `--permission-mode bypassPermissions`, gemini `--approval-mode yolo`, qwen `--approval-mode yolo` (also dropped legacy `unsafeFlag`/`background` guard), kimi `--yolo`, cmd `--yolo`. Callers can opt out via runtime parameters (`permissionMode`, `approvalMode`, `yolo`, `skipPermissions`). Documented as part of the v1 public surface.
+- `review` / `adversarial-review` remain locked to conservative / read-only / plan mode regardless of the new YOLO defaults: review override now adds `permissionMode: "plan"` for claude, `approvalMode: "plan"` for qwen (matching the existing gemini override), `yolo: false` for kimi and cmd. `assertNoReviewConstraintOverride` extended to refuse downstream callers re-introducing those YOLO flags into a review invocation.
+- Verification: `release:check` exit 0 (364/364 tests; bundles 5; fixtures 16; manifests 0.6.12; host-map 11x4+terminal; codex-adapter 5; claude plugin validate ×2; 4 npm pack/publish dry-runs). Post-publish: tag, GitHub release (not draft, not prerelease), and both npm packages observable at 0.6.12.
+
 ## 2026-05-07 — Claude — v0.6.11 released
 
 - Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.11, npm `@bbingz/polycli-opencode@0.6.11`, npm `@bbingz/polycli@0.6.11`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`); `@bbingz/polycli-runtime` remains internal.
