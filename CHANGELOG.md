@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — v0.6.9 released
+
+- Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.9, npm `@bbingz/polycli-opencode@0.6.9`, npm `@bbingz/polycli@0.6.9`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`); `@bbingz/polycli-runtime` remains internal.
+- Patch on top of v0.6.8 closing the post-Q6 hardening: dead-worker scan-on-read terminal event recovery in `debug runs/show/explain` (idempotent `attempt_result` + `provider_decision` append; `worker_exited` classification for no-envelope deaths), TUI log file pointer rendering (read-only — never reads or prints log contents), host-map guardrail extended to Terminal CLI cells / side-by-side examples / terminal-only `polycli tui` docs, and README command-surface drift cleanup across en/zh/ja so the front matter matches the v0.6.7 + v0.6.8 surface.
+- Verification: `release:check` exit 0 (354/354 tests; bundles 5; fixtures 16; manifests 0.6.9; host-map 11x4+terminal; codex-adapter 5; claude plugin validate ×2; 4 npm pack/publish dry-runs). Post-publish: tag, GitHub release (not draft, not prerelease), and both npm packages observable at 0.6.9; `@bbingz/polycli` bin still maps `bin/polycli.mjs`.
+
 ## 2026-05-07 — Codex — memory and Claude handoff closeout
 
 - Added project memory for the Q6 terminal CLI/TUI observability track, including v0.6.7/v0.6.8 shipped surfaces, post-v0.6.8 hardening, and the next `v0.6.9` release-prep handoff.

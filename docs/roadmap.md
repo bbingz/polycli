@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-07 (v0.6.8 published: background-job ledger plumbing + read-only TUI inspector).
+Snapshot: 2026-05-07 (v0.6.9 published: post-Q6 hardening — dead-worker terminal-event recovery + TUI log file pointers + host-map terminal-CLI guardrail + README command-surface drift cleanup).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,7 +10,7 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.8** — see `docs/release-notes-v0.6.8.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.8` + `@bbingz/polycli@0.6.8` all on the registry. Adds background-job ledger plumbing (Q6 Spec 2) + read-only TUI inspector MVP (Q6 Spec 3) + run-ledger debug examples + a real-PTY `q`-exit fix.
+- Latest public release: **v0.6.9** — see `docs/release-notes-v0.6.9.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.9` + `@bbingz/polycli@0.6.9` all on the registry. Patch on top of v0.6.8 closing the post-Q6 hardening: dead-worker scan-on-read terminal-event recovery in `debug runs/show/explain`, TUI log file pointer rendering (read-only), host-map guardrail extended to Terminal CLI docs, and README command-surface drift cleanup across en/zh/ja.
 - 9 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
