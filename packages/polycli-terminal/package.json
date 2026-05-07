@@ -1,0 +1,18 @@
+{
+  "name": "@bbingz/polycli",
+  "version": "0.6.6",
+  "description": "Terminal CLI for Polycli provider diagnostics and host-compatible commands.",
+  "type": "module",
+  "bin": {
+    "polycli": "./bin/polycli.mjs"
+  },
+  "files": [
+    "bin/polycli.mjs",
+    "bin/polycli-companion.bundle.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
