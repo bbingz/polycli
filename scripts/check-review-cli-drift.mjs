@@ -16,8 +16,8 @@ const CHECKS = [
     provider: "claude",
     bin: "claude",
     helpArgs: ["--help"],
-    expect: ["--tools"],
-    notes: "Review hard constraint uses --tools \"\" to deny all tools.",
+    expect: ["--tools", "--mcp-config", "--strict-mcp-config"],
+    notes: "Prompt/review hard constraints use --tools \"\" and an empty strict MCP config to deny model-visible tools and MCP servers.",
   },
   {
     provider: "gemini",
@@ -27,11 +27,18 @@ const CHECKS = [
     notes: "Review hard constraint writes a Policy Engine TOML and passes --policy <file>; --approval-mode plan is the read-only mode.",
   },
   {
+    provider: "qwen",
+    bin: "qwen",
+    helpArgs: ["--help"],
+    expect: ["--approval-mode", "--exclude-tools", "--max-session-turns"],
+    notes: "Prompt/review constraints use approval-mode plan and exclude-tools; ask is bounded at --max-session-turns 20 instead of the broken one-turn cap.",
+  },
+  {
     provider: "copilot",
     bin: "copilot",
     helpArgs: ["--help"],
-    expect: ["--excluded-tools"],
-    notes: "Review hard constraint uses --excluded-tools <list>; empty --available-tools is normalized away by copilot's own parser so cannot be used.",
+    expect: ["--excluded-tools", "--allow-all-tools", "--allow-all-paths", "--allow-all-urls", "--no-ask-user"],
+    notes: "Review/prompt constraints keep programmatic --no-ask-user but drop allow-all tool/path/url flags and use --excluded-tools <list>.",
   },
   {
     provider: "opencode",
@@ -44,8 +51,8 @@ const CHECKS = [
     provider: "pi",
     bin: "pi",
     helpArgs: ["--help"],
-    expect: ["--no-tools"],
-    notes: "Review hard constraint uses --no-tools.",
+    expect: ["--no-session", "--no-tools", "--no-extensions", "--no-skills", "--no-context-files"],
+    notes: "Prompt/review hard constraints use stateless no-tool/no-context flags.",
   },
   {
     provider: "cmd",
@@ -54,14 +61,18 @@ const CHECKS = [
     expect: ["--permission-mode"],
     notes: "Review hard constraint uses --permission-mode plan.",
   },
+  {
+    provider: "minimax",
+    bin: process.env.MMX_CLI_BIN || process.env.MINIMAX_CLI_BIN || "mmx",
+    probes: [
+      { helpArgs: ["text", "chat", "--help"], expect: ["--message"] },
+      { helpArgs: ["--help"], expect: ["--output", "--non-interactive"] },
+    ],
+    notes: "MiniMax provider uses official mmx-cli text chat in non-interactive JSON mode, not mini-agent log scraping.",
+  },
 ];
 
 const ENV_ONLY = [
-  {
-    provider: "minimax",
-    envVar: "MINI_AGENT_CONFIG_PATH",
-    notes: "Review hard constraint writes a one-shot YAML and points MINI_AGENT_CONFIG_PATH at it. No CLI flag to verify; monitor mini-agent release notes for env-var renames.",
-  },
   {
     provider: "opencode (env path)",
     envVar: "OPENCODE_CONFIG_CONTENT",
@@ -91,11 +102,15 @@ function probe({ bin, helpArgs }) {
 
 function check(entry) {
   const { provider, expect, notes } = entry;
-  const result = probe(entry);
-  if (result.skipped) {
-    return { provider, status: "skipped", reason: result.reason, notes };
+  const probes = entry.probes ?? [{ helpArgs: entry.helpArgs, expect }];
+  const missing = [];
+  for (const probeEntry of probes) {
+    const result = probe({ ...entry, helpArgs: probeEntry.helpArgs });
+    if (result.skipped) {
+      return { provider, status: "skipped", reason: result.reason, notes };
+    }
+    missing.push(...probeEntry.expect.filter((flag) => !result.text.includes(flag)));
   }
-  const missing = expect.filter((flag) => !result.text.includes(flag));
   if (missing.length === 0) {
     return { provider, status: "ok" };
   }

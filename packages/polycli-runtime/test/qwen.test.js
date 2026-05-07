@@ -84,6 +84,26 @@ test("buildQwenInvocation supports resume-last and lets callers override approva
   assert.equal(planInvocation.args.includes("yolo"), false);
 });
 
+test("buildQwenInvocation appends extra args after the prompt for array options", () => {
+  const invocation = buildQwenInvocation({
+    prompt: "review this diff",
+    approvalMode: "plan",
+    extraArgs: ["--exclude-tools", "read_file"],
+  });
+
+  assert.deepEqual(invocation.args, [
+    "--output-format",
+    "stream-json",
+    "--approval-mode",
+    "plan",
+    "--max-session-turns",
+    "20",
+    "review this diff",
+    "--exclude-tools",
+    "read_file",
+  ]);
+});
+
 test("buildQwenEnv injects proxy settings without overwriting explicit env", () => {
   const env = buildQwenEnv(
     { proxy: "http://127.0.0.1:7890" },

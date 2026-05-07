@@ -68,6 +68,7 @@ export function buildQwenInvocation({
   maxSteps = 20,
   appendSystem,
   appendDirs,
+  extraArgs = [],
   bin = QWEN_BIN,
 } = {}) {
   let effectiveApprovalMode = approvalMode;
@@ -92,6 +93,7 @@ export function buildQwenInvocation({
   if (appendSystem) args.push("--append-system-prompt", appendSystem);
   if (appendDirs?.length) args.push("--include-directories", appendDirs.join(","));
   args.push(String(prompt ?? ""));
+  if (extraArgs.length > 0) args.push(...extraArgs);
 
   return {
     bin,
@@ -261,6 +263,7 @@ export function runQwenPrompt({
   maxSteps = 20,
   appendSystem,
   appendDirs,
+  extraArgs = [],
   bin = QWEN_BIN,
 } = {}) {
   const invocation = buildQwenInvocation({
@@ -274,6 +277,7 @@ export function runQwenPrompt({
     maxSteps,
     appendSystem,
     appendDirs,
+    extraArgs,
     bin,
   });
 
@@ -320,6 +324,7 @@ export function runQwenPromptStreaming({
   maxSteps = 20,
   appendSystem,
   appendDirs,
+  extraArgs = [],
   onEvent = () => {},
   bin = QWEN_BIN,
   spawnImpl,
@@ -335,6 +340,7 @@ export function runQwenPromptStreaming({
     maxSteps,
     appendSystem,
     appendDirs,
+    extraArgs,
     bin,
   });
 

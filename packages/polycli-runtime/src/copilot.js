@@ -63,6 +63,10 @@ export function buildCopilotInvocation({
   stream = "off",
   resumeSessionId = null,
   continueLast = false,
+  allowAllTools = true,
+  allowAllPaths = true,
+  allowAllUrls = true,
+  noAskUser = true,
   extraArgs = [],
   bin = COPILOT_BIN,
 } = {}) {
@@ -73,12 +77,12 @@ export function buildCopilotInvocation({
     outputFormat,
     "--stream",
     stream,
-    "--allow-all-tools",
-    "--allow-all-paths",
-    "--allow-all-urls",
-    "--no-ask-user",
   ];
 
+  if (allowAllTools) args.push("--allow-all-tools");
+  if (allowAllPaths) args.push("--allow-all-paths");
+  if (allowAllUrls) args.push("--allow-all-urls");
+  if (noAskUser) args.push("--no-ask-user");
   if (model) {
     args.push("--model", model);
   }
@@ -201,6 +205,10 @@ export function runCopilotPrompt({
   extraArgs = [],
   resumeSessionId = null,
   continueLast = false,
+  allowAllTools = true,
+  allowAllPaths = true,
+  allowAllUrls = true,
+  noAskUser = true,
   bin = COPILOT_BIN,
 } = {}) {
   const invocation = buildCopilotInvocation({
@@ -210,6 +218,10 @@ export function runCopilotPrompt({
     stream: "off",
     resumeSessionId,
     continueLast,
+    allowAllTools,
+    allowAllPaths,
+    allowAllUrls,
+    noAskUser,
     extraArgs,
     bin,
   });
@@ -254,6 +266,10 @@ export function runCopilotPromptStreaming({
   extraArgs = [],
   resumeSessionId = null,
   continueLast = false,
+  allowAllTools = true,
+  allowAllPaths = true,
+  allowAllUrls = true,
+  noAskUser = true,
   onEvent = () => {},
   bin = COPILOT_BIN,
   spawnImpl,
@@ -265,6 +281,10 @@ export function runCopilotPromptStreaming({
     stream: "on",
     resumeSessionId,
     continueLast,
+    allowAllTools,
+    allowAllPaths,
+    allowAllUrls,
+    noAskUser,
     extraArgs,
     bin,
   });

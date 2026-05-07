@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 // plugins/polycli/scripts/polycli-companion.mjs
-import fs9 from "node:fs";
-import path8 from "node:path";
+import fs8 from "node:fs";
+import path7 from "node:path";
 import process5 from "node:process";
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import { spawn as spawn2 } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -926,6 +926,10 @@ function buildCopilotInvocation({
   stream = "off",
   resumeSessionId = null,
   continueLast = false,
+  allowAllTools = true,
+  allowAllPaths = true,
+  allowAllUrls = true,
+  noAskUser = true,
   extraArgs = [],
   bin = COPILOT_BIN
 } = {}) {
@@ -935,12 +939,12 @@ function buildCopilotInvocation({
     "--output-format",
     outputFormat,
     "--stream",
-    stream,
-    "--allow-all-tools",
-    "--allow-all-paths",
-    "--allow-all-urls",
-    "--no-ask-user"
+    stream
   ];
+  if (allowAllTools) args.push("--allow-all-tools");
+  if (allowAllPaths) args.push("--allow-all-paths");
+  if (allowAllUrls) args.push("--allow-all-urls");
+  if (noAskUser) args.push("--no-ask-user");
   if (model) {
     args.push("--model", model);
   }
@@ -1044,6 +1048,10 @@ function runCopilotPrompt({
   extraArgs = [],
   resumeSessionId = null,
   continueLast = false,
+  allowAllTools = true,
+  allowAllPaths = true,
+  allowAllUrls = true,
+  noAskUser = true,
   bin = COPILOT_BIN
 } = {}) {
   const invocation = buildCopilotInvocation({
@@ -1053,6 +1061,10 @@ function runCopilotPrompt({
     stream: "off",
     resumeSessionId,
     continueLast,
+    allowAllTools,
+    allowAllPaths,
+    allowAllUrls,
+    noAskUser,
     extraArgs,
     bin
   });
@@ -1089,6 +1101,10 @@ function runCopilotPromptStreaming({
   extraArgs = [],
   resumeSessionId = null,
   continueLast = false,
+  allowAllTools = true,
+  allowAllPaths = true,
+  allowAllUrls = true,
+  noAskUser = true,
   onEvent = () => {
   },
   bin = COPILOT_BIN,
@@ -1101,6 +1117,10 @@ function runCopilotPromptStreaming({
     stream: "on",
     resumeSessionId,
     continueLast,
+    allowAllTools,
+    allowAllPaths,
+    allowAllUrls,
+    noAskUser,
     extraArgs,
     bin
   });
@@ -1867,6 +1887,7 @@ function buildQwenInvocation({
   maxSteps = 20,
   appendSystem,
   appendDirs,
+  extraArgs = [],
   bin = QWEN_BIN
 } = {}) {
   let effectiveApprovalMode = approvalMode;
@@ -1889,6 +1910,7 @@ function buildQwenInvocation({
   if (appendSystem) args.push("--append-system-prompt", appendSystem);
   if (appendDirs?.length) args.push("--include-directories", appendDirs.join(","));
   args.push(String(prompt ?? ""));
+  if (extraArgs.length > 0) args.push(...extraArgs);
   return {
     bin,
     args,
@@ -2036,6 +2058,7 @@ function runQwenPrompt({
   maxSteps = 20,
   appendSystem,
   appendDirs,
+  extraArgs = [],
   bin = QWEN_BIN
 } = {}) {
   const invocation = buildQwenInvocation({
@@ -2049,6 +2072,7 @@ function runQwenPrompt({
     maxSteps,
     appendSystem,
     appendDirs,
+    extraArgs,
     bin
   });
   const result = runCommand(invocation.bin, invocation.args, {
@@ -2089,6 +2113,7 @@ function runQwenPromptStreaming({
   maxSteps = 20,
   appendSystem,
   appendDirs,
+  extraArgs = [],
   onEvent = () => {
   },
   bin = QWEN_BIN,
@@ -2105,6 +2130,7 @@ function runQwenPromptStreaming({
     maxSteps,
     appendSystem,
     appendDirs,
+    extraArgs,
     bin
   });
   return spawnStreamingCommand({
@@ -2144,120 +2170,32 @@ function runQwenPromptStreaming({
 }
 
 // packages/polycli-runtime/src/minimax.js
-import fs2 from "node:fs";
-import os2 from "node:os";
-import path2 from "node:path";
-var MINI_AGENT_BIN = process.env.MINI_AGENT_BIN || "mini-agent";
-var MINI_AGENT_LOG_DIR = process.env.MINI_AGENT_LOG_DIR || path2.join(os2.homedir(), ".mini-agent", "log");
-var MINI_AGENT_CONFIG_PATH = process.env.MINI_AGENT_CONFIG_PATH || path2.join(os2.homedir(), ".mini-agent", "config", "config.yaml");
+var MMX_BIN = process.env.MMX_CLI_BIN || process.env.MINIMAX_CLI_BIN || "mmx";
 var DEFAULT_TIMEOUT_MS6 = 12e4;
 var AUTH_CHECK_TIMEOUT_MS6 = 3e4;
-function readMiniMaxConfig() {
-  try {
-    const text = fs2.readFileSync(MINI_AGENT_CONFIG_PATH, "utf8");
-    const read = (key) => {
-      const match = text.match(new RegExp(`^${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^#\\n]+))`, "m"));
-      return match ? match[1] ?? match[2] ?? match[3]?.trim() ?? null : null;
-    };
-    return {
-      api_key: read("api_key"),
-      api_base: read("api_base"),
-      model: read("model")
-    };
-  } catch {
-    return { api_key: null, api_base: null, model: null };
-  }
-}
 function stripAnsiSgr(text) {
   return String(text ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 }
 function buildMiniMaxInvocation({
   prompt,
-  cwd,
+  model = null,
   extraArgs = [],
-  bin = MINI_AGENT_BIN
+  bin = MMX_BIN
 } = {}) {
+  const args = [
+    "text",
+    "chat",
+    "--message",
+    String(prompt ?? ""),
+    "--output",
+    "json",
+    "--non-interactive"
+  ];
+  if (model) args.push("--model", model);
+  if (extraArgs.length > 0) args.push(...extraArgs);
   return {
     bin,
-    args: ["-t", String(prompt ?? ""), "-w", cwd || process.cwd(), ...extraArgs]
-  };
-}
-function extractMiniMaxLogPath(text) {
-  const match = stripAnsiSgr(text).match(/Log file:\s+(\S+\.log)/);
-  return match ? match[1] : null;
-}
-function parseMiniMaxResponseBlocks(logText) {
-  const blocks = [];
-  const lines = String(logText ?? "").split(/\r?\n/);
-  let current = null;
-  let bodyLines = [];
-  let braceDepth = 0;
-  let inString = false;
-  const scanLine = (line) => {
-    let opens = 0;
-    let closes = 0;
-    for (let index = 0; index < line.length; index += 1) {
-      const char = line[index];
-      if (inString) {
-        if (char === "\\") {
-          index += 1;
-        } else if (char === '"') {
-          inString = false;
-        }
-      } else if (char === '"') {
-        inString = true;
-      } else if (char === "{") {
-        opens += 1;
-      } else if (char === "}") {
-        closes += 1;
-      }
-    }
-    braceDepth += opens - closes;
-  };
-  const finish = () => {
-    if (!current) return;
-    const raw = bodyLines.join("\n");
-    let json = null;
-    try {
-      json = JSON.parse(raw);
-    } catch {
-    }
-    blocks.push({ ...current, raw, json });
-    current = null;
-    bodyLines = [];
-    braceDepth = 0;
-    inString = false;
-  };
-  for (const line of lines) {
-    const header = line.match(/^\[(\d+)\]\s+RESPONSE$/);
-    if (header) {
-      finish();
-      current = { index: Number.parseInt(header[1], 10) };
-      continue;
-    }
-    if (!current) continue;
-    if (bodyLines.length === 0 && !line.trimStart().startsWith("{")) continue;
-    bodyLines.push(line);
-    scanLine(line);
-    if (braceDepth <= 0 && bodyLines.length > 0 && !inString) {
-      finish();
-    }
-  }
-  finish();
-  return blocks;
-}
-function extractMiniMaxResponseFromLogText(logText) {
-  const blocks = parseMiniMaxResponseBlocks(logText);
-  const picked = [...blocks].reverse().find((block) => block.json && (block.json.finish_reason || block.json.content));
-  if (!picked?.json) {
-    return { response: "", finishReason: null, toolCalls: [] };
-  }
-  const model = picked.json.model ?? picked.json.meta?.model ?? null;
-  return {
-    response: typeof picked.json.content === "string" ? picked.json.content : "",
-    finishReason: picked.json.finish_reason ?? null,
-    toolCalls: Array.isArray(picked.json.tool_calls) ? picked.json.tool_calls : [],
-    ...model ? { model } : {}
+    args
   };
 }
 function extractMiniMaxEventText(event) {
@@ -2270,69 +2208,71 @@ function extractMiniMaxEventText(event) {
   }
   return "";
 }
-function snapshotLogDir(logDir) {
-  try {
-    return new Set(fs2.readdirSync(logDir).filter((name) => name.endsWith(".log")));
-  } catch {
-    return /* @__PURE__ */ new Set();
-  }
-}
-function diffLogSnapshot(beforeSet, logDir) {
-  try {
-    const current = fs2.readdirSync(logDir).filter((name) => name.endsWith(".log"));
-    const novel = current.filter((name) => !beforeSet.has(name));
-    if (novel.length === 0) return null;
-    novel.sort();
-    return path2.join(logDir, novel[novel.length - 1]);
-  } catch {
-    return null;
-  }
-}
 function getMiniMaxAvailability(cwd) {
-  return binaryAvailable(MINI_AGENT_BIN, ["--version"], { cwd });
+  return binaryAvailable(MMX_BIN, ["--version"], { cwd });
 }
 async function getMiniMaxAuthStatus(cwd) {
-  const config = readMiniMaxConfig();
-  if (!config.api_key || config.api_key === "YOUR_API_KEY_HERE") {
-    return { loggedIn: false, detail: "api_key is placeholder or missing" };
-  }
-  const result = await runMiniMaxPrompt({
-    prompt: "ping",
+  const result = runCommand(MMX_BIN, ["auth", "status", "--output", "json", "--non-interactive"], {
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS6
   });
+  if (result.error) {
+    return { loggedIn: false, detail: result.error.message };
+  }
+  if (result.status !== 0) {
+    return { loggedIn: false, detail: result.stderr.trim() || `mmx auth status exited with code ${result.status}` };
+  }
+  const text = `${result.stdout ?? ""}
+${result.stderr ?? ""}`.trim();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+  }
+  const loggedIn = parsed ? parsed.authenticated === true || parsed.loggedIn === true || parsed.status === "authenticated" : /\b(authenticated|logged in|ok)\b/i.test(text);
   return {
-    loggedIn: result.ok,
-    detail: result.ok ? "authenticated" : result.error,
-    model: config.model,
-    apiBase: config.api_base
+    loggedIn,
+    detail: loggedIn ? "authenticated" : text || "mmx auth status did not report authenticated",
+    model: parsed?.model ?? null
+  };
+}
+function extractMiniMaxResponseFromMmxJson(text) {
+  const raw = String(text ?? "").trim();
+  if (!raw) {
+    return { response: "", finishReason: null, toolCalls: [] };
+  }
+  let value = null;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return { response: stripAnsiSgr(raw), finishReason: null, toolCalls: [] };
+  }
+  const choice = Array.isArray(value.choices) ? value.choices[0] : null;
+  const message = choice?.message ?? choice?.delta ?? null;
+  const contentText = Array.isArray(value.content) ? value.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("") : "";
+  const response = typeof value.content === "string" ? value.content : typeof value.response === "string" ? value.response : typeof value.text === "string" ? value.text : contentText || (typeof message?.content === "string" ? message.content : "");
+  const finishReason = value.finish_reason ?? value.finishReason ?? choice?.finish_reason ?? null;
+  const toolCalls = Array.isArray(value.tool_calls) ? value.tool_calls : Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+  return {
+    response,
+    finishReason,
+    toolCalls,
+    ...typeof value.model === "string" ? { model: value.model } : {}
   };
 }
 function runMiniMaxPrompt({
   prompt,
+  model = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS6,
   extraArgs = [],
   defaultModel = null,
   env = process.env,
-  onProgressLine,
-  bin = MINI_AGENT_BIN,
+  bin = MMX_BIN,
   spawnImpl
 } = {}) {
   return new Promise((resolve) => {
-    const beforeLogs = snapshotLogDir(MINI_AGENT_LOG_DIR);
-    const invocation = buildMiniMaxInvocation({ prompt, cwd, extraArgs, bin });
-    let logPath = null;
-    const handleStdoutLine = (line) => {
-      const clean = stripAnsiSgr(line);
-      if (!logPath) logPath = extractMiniMaxLogPath(clean);
-      if (typeof onProgressLine === "function") {
-        try {
-          onProgressLine(clean);
-        } catch {
-        }
-      }
-    };
+    const invocation = buildMiniMaxInvocation({ prompt, model, extraArgs, bin });
     spawnStreamingCommand({
       bin: invocation.bin,
       args: invocation.args,
@@ -2341,19 +2281,20 @@ function runMiniMaxPrompt({
       timeout,
       stdio: ["ignore", "pipe", "pipe"],
       spawnImpl,
-      onStdoutLine: handleStdoutLine
+      onStdoutLine() {
+      }
     }).then((result) => {
       try {
-        const effectiveLogPath = logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR);
-        const parsed = effectiveLogPath && fs2.existsSync(effectiveLogPath) ? extractMiniMaxResponseFromLogText(fs2.readFileSync(effectiveLogPath, "utf8")) : { response: "", finishReason: null, toolCalls: [] };
-        const resolvedModel = parsed.model ?? defaultModel ?? readMiniMaxConfig().model ?? null;
+        const parsed = extractMiniMaxResponseFromMmxJson(result.stdout);
+        const resolvedModel = parsed.model ?? model ?? defaultModel ?? null;
+        const hasVisibleText = Boolean(parsed.response.trim());
         resolve({
           ...result,
-          logPath: effectiveLogPath,
+          logPath: null,
           ...parsed,
           model: resolvedModel,
-          ok: result.ok && Boolean(parsed.response.trim()),
-          error: result.ok && parsed.response.trim() ? null : result.error
+          ok: result.ok && hasVisibleText,
+          error: result.ok && hasVisibleText ? null : result.error || result.stderr.trim() || "minimax produced no visible text"
         });
       } catch (error) {
         resolve({
@@ -2366,7 +2307,8 @@ function runMiniMaxPrompt({
           response: "",
           finishReason: null,
           toolCalls: [],
-          logPath: logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR),
+          logPath: null,
+          model: model ?? defaultModel ?? null,
           error: error.message
         });
       }
@@ -2381,7 +2323,8 @@ function runMiniMaxPrompt({
         response: "",
         finishReason: null,
         toolCalls: [],
-        logPath: logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR),
+        logPath: null,
+        model: model ?? defaultModel ?? null,
         error: error.message
       });
     });
@@ -2389,6 +2332,7 @@ function runMiniMaxPrompt({
 }
 async function runMiniMaxPromptStreaming({
   prompt,
+  model = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS6,
   extraArgs = [],
@@ -2396,36 +2340,34 @@ async function runMiniMaxPromptStreaming({
   env = process.env,
   onEvent = () => {
   },
-  bin = MINI_AGENT_BIN,
+  bin = MMX_BIN,
   spawnImpl
 } = {}) {
+  const events = [];
   return runMiniMaxPrompt({
     prompt,
+    model,
     cwd,
     timeout,
     extraArgs,
     defaultModel,
     env,
     bin,
-    spawnImpl,
-    onProgressLine(line) {
-      try {
-        onEvent({ type: "progress", text: line });
-      } catch {
-      }
-    }
+    spawnImpl
   }).then((result) => {
     try {
-      onEvent({
+      const event = {
         type: "result",
         response: result.response,
         finishReason: result.finishReason,
         toolCalls: result.toolCalls,
         model: result.model ?? null
-      });
+      };
+      events.push(event);
+      onEvent(event);
     } catch {
     }
-    return result;
+    return { ...result, events };
   });
 }
 
@@ -3596,7 +3538,7 @@ var RUNTIMES = Object.freeze({
     capabilities: {
       streaming: true,
       sessionResume: false,
-      structuredOutput: false,
+      structuredOutput: true,
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getMiniMaxAvailability,
@@ -3777,43 +3719,43 @@ async function runProviderPromptStreaming({
 }
 
 // plugins/polycli/scripts/lib/job-control.mjs
-import fs6 from "node:fs";
+import fs5 from "node:fs";
 import process4 from "node:process";
 
 // plugins/polycli/scripts/lib/state.mjs
 import crypto from "node:crypto";
-import fs3 from "node:fs";
-import os3 from "node:os";
-import path3 from "node:path";
+import fs2 from "node:fs";
+import os2 from "node:os";
+import path2 from "node:path";
 import { spawnSync as spawnSync2 } from "node:child_process";
 var STATE_VERSION = 1;
 var STATE_FILE_NAME = "state.json";
 var JOBS_DIR_NAME = "jobs";
 var MAX_JOBS = 100;
 var PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
-var FALLBACK_STATE_ROOT = path3.join(os3.tmpdir(), "polycli-companion");
+var FALLBACK_STATE_ROOT = path2.join(os2.tmpdir(), "polycli-companion");
 function sleepSync(ms) {
   if (ms <= 0) return;
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function writeJsonAtomic(filePath, value) {
-  fs3.mkdirSync(path3.dirname(filePath), { recursive: true });
+  fs2.mkdirSync(path2.dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${crypto.randomUUID()}`;
-  const fd = fs3.openSync(tmpPath, "w", 438);
+  const fd = fs2.openSync(tmpPath, "w", 438);
   try {
-    fs3.writeFileSync(fd, `${JSON.stringify(value, null, 2)}
+    fs2.writeFileSync(fd, `${JSON.stringify(value, null, 2)}
 `, "utf8");
-    fs3.fsyncSync(fd);
+    fs2.fsyncSync(fd);
   } finally {
-    fs3.closeSync(fd);
+    fs2.closeSync(fd);
   }
-  fs3.renameSync(tmpPath, filePath);
+  fs2.renameSync(tmpPath, filePath);
   try {
-    const dirFd = fs3.openSync(path3.dirname(filePath), "r");
+    const dirFd = fs2.openSync(path2.dirname(filePath), "r");
     try {
-      fs3.fsyncSync(dirFd);
+      fs2.fsyncSync(dirFd);
     } finally {
-      fs3.closeSync(dirFd);
+      fs2.closeSync(dirFd);
     }
   } catch (error) {
     if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
@@ -3822,26 +3764,26 @@ function writeJsonAtomic(filePath, value) {
   }
 }
 function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 25 } = {}) {
-  fs3.mkdirSync(path3.dirname(lockPath), { recursive: true });
+  fs2.mkdirSync(path2.dirname(lockPath), { recursive: true });
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const fd = fs3.openSync(
+      const fd = fs2.openSync(
         lockPath,
-        fs3.constants.O_CREAT | fs3.constants.O_EXCL | fs3.constants.O_WRONLY,
+        fs2.constants.O_CREAT | fs2.constants.O_EXCL | fs2.constants.O_WRONLY,
         384
       );
       try {
-        fs3.writeFileSync(fd, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), "utf8");
-        fs3.fsyncSync(fd);
+        fs2.writeFileSync(fd, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), "utf8");
+        fs2.fsyncSync(fd);
       } finally {
-        fs3.closeSync(fd);
+        fs2.closeSync(fd);
       }
       try {
         return fn();
       } finally {
         try {
-          fs3.unlinkSync(lockPath);
+          fs2.unlinkSync(lockPath);
         } catch {
         }
       }
@@ -3850,7 +3792,7 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
         throw error2;
       }
       try {
-        const lock = JSON.parse(fs3.readFileSync(lockPath, "utf8"));
+        const lock = JSON.parse(fs2.readFileSync(lockPath, "utf8"));
         const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
         const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
         const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
@@ -3861,7 +3803,7 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
             ownerAlive = true;
           } catch (killError) {
             if (killError.code === "ESRCH") {
-              fs3.unlinkSync(lockPath);
+              fs2.unlinkSync(lockPath);
               continue;
             }
             if (killError.code !== "EPERM") {
@@ -3871,7 +3813,7 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
           }
         }
         if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
-          fs3.unlinkSync(lockPath);
+          fs2.unlinkSync(lockPath);
           continue;
         }
       } catch {
@@ -3904,7 +3846,7 @@ function runCommand2(command, args = [], options = {}) {
   };
 }
 function computeWorkspaceSlug(workspaceRoot) {
-  const base = path3.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
+  const base = path2.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
   const hash = crypto.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
   return `${base}-${hash}`;
 }
@@ -3921,50 +3863,50 @@ function buildCorruptBackupPath(stateFile) {
 }
 function backupCorruptStateFile(stateFile) {
   try {
-    fs3.renameSync(stateFile, buildCorruptBackupPath(stateFile));
+    fs2.renameSync(stateFile, buildCorruptBackupPath(stateFile));
   } catch {
   }
 }
 function stateRootDir() {
   const pluginData = process.env[PLUGIN_DATA_ENV];
   if (pluginData) {
-    return path3.join(pluginData, "state");
+    return path2.join(pluginData, "state");
   }
   return FALLBACK_STATE_ROOT;
 }
 function resolveWorkspaceRoot(cwd = process.cwd()) {
   const result = runCommand2("git", ["rev-parse", "--show-toplevel"], { cwd });
   if (result.status === 0 && result.stdout.trim()) {
-    return path3.resolve(result.stdout.trim());
+    return path2.resolve(result.stdout.trim());
   }
-  return path3.resolve(cwd);
+  return path2.resolve(cwd);
 }
 function resolveStateDir(workspaceRoot) {
-  return path3.join(stateRootDir(), computeWorkspaceSlug(workspaceRoot));
+  return path2.join(stateRootDir(), computeWorkspaceSlug(workspaceRoot));
 }
 function resolveStateFile(workspaceRoot) {
-  return path3.join(resolveStateDir(workspaceRoot), STATE_FILE_NAME);
+  return path2.join(resolveStateDir(workspaceRoot), STATE_FILE_NAME);
 }
 function resolveJobsDir(workspaceRoot) {
-  return path3.join(resolveStateDir(workspaceRoot), JOBS_DIR_NAME);
+  return path2.join(resolveStateDir(workspaceRoot), JOBS_DIR_NAME);
 }
 function resolveJobFile(workspaceRoot, jobId) {
-  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.json`);
+  return path2.join(resolveJobsDir(workspaceRoot), `${jobId}.json`);
 }
 function resolveJobLogFile(workspaceRoot, jobId) {
-  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.log`);
+  return path2.join(resolveJobsDir(workspaceRoot), `${jobId}.log`);
 }
 function resolveJobConfigFile(workspaceRoot, jobId) {
-  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
+  return path2.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
 }
 function ensureStateDir(workspaceRoot) {
-  fs3.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
+  fs2.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
 }
 function loadState(workspaceRoot) {
   const stateFile = resolveStateFile(workspaceRoot);
   let raw;
   try {
-    raw = fs3.readFileSync(stateFile, "utf8");
+    raw = fs2.readFileSync(stateFile, "utf8");
   } catch {
     return defaultState();
   }
@@ -4083,7 +4025,7 @@ function writeJobFile(workspaceRoot, jobId, payload) {
 }
 function readJobFile(jobFile) {
   try {
-    return JSON.parse(fs3.readFileSync(jobFile, "utf8"));
+    return JSON.parse(fs2.readFileSync(jobFile, "utf8"));
   } catch {
     return null;
   }
@@ -4095,29 +4037,29 @@ function writeJobConfigFile(workspaceRoot, jobId, payload) {
 }
 function readJobConfigFile(configFile) {
   try {
-    return JSON.parse(fs3.readFileSync(configFile, "utf8"));
+    return JSON.parse(fs2.readFileSync(configFile, "utf8"));
   } catch {
     return null;
   }
 }
 function removeJobConfigFile(workspaceRoot, jobId) {
   try {
-    fs3.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
+    fs2.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
   } catch {
   }
 }
 
 // plugins/polycli/scripts/lib/run-ledger.mjs
 import { randomUUID } from "node:crypto";
-import path5 from "node:path";
+import path4 from "node:path";
 
 // packages/polycli-utils/src/ndjson.js
-import fs5 from "node:fs";
+import fs4 from "node:fs";
 
 // packages/polycli-utils/src/atomic-save.js
 import crypto2 from "node:crypto";
-import fs4 from "node:fs";
-import path4 from "node:path";
+import fs3 from "node:fs";
+import path3 from "node:path";
 import process3 from "node:process";
 var LockfileTimeoutError = class extends Error {
   constructor(lockPath, timeoutMs) {
@@ -4132,7 +4074,7 @@ function sleepSync2(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function ensureParentDir(filePath) {
-  fs4.mkdirSync(path4.dirname(filePath), { recursive: true });
+  fs3.mkdirSync(path3.dirname(filePath), { recursive: true });
 }
 function normalizeWriteOptions(options) {
   if (typeof options === "string") {
@@ -4160,23 +4102,23 @@ function writeFileAtomicSync(filePath, contents, options = {}) {
   ensureParentDir(filePath);
   const tmpPath = `${filePath}.tmp.${process3.pid}.${Date.now()}.${crypto2.randomUUID()}`;
   const { flag, mode, writeOptions } = normalizeWriteOptions(options);
-  const fd = fs4.openSync(tmpPath, flag, mode);
+  const fd = fs3.openSync(tmpPath, flag, mode);
   try {
-    fs4.writeFileSync(fd, contents, writeOptions);
-    fs4.fsyncSync(fd);
+    fs3.writeFileSync(fd, contents, writeOptions);
+    fs3.fsyncSync(fd);
   } finally {
-    fs4.closeSync(fd);
+    fs3.closeSync(fd);
   }
-  fs4.renameSync(tmpPath, filePath);
-  const dirFd = fs4.openSync(path4.dirname(filePath), "r");
+  fs3.renameSync(tmpPath, filePath);
+  const dirFd = fs3.openSync(path3.dirname(filePath), "r");
   try {
-    fs4.fsyncSync(dirFd);
+    fs3.fsyncSync(dirFd);
   } catch (error) {
     if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
       throw error;
     }
   } finally {
-    fs4.closeSync(dirFd);
+    fs3.closeSync(dirFd);
   }
 }
 function writeFileAtomic(filePath, contents, options = {}) {
@@ -4188,22 +4130,22 @@ function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const fd = fs4.openSync(
+      const fd = fs3.openSync(
         lockPath,
-        fs4.constants.O_CREAT | fs4.constants.O_EXCL | fs4.constants.O_WRONLY,
+        fs3.constants.O_CREAT | fs3.constants.O_EXCL | fs3.constants.O_WRONLY,
         384
       );
       try {
-        fs4.writeFileSync(fd, JSON.stringify({ pid: process3.pid, acquiredAt: Date.now() }), "utf8");
-        fs4.fsyncSync(fd);
+        fs3.writeFileSync(fd, JSON.stringify({ pid: process3.pid, acquiredAt: Date.now() }), "utf8");
+        fs3.fsyncSync(fd);
       } finally {
-        fs4.closeSync(fd);
+        fs3.closeSync(fd);
       }
       try {
         return fn();
       } finally {
         try {
-          fs4.unlinkSync(lockPath);
+          fs3.unlinkSync(lockPath);
         } catch {
         }
       }
@@ -4212,7 +4154,7 @@ function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 
         throw error;
       }
       try {
-        const lock = JSON.parse(fs4.readFileSync(lockPath, "utf8"));
+        const lock = JSON.parse(fs3.readFileSync(lockPath, "utf8"));
         const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
         const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
         const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
@@ -4223,7 +4165,7 @@ function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 
             ownerAlive = true;
           } catch (killError) {
             if (killError.code === "ESRCH") {
-              fs4.unlinkSync(lockPath);
+              fs3.unlinkSync(lockPath);
               continue;
             }
             if (killError.code !== "EPERM") {
@@ -4233,7 +4175,7 @@ function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 
           }
         }
         if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
-          fs4.unlinkSync(lockPath);
+          fs3.unlinkSync(lockPath);
           continue;
         }
       } catch {
@@ -4256,7 +4198,7 @@ function safeParseLine(line) {
 function readNdjson(filePath) {
   let text;
   try {
-    text = fs5.readFileSync(filePath, "utf8");
+    text = fs4.readFileSync(filePath, "utf8");
   } catch (error) {
     if (error?.code === "ENOENT") {
       return [];
@@ -4283,14 +4225,14 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
     ensureParentDir(filePath);
     let needsLeadingNewline = false;
     try {
-      const stat = fs5.statSync(filePath);
+      const stat = fs4.statSync(filePath);
       if (stat.size > 0) {
-        const fd = fs5.openSync(filePath, "r");
+        const fd = fs4.openSync(filePath, "r");
         const lastByte = Buffer.alloc(1);
         try {
-          fs5.readSync(fd, lastByte, 0, 1, stat.size - 1);
+          fs4.readSync(fd, lastByte, 0, 1, stat.size - 1);
         } finally {
-          fs5.closeSync(fd);
+          fs4.closeSync(fd);
         }
         needsLeadingNewline = lastByte[0] !== 10;
       }
@@ -4301,11 +4243,11 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
     }
     const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}
 `;
-    fs5.appendFileSync(filePath, line, "utf8");
+    fs4.appendFileSync(filePath, line, "utf8");
     if (maxBytes != null) {
-      const stat = fs5.statSync(filePath);
+      const stat = fs4.statSync(filePath);
       if (stat.size > maxBytes) {
-        const lines = fs5.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
+        const lines = fs4.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
         const valid = lines.filter((entry) => safeParseLine(entry) != null);
         const keepFrom = Math.floor(valid.length * (1 - keepRatio));
         const kept = valid.slice(keepFrom);
@@ -4346,7 +4288,7 @@ var VALID_HOST_SURFACES = /* @__PURE__ */ new Set([
   "unknown"
 ]);
 function resolveRunLedgerFile(workspaceRoot) {
-  return path5.join(resolveStateDir(workspaceRoot), "run-ledger.ndjson");
+  return path4.join(resolveStateDir(workspaceRoot), "run-ledger.ndjson");
 }
 function createRunId() {
   return `run_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
@@ -4570,7 +4512,7 @@ function sortJobsNewestFirst(jobs) {
 function readProgressPreview(logFile, maxLines = 4) {
   if (!logFile) return "";
   try {
-    const lines = fs6.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const lines = fs5.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return lines.slice(-maxLines).join("\n");
   } catch {
     return "";
@@ -4785,6 +4727,48 @@ async function cancelJob(workspaceRoot, jobId) {
 
 // plugins/polycli/scripts/lib/prompt-runtime.mjs
 var PROMPT_FINAL_ANSWER_APPEND_SYSTEM = "Always emit a visible final answer in assistant text. Never finish with reasoning blocks only.";
+var GEMINI_PROMPT_DISABLED_MCP_NAME = "__polycli_prompt_no_mcp__";
+var COPILOT_PROMPT_EXCLUDED_TOOLS = [
+  "bash",
+  "read_bash",
+  "write_bash",
+  "stop_bash",
+  "list_bash",
+  "powershell",
+  "read_powershell",
+  "write_powershell",
+  "stop_powershell",
+  "list_powershell",
+  "view",
+  "create",
+  "edit",
+  "apply_patch",
+  "task",
+  "read_agent",
+  "list_agents",
+  "grep",
+  "glob",
+  "web_fetch",
+  "skill",
+  "ask_user"
+].join(",");
+var QWEN_PROMPT_EXCLUDED_TOOLS = [
+  "agent",
+  "task_stop",
+  "send_message",
+  "skill",
+  "list_directory",
+  "read_file",
+  "grep_search",
+  "glob",
+  "todo_write",
+  "ask_user_question",
+  "exit_plan_mode",
+  "web_fetch"
+];
+function mergeExtraArgs(runtimeOptions, extraArgs) {
+  return [...runtimeOptions.extraArgs || [], ...extraArgs];
+}
 function buildPromptRuntimeOptions({
   provider,
   kind,
@@ -4793,7 +4777,77 @@ function buildPromptRuntimeOptions({
   if (kind === "ask" && provider === "kimi") {
     return {
       ...runtimeOptions,
-      extraArgs: [...runtimeOptions.extraArgs || [], "--no-thinking", "--max-steps-per-turn", "1"]
+      yolo: false,
+      extraArgs: mergeExtraArgs(runtimeOptions, ["--plan", "--no-thinking", "--max-steps-per-turn", "1"])
+    };
+  }
+  if (kind === "ask" && provider === "claude") {
+    return {
+      ...runtimeOptions,
+      permissionMode: "plan",
+      maxTurns: 1,
+      extraArgs: mergeExtraArgs(runtimeOptions, [
+        "--tools",
+        "",
+        "--mcp-config",
+        '{"mcpServers":{}}',
+        "--strict-mcp-config"
+      ])
+    };
+  }
+  if (kind === "ask" && provider === "gemini") {
+    return {
+      ...runtimeOptions,
+      approvalMode: "plan",
+      extraArgs: mergeExtraArgs(runtimeOptions, [
+        "--extensions",
+        "",
+        "--allowed-mcp-server-names",
+        GEMINI_PROMPT_DISABLED_MCP_NAME
+      ])
+    };
+  }
+  if (kind === "ask" && provider === "copilot") {
+    return {
+      ...runtimeOptions,
+      allowAllTools: false,
+      allowAllPaths: false,
+      allowAllUrls: false,
+      noAskUser: true,
+      extraArgs: mergeExtraArgs(runtimeOptions, ["--excluded-tools", COPILOT_PROMPT_EXCLUDED_TOOLS])
+    };
+  }
+  if (kind === "ask" && provider === "opencode") {
+    return {
+      ...runtimeOptions,
+      skipPermissions: false,
+      extraArgs: mergeExtraArgs(runtimeOptions, ["--agent", "plan"]),
+      env: {
+        ...runtimeOptions.env || {},
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          permission: "deny"
+        })
+      }
+    };
+  }
+  if (kind === "ask" && provider === "pi") {
+    return {
+      ...runtimeOptions,
+      noSession: true,
+      extraArgs: mergeExtraArgs(runtimeOptions, [
+        "--no-tools",
+        "--no-extensions",
+        "--no-skills",
+        "--no-context-files"
+      ])
+    };
+  }
+  if (kind === "ask" && provider === "cmd") {
+    return {
+      ...runtimeOptions,
+      yolo: false,
+      extraArgs: mergeExtraArgs(runtimeOptions, ["--permission-mode", "plan"])
     };
   }
   if (provider === "qwen") {
@@ -4802,7 +4856,12 @@ function buildPromptRuntimeOptions({
       appendSystem: runtimeOptions.appendSystem || PROMPT_FINAL_ANSWER_APPEND_SYSTEM
     };
     if (kind === "ask") {
-      merged.maxSteps = 1;
+      merged.approvalMode = "plan";
+      merged.maxSteps = 20;
+      merged.extraArgs = mergeExtraArgs(
+        runtimeOptions,
+        QWEN_PROMPT_EXCLUDED_TOOLS.flatMap((tool) => ["--exclude-tools", tool])
+      );
     }
     return merged;
   }
@@ -4826,10 +4885,9 @@ function resolveProvider({ provider, positionals = [] } = {}) {
 }
 
 // plugins/polycli/scripts/lib/review.mjs
-import fs7 from "node:fs";
-import os4 from "node:os";
-import path6 from "node:path";
-import { randomUUID as randomUUID2 } from "node:crypto";
+import fs6 from "node:fs";
+import os3 from "node:os";
+import path5 from "node:path";
 var DEFAULT_MAX_DIFF_BYTES = null;
 var REVIEW_SCOPES = /* @__PURE__ */ new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
 var REVIEW_APPEND_SYSTEM = "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
@@ -4859,15 +4917,20 @@ var COPILOT_REVIEW_EXCLUDED_TOOLS = [
   "skill",
   "ask_user"
 ].join(",");
-var reviewTempDirs = /* @__PURE__ */ new Set();
-process.once("exit", () => {
-  for (const dir of reviewTempDirs) {
-    try {
-      fs7.rmSync(dir, { recursive: true, force: true });
-    } catch {
-    }
-  }
-});
+var QWEN_REVIEW_EXCLUDED_TOOLS = [
+  "agent",
+  "task_stop",
+  "send_message",
+  "skill",
+  "list_directory",
+  "read_file",
+  "grep_search",
+  "glob",
+  "todo_write",
+  "ask_user_question",
+  "exit_plan_mode",
+  "web_fetch"
+];
 function normalizeReviewScope(scope) {
   const effective = scope || "auto";
   if (!REVIEW_SCOPES.has(effective)) {
@@ -4878,103 +4941,8 @@ function normalizeReviewScope(scope) {
 function git(cwd, args) {
   return runCommand("git", args, { cwd });
 }
-function writeReviewTempFile(prefix, extension, text) {
-  const root = fs7.mkdtempSync(path6.join(os4.tmpdir(), `polycli-review-${prefix}-`));
-  reviewTempDirs.add(root);
-  const filePath = path6.join(root, `${prefix}-${randomUUID2()}${extension}`);
-  fs7.writeFileSync(filePath, text, "utf8");
-  return filePath;
-}
 function makeReviewTempDir(prefix) {
-  return fs7.mkdtempSync(path6.join(os4.tmpdir(), `polycli-review-${prefix}-`));
-}
-function findSingleQuotedScalarEnd(raw) {
-  for (let index = 1; index < raw.length; index += 1) {
-    if (raw[index] !== "'") continue;
-    if (raw[index + 1] === "'") {
-      index += 1;
-      continue;
-    }
-    return index;
-  }
-  return -1;
-}
-function findDoubleQuotedScalarEnd(raw) {
-  let escaped = false;
-  for (let index = 1; index < raw.length; index += 1) {
-    const char = raw[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (char === '"') return index;
-  }
-  return -1;
-}
-function assertOnlyCommentTail(raw, endIndex, key) {
-  const tail = raw.slice(endIndex + 1).trim();
-  if (tail && !tail.startsWith("#")) {
-    throw new Error(`Unexpected content after YAML scalar '${key}'.`);
-  }
-}
-function parseYamlScalarValue(raw, key) {
-  if (/^[|>][+-]?$/.test(raw)) {
-    throw new Error(`Unsupported YAML block scalar for '${key}'.`);
-  }
-  if (raw === "") {
-    return null;
-  }
-  if (raw.startsWith('"')) {
-    const endIndex = findDoubleQuotedScalarEnd(raw);
-    if (endIndex < 0) throw new Error(`Unterminated double-quoted YAML scalar for '${key}'.`);
-    assertOnlyCommentTail(raw, endIndex, key);
-    try {
-      return JSON.parse(raw.slice(0, endIndex + 1));
-    } catch {
-      throw new Error(`Invalid double-quoted YAML scalar for '${key}'.`);
-    }
-  }
-  if (raw.startsWith("'")) {
-    const endIndex = findSingleQuotedScalarEnd(raw);
-    if (endIndex < 0) throw new Error(`Unterminated single-quoted YAML scalar for '${key}'.`);
-    assertOnlyCommentTail(raw, endIndex, key);
-    return raw.slice(1, endIndex).replace(/''/g, "'");
-  }
-  return raw.split("#", 1)[0].trim();
-}
-function assertNoIndentedScalarContinuation(lines, index, key) {
-  for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
-    const nextLine = lines[nextIndex];
-    const trimmed = nextLine.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    if (/^\s/.test(nextLine)) {
-      throw new Error(`Multi-line YAML scalar for '${key}' is not supported.`);
-    }
-    return;
-  }
-}
-function readYamlScalar(text, key) {
-  const lines = String(text ?? "").split(/\r?\n/);
-  let value = null;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#") || /^\s/.test(line)) continue;
-    const colonIndex = line.indexOf(":");
-    if (colonIndex < 0) {
-      throw new Error(`Malformed YAML line ${index + 1}: expected key: value.`);
-    }
-    const currentKey = line.slice(0, colonIndex).trim();
-    if (currentKey !== key) continue;
-    const rawValue = line.slice(colonIndex + 1).trim();
-    value = parseYamlScalarValue(rawValue, key);
-    assertNoIndentedScalarContinuation(lines, index, key);
-  }
-  return value;
+  return fs6.mkdtempSync(path5.join(os3.tmpdir(), `polycli-review-${prefix}-`));
 }
 function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   const extraArgs = Array.isArray(runtimeOptions.extraArgs) ? runtimeOptions.extraArgs : [];
@@ -4990,42 +4958,19 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   if (provider === "qwen" && runtimeOptions.approvalMode && runtimeOptions.approvalMode !== "plan") {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
-  if (provider === "qwen" && runtimeOptions.maxSteps !== void 0 && runtimeOptions.maxSteps !== 1) {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-  }
   if (provider === "claude" && runtimeOptions.permissionMode && runtimeOptions.permissionMode !== "plan") {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
+  if (provider === "copilot") {
+    for (const key of ["allowAllTools", "allowAllPaths", "allowAllUrls"]) {
+      if (runtimeOptions[key] !== void 0 && runtimeOptions[key] !== false) {
+        throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+      }
+    }
   }
   if ((provider === "kimi" || provider === "cmd") && runtimeOptions.yolo !== void 0 && runtimeOptions.yolo !== false) {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
-}
-function buildMiniMaxReviewEnv(parentEnv = process.env) {
-  const baseConfigPath = parentEnv.MINI_AGENT_CONFIG_PATH || path6.join(os4.homedir(), ".mini-agent", "config", "config.yaml");
-  let baseConfigText = "";
-  try {
-    baseConfigText = fs7.readFileSync(baseConfigPath, "utf8");
-  } catch {
-  }
-  const lines = [];
-  for (const key of ["api_key", "api_base", "model", "provider"]) {
-    const value = readYamlScalar(baseConfigText, key);
-    if (value != null && value !== "") {
-      lines.push(`${key}: ${JSON.stringify(value)}`);
-    }
-  }
-  lines.push(
-    "tools:",
-    "  enable_file_tools: false",
-    "  enable_bash: false",
-    "  enable_note: false",
-    "  enable_skills: false",
-    "  enable_mcp: false",
-    ""
-  );
-  return {
-    MINI_AGENT_CONFIG_PATH: writeReviewTempFile("minimax-config", ".yaml", lines.join("\n"))
-  };
 }
 var REVIEW_HARD_CONSTRAINTS = {
   kimi() {
@@ -5034,12 +4979,16 @@ var REVIEW_HARD_CONSTRAINTS = {
   qwen() {
     return {
       approvalMode: "plan",
-      maxSteps: 1,
-      appendSystem: REVIEW_APPEND_SYSTEM
+      appendSystem: REVIEW_APPEND_SYSTEM,
+      extraArgs: QWEN_REVIEW_EXCLUDED_TOOLS.flatMap((tool) => ["--exclude-tools", tool])
     };
   },
   claude() {
-    return { permissionMode: "plan", extraArgs: ["--max-turns", "1", "--tools", ""] };
+    return {
+      permissionMode: "plan",
+      maxTurns: 1,
+      extraArgs: ["--tools", "", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config"]
+    };
   },
   gemini() {
     const cwd = makeReviewTempDir("gemini-cwd");
@@ -5052,6 +5001,10 @@ var REVIEW_HARD_CONSTRAINTS = {
   },
   copilot() {
     return {
+      allowAllTools: false,
+      allowAllPaths: false,
+      allowAllUrls: false,
+      noAskUser: true,
       extraArgs: ["--excluded-tools", COPILOT_REVIEW_EXCLUDED_TOOLS]
     };
   },
@@ -5068,13 +5021,13 @@ var REVIEW_HARD_CONSTRAINTS = {
     };
   },
   pi() {
-    return { extraArgs: ["--no-tools"] };
+    return { noSession: true, extraArgs: ["--no-tools", "--no-extensions", "--no-skills", "--no-context-files"] };
   },
   cmd() {
     return { yolo: false, extraArgs: ["--permission-mode", "plan"] };
   },
-  minimax({ env } = {}) {
-    return { env: buildMiniMaxReviewEnv(env) };
+  minimax() {
+    return {};
   }
 };
 function buildReviewRuntimeOptions({
@@ -5222,11 +5175,11 @@ function buildReviewPrompt({
 }
 
 // plugins/polycli/scripts/lib/timing.mjs
-import path7 from "node:path";
+import path6 from "node:path";
 var TIMING_FILE_NAME = "timings.ndjson";
 var MAX_TIMING_BYTES = 2e6;
 function resolveTimingHistoryFile(workspaceRoot) {
-  return path7.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
+  return path6.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
 }
 function appendTimingRecord(workspaceRoot, record) {
   const validation = validateTimingRecord(record);
@@ -5252,7 +5205,7 @@ function summarizeTimingRecords(records) {
 }
 
 // plugins/polycli/scripts/lib/preview.mjs
-import fs8 from "node:fs";
+import fs7 from "node:fs";
 var PREVIEW_MAX_LINES = 10;
 var PREVIEW_TAIL_CACHE = /* @__PURE__ */ new Map();
 function collapseWhitespace(text) {
@@ -5336,7 +5289,7 @@ function summarizeEventText(provider, event) {
   }
   return "";
 }
-function appendPreview(logFile, provider, event, { fsImpl = fs8, tailCache = PREVIEW_TAIL_CACHE } = {}) {
+function appendPreview(logFile, provider, event, { fsImpl = fs7, tailCache = PREVIEW_TAIL_CACHE } = {}) {
   const text = summarizeEventText(provider, event);
   if (!text) return;
   const lines = String(text).split(/\r?\n/).map((line) => collapseWhitespace(line)).filter(Boolean).slice(0, PREVIEW_MAX_LINES);
@@ -5492,11 +5445,11 @@ function output(value, asJson) {
 `);
 }
 function resolveProviderModelCacheFile(workspaceRoot) {
-  return path8.join(resolveStateDir(workspaceRoot), "provider-models.json");
+  return path7.join(resolveStateDir(workspaceRoot), "provider-models.json");
 }
 function readProviderModelCache(workspaceRoot) {
   try {
-    const parsed = JSON.parse(fs9.readFileSync(resolveProviderModelCacheFile(workspaceRoot), "utf8"));
+    const parsed = JSON.parse(fs8.readFileSync(resolveProviderModelCacheFile(workspaceRoot), "utf8"));
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
@@ -5509,8 +5462,8 @@ function readCachedProviderModel(workspaceRoot, provider) {
 function cacheProviderModel(workspaceRoot, provider, model) {
   if (typeof model !== "string" || !model.trim()) return;
   const cacheFile = resolveProviderModelCacheFile(workspaceRoot);
-  fs9.mkdirSync(path8.dirname(cacheFile), { recursive: true });
-  fs9.writeFileSync(
+  fs8.mkdirSync(path7.dirname(cacheFile), { recursive: true });
+  fs8.writeFileSync(
     cacheFile,
     `${JSON.stringify({ ...readProviderModelCache(workspaceRoot), [provider]: model }, null, 2)}
 `,
@@ -5548,7 +5501,7 @@ async function inspectProviderAvailability(provider) {
 }
 function createJobId(kind) {
   const prefix = JOB_PREFIXES[kind] || "pj";
-  return `${prefix}-${randomUUID3().slice(0, 8)}`;
+  return `${prefix}-${randomUUID2().slice(0, 8)}`;
 }
 function parseExecutionMode(options) {
   if (options.background && options.wait) {
@@ -5651,7 +5604,7 @@ function cleanupRuntimeOptions(runtimeOptions = {}) {
   for (const cleanupPath of cleanupPaths) {
     if (typeof cleanupPath !== "string" || cleanupPath.trim() === "") continue;
     try {
-      fs9.rmSync(cleanupPath, { recursive: true, force: true });
+      fs8.rmSync(cleanupPath, { recursive: true, force: true });
     } catch {
     }
   }
@@ -5880,9 +5833,9 @@ async function startBackgroundExecution(execution, asJson) {
     jobId: job.jobId,
     runContext
   });
-  fs9.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
+  fs8.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
 `, "utf8");
-  const logFd = fs9.openSync(job.logFile, "a");
+  const logFd = fs8.openSync(job.logFile, "a");
   const child = spawn2(process5.execPath, [COMPANION_PATH, "_job-worker", resolveJobConfigFile(workspaceRoot, job.jobId)], {
     cwd: execution.cwd,
     env: { ...process5.env },
@@ -5890,7 +5843,7 @@ async function startBackgroundExecution(execution, asJson) {
     detached: true
   });
   child.unref();
-  fs9.closeSync(logFd);
+  fs8.closeSync(logFd);
   const runningJob = upsertJob(workspaceRoot, {
     ...job,
     status: "running",

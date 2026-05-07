@@ -27,6 +27,7 @@ test("runtime index exports expected surface", () => {
     "extractMiniMaxEventText",
     "extractMiniMaxLogPath",
     "extractMiniMaxResponseFromLogText",
+    "extractMiniMaxResponseFromMmxJson",
     "extractOpenCodeText",
     "extractPiText",
     "extractQwenText",

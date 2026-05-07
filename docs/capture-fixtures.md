@@ -9,7 +9,7 @@ Purpose: capture real CLI stdout fixtures for `packages/polycli-runtime/test/fix
 - Capture locally only. Do not run fixture capture in CI.
 - Use low-cost prompts with exact short outputs.
 - Commit stdout only for CLI-based providers.
-- For `minimax`, also commit the referenced log file because the runtime parses the log body, not just stdout.
+- For `minimax`, commit the `mmx text chat --output json` stdout fixture. Old Mini-Agent log fixtures are retained only as legacy parser coverage.
 - Scrub credentials before committing.
 - Keep synthetic fixtures and tests. Real fixtures are additive coverage, not replacements.
 
@@ -27,8 +27,8 @@ Two captures were recorded per provider:
   - `claude -p 'Reply with exactly HELLO_CLAUDE_FIXTURE and nothing else.' --output-format stream-json --verbose --max-turns 1`
   - `claude -p 'Reply with exactly HELLO_CLAUDE_FIXTURE_ALT and nothing else.' --output-format stream-json --verbose --max-turns 1`
 - `copilot`
-  - `copilot -p 'Reply with exactly HELLO_COPILOT_FIXTURE and nothing else.' --output-format json --stream on --allow-all-tools --allow-all-paths --allow-all-urls --no-ask-user`
-  - `copilot -p 'Reply with exactly HELLO_COPILOT_FIXTURE_ALT and nothing else.' --output-format json --stream on --allow-all-tools --allow-all-paths --allow-all-urls --no-ask-user`
+  - `copilot -p 'Reply with exactly HELLO_COPILOT_FIXTURE and nothing else.' --output-format json --stream on --no-ask-user --excluded-tools bash,apply_patch`
+  - `copilot -p 'Reply with exactly HELLO_COPILOT_FIXTURE_ALT and nothing else.' --output-format json --stream on --no-ask-user --excluded-tools bash,apply_patch`
 - `gemini`
   - `gemini -p 'Reply with exactly HELLO_GEMINI_FIXTURE and nothing else.' -o stream-json --approval-mode plan`
   - `gemini -p 'Reply with exactly HELLO_GEMINI_FIXTURE_ALT and nothing else.' -o stream-json --approval-mode plan`
@@ -43,10 +43,10 @@ Two captures were recorded per provider:
   - `pi --print --mode json --no-tools 'Reply with exactly HELLO_PI_FIXTURE_ALT and nothing else.'`
 - `qwen`
   - `qwen --output-format stream-json --approval-mode auto-edit --max-session-turns 20 'Reply with exactly HELLO_QWEN_FIXTURE and nothing else.'`
-  - `qwen --output-format stream-json --approval-mode plan --max-session-turns 1 'Reply with exactly HELLO_QWEN_FIXTURE_ALT and nothing else.'`
+  - `qwen --output-format stream-json --approval-mode plan --exclude-tools read_file 'Reply with exactly HELLO_QWEN_FIXTURE_ALT and nothing else.'`
 - `minimax`
-  - `mini-agent -t 'Reply with exactly HELLO_MINIMAX_FIXTURE and nothing else.' -w \"$PWD\"`
-  - `mini-agent -t 'Reply with exactly HELLO_MINIMAX_FIXTURE_ALT and nothing else.' -w \"$PWD\"`
+  - `mmx text chat --message 'Reply with exactly HELLO_MINIMAX_FIXTURE and nothing else.' --output json --non-interactive`
+  - `mmx text chat --message 'Reply with exactly HELLO_MINIMAX_FIXTURE_ALT and nothing else.' --output json --non-interactive`
 
 ## Scrubbing Policy
 
@@ -62,7 +62,7 @@ Session ids and ordinary request metadata were left intact because they are part
 
 - `packages/polycli-runtime/test/fixtures/<provider>/<name>.stream.txt`
 - `packages/polycli-runtime/test/fixtures/<provider>/<name>.meta.json`
-- `packages/polycli-runtime/test/fixtures/minimax/<name>.log.txt` for mini-agent log-body replay
+- `packages/polycli-runtime/test/fixtures/minimax/<name>.log.txt` only for legacy Mini-Agent log-body replay tests
 
 Each `.meta.json` stores:
 

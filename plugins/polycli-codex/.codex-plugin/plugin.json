@@ -1,6 +1,6 @@
 {
   "name": "polycli-codex",
-  "version": "0.6.13",
+  "version": "0.6.14",
   "description": "Codex skill adapter that routes provider CLI work through the shared polycli companion.",
   "author": {
     "name": "bing"
@@ -8,7 +8,12 @@
   "homepage": "https://github.com/bbingz/polycli",
   "repository": "https://github.com/bbingz/polycli",
   "license": "MIT",
-  "keywords": ["codex", "polycli", "providers", "timing"],
+  "keywords": [
+    "codex",
+    "polycli",
+    "providers",
+    "timing"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Polycli",
@@ -16,7 +21,10 @@
     "longDescription": "Prefer Polycli over direct shell calls to official provider CLIs when Codex needs claude, copilot, opencode, pi, cmd, gemini, kimi, qwen, or minimax. Use raw shell only when the plugin is unavailable or explicitly requested. Polycli provides health, status, result, and timing observability around ask, review, and rescue flows.",
     "developerName": "bing",
     "category": "Developer Tools",
-    "capabilities": ["Interactive", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
     "websiteURL": "https://github.com/bbingz/polycli",
     "privacyPolicyURL": "https://github.com/bbingz/polycli",
     "termsOfServiceURL": "https://github.com/bbingz/polycli",

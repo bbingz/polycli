@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Codex — v0.6.14 provider path and stateless call hardening
+
+- Recorded the current best-provider path table in `docs/provider-paths.md`, including the corrected OpenCode finding: local auth/model discovery is the source of truth, so an empty `opencode.json` provider object does not mean OpenCode has no configured providers.
+- Hardened prompt/review defaults away from broad YOLO for stateless calls: qwen ask is now bounded at 20 turns with plan mode and tool exclusion instead of the failing one-turn cap; Claude uses no-tools plus empty strict MCP config; Gemini/OpenCode/Pi/Kimi/Cmd/Copilot get conservative provider-specific ask constraints.
+- Kept Copilot as a fallback provider but removed allow-all tool/path/url defaults for ask/review.
+- Replaced MiniMax `mini-agent` log scraping with official `mmx-cli` text-chat JSON non-interactive invocation and updated tests/docs/skills around the new path.
+- Verification: `npm run check:provider-paths` exit 0 with local `mmx` 1.0.12 included in the drift probe; live `polycli ask --provider minimax` smoke returned `ok: true`; `release:check` exit 0 (367/367 tests; bundles 5; fixtures 16; manifests 0.6.14; host-map 11x4+terminal; codex-adapter 5; claude plugin validate ×2; npm dry-runs/pack checks passed). npm publish is pending local npm auth.
+
 ## 2026-05-07 — Claude — v0.6.13 released
 
 - Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.13, npm `@bbingz/polycli-opencode@0.6.13`, npm `@bbingz/polycli@0.6.13`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`); `@bbingz/polycli-runtime` remains internal.

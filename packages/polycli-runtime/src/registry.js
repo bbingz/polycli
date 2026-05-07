@@ -140,7 +140,7 @@ const RUNTIMES = Object.freeze({
     capabilities: {
       streaming: true,
       sessionResume: false,
-      structuredOutput: false,
+      structuredOutput: true,
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getMiniMaxAvailability,

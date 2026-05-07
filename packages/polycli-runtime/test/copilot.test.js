@@ -51,6 +51,29 @@ test("buildCopilotInvocation enables programmatic json mode with permissions and
   ]);
 });
 
+test("buildCopilotInvocation can keep programmatic mode while downgrading tool permissions", () => {
+  const invocation = buildCopilotInvocation({
+    prompt: "ping",
+    allowAllTools: false,
+    allowAllPaths: false,
+    allowAllUrls: false,
+    noAskUser: true,
+    extraArgs: ["--excluded-tools", "bash,apply_patch"],
+  });
+
+  assert.deepEqual(invocation.args, [
+    "-p",
+    "ping",
+    "--output-format",
+    "json",
+    "--stream",
+    "off",
+    "--no-ask-user",
+    "--excluded-tools",
+    "bash,apply_patch",
+  ]);
+});
+
 test("parseCopilotStreamText collects session id and assistant text from jsonl", () => {
   const parsed = parseCopilotStreamText(
     [

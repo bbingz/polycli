@@ -45,7 +45,7 @@ if (args[0] === "auth" && args[1] === "status") {
 if (process.env.QWEN_ARGV_LOG) {
   fs.writeFileSync(process.env.QWEN_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
 }
-const prompt = args.at(-1) || "";
+const prompt = args.find((arg) => /__reply=|Return exactly|regressions only|POLYCLI_FIXTURE_OK/.test(arg)) || args.at(-1) || "";
 const delayMatch = prompt.match(/__delay=(\\d+)/);
 const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : Number.parseInt(process.env.QWEN_DELAY_MS || "0", 10);
 const tailDelayMatch = prompt.match(/__tail=(\\d+)/);
@@ -209,65 +209,38 @@ const reply = process.env.KIMI_FIXED_REPLY || (replyMatch ? replyMatch[1] : prom
 
 function createFakeMiniMaxFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-fake-minimax-"));
-  const logDir = path.join(root, "logs");
-  const configDir = path.join(root, "config");
-  const configPath = path.join(configDir, "config.yaml");
-  const bin = path.join(root, "mini-agent");
-  fs.mkdirSync(logDir, { recursive: true });
-  fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(
-    configPath,
-    [
-      'api_key: "test-key"',
-      'api_base: "https://api.example.test"',
-      'model: "MiniMax-M1"',
-    ].join("\n")
-  );
+  const bin = path.join(root, "mmx");
   fs.writeFileSync(
     bin,
     `#!/usr/bin/env node
 const fs = require("node:fs");
-const path = require("node:path");
 const args = process.argv.slice(2);
 if (args.includes("--version")) {
-  process.stdout.write("mini-agent 0.0.0-test\\n");
+  process.stdout.write("mmx 0.0.0-test\\n");
   process.exit(0);
 }
-if (process.env.MINI_AGENT_ENV_LOG) {
-  fs.writeFileSync(process.env.MINI_AGENT_ENV_LOG, JSON.stringify({
+if (args[0] === "auth" && args[1] === "status") {
+  process.stdout.write(JSON.stringify({ authenticated: true, model: "MiniMax-M2.7-test" }) + "\\n");
+  process.exit(0);
+}
+if (process.env.MMX_ENV_LOG) {
+  fs.writeFileSync(process.env.MMX_ENV_LOG, JSON.stringify({
     argv: args,
-    MINI_AGENT_CONFIG_PATH: process.env.MINI_AGENT_CONFIG_PATH || null,
   }) + "\\n");
 }
-if (process.env.MINI_AGENT_CONFIG_SNAPSHOT && process.env.MINI_AGENT_CONFIG_PATH) {
-  fs.copyFileSync(process.env.MINI_AGENT_CONFIG_PATH, process.env.MINI_AGENT_CONFIG_SNAPSHOT);
-}
-const prompt = args[args.indexOf("-t") + 1] || "ping";
+const prompt = args[args.indexOf("--message") + 1] || "ping";
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
-const reply = process.env.MINI_AGENT_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
-const logDir = process.env.MINI_AGENT_LOG_DIR;
-fs.mkdirSync(logDir, { recursive: true });
-const logPath = path.join(logDir, "mini-agent-test.log");
-fs.writeFileSync(
-  logPath,
-  [
-    "[1] RESPONSE",
-    "{",
-    '  "content": ' + JSON.stringify(reply) + ",",
-    '  "finish_reason": "stop",',
-    '  "tool_calls": []',
-    "}",
-  ].join("\\n")
-);
-process.stdout.write("Log file: " + logPath + "\\n");
+const reply = process.env.MMX_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
+process.stdout.write(JSON.stringify({
+  model: "MiniMax-M2.7-test",
+  choices: [{ message: { content: reply }, finish_reason: "stop" }]
+}) + "\\n");
 `,
     { mode: 0o755 }
   );
   return {
     root,
     bin,
-    logDir,
-    configPath,
     cleanup() {
       fs.rmSync(root, { recursive: true, force: true });
     },
@@ -865,7 +838,7 @@ test("integration: health without provider returns every healthy provider", asyn
       COPILOT_CLI_BIN: missingBin,
       GEMINI_CLI_BIN: missingBin,
       KIMI_CLI_BIN: fakeKimi.bin,
-      MINI_AGENT_BIN: missingBin,
+      MMX_CLI_BIN: missingBin,
       OPENCODE_CLI_BIN: missingBin,
       PI_CLI_BIN: missingBin,
       QWEN_CLI_BIN: fakeQwen.bin,
@@ -908,7 +881,7 @@ test("integration: health without provider probes providers concurrently", async
       COPILOT_CLI_BIN: missingBin,
       GEMINI_CLI_BIN: missingBin,
       KIMI_CLI_BIN: fakeKimi.bin,
-      MINI_AGENT_BIN: missingBin,
+      MMX_CLI_BIN: missingBin,
       OPENCODE_CLI_BIN: missingBin,
       PI_CLI_BIN: missingBin,
       QWEN_CLI_BIN: fakeQwen.bin,
@@ -976,7 +949,10 @@ test("integration: ask constrains qwen to emit a visible final answer", async ()
 
     const logged = readJsonLine(argLog);
     const argv = logged.argv.join(" ");
-    assert.match(argv, /--max-session-turns 1/);
+    assert.doesNotMatch(argv, /--max-session-turns 1/);
+    assert.match(argv, /--max-session-turns 20/);
+    assert.match(argv, /--approval-mode plan/);
+    assert.match(argv, /--exclude-tools/);
     assert.match(argv, /--append-system-prompt/);
   } finally {
     fake.cleanup();
@@ -1404,8 +1380,12 @@ test("integration: review --background preserves qwen runtime options and stored
 
     const logged = JSON.parse(fs.readFileSync(argLog, "utf8").trim());
     const argv = logged.argv.join(" ");
-    assert.match(argv, /--max-session-turns 1/);
+    assert.doesNotMatch(argv, /--max-session-turns 1/);
     assert.match(argv, /--append-system-prompt/);
+    assert.match(argv, /--exclude-tools/);
+    const promptIndex = logged.argv.findIndex((arg) => arg.includes("regressions only"));
+    assert.equal(promptIndex >= 0, true);
+    assert.equal(logged.argv.indexOf("--exclude-tools") > promptIndex, true);
 
     const logText = fs.readFileSync(started.job.logFile, "utf8");
     const occurrences = (logText.match(/BACKGROUND_QWEN_OK/g) || []).length;
@@ -1514,6 +1494,8 @@ test("integration: review constrains claude to one turn with no tools", async ()
 
     const logged = readJsonLine(argLog);
     assert.match(logged.argv.join(" "), /--max-turns 1/);
+    assert.match(logged.argv.join(" "), /--strict-mcp-config/);
+    assert.match(logged.argv.join(" "), /--mcp-config/);
     const toolsIndex = logged.argv.indexOf("--tools");
     assert.notEqual(toolsIndex, -1);
     assert.equal(logged.argv[toolsIndex + 1], "");
@@ -1652,20 +1634,16 @@ test("integration: review constrains pi with no-tools", async () => {
   }
 });
 
-test("integration: review constrains minimax with a tool-disabled config override", async () => {
+test("integration: review uses mmx text chat for minimax without legacy mini-agent config", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   const envLog = path.join(pluginData, "minimax-review-env.jsonl");
-  const configSnapshot = path.join(pluginData, "minimax-review-config.yaml");
   const fake = createFakeMiniMaxFixture();
   try {
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
-      MINI_AGENT_BIN: fake.bin,
-      MINI_AGENT_LOG_DIR: fake.logDir,
-      MINI_AGENT_CONFIG_PATH: fake.configPath,
-      MINI_AGENT_ENV_LOG: envLog,
-      MINI_AGENT_CONFIG_SNAPSHOT: configSnapshot,
-      MINI_AGENT_FIXED_REPLY: "MINIMAX_REVIEW_OK",
+      MMX_CLI_BIN: fake.bin,
+      MMX_ENV_LOG: envLog,
+      MMX_FIXED_REPLY: "MINIMAX_REVIEW_OK",
     });
     const review = await runCompanion(
       ["review", "--provider", "minimax", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
@@ -1676,13 +1654,9 @@ test("integration: review constrains minimax with a tool-disabled config overrid
     assert.equal(payload.response, "MINIMAX_REVIEW_OK");
 
     const loggedEnv = readJsonLine(envLog);
-    assert.match(loggedEnv.MINI_AGENT_CONFIG_PATH, /polycli-review-minimax-config-/);
-    const configText = fs.readFileSync(configSnapshot, "utf8");
-    assert.match(configText, /enable_file_tools: false/);
-    assert.match(configText, /enable_bash: false/);
-    assert.match(configText, /enable_note: false/);
-    assert.match(configText, /enable_skills: false/);
-    assert.match(configText, /enable_mcp: false/);
+    assert.deepEqual(loggedEnv.argv.slice(0, 6), ["text", "chat", "--message", loggedEnv.argv[3], "--output", "json"]);
+    assert.equal(loggedEnv.argv.includes("--non-interactive"), true);
+    assert.equal(loggedEnv.argv.includes("-t"), false);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
@@ -1740,9 +1714,7 @@ test("integration: setup and ask succeed for minimax via bundled companion", asy
   try {
     const askPayload = await assertSetupAndAsk("minimax", cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
-      MINI_AGENT_BIN: fake.bin,
-      MINI_AGENT_LOG_DIR: fake.logDir,
-      MINI_AGENT_CONFIG_PATH: fake.configPath,
+      MMX_CLI_BIN: fake.bin,
     }));
     assert.equal(askPayload.timing.runtimePersistence, "ephemeral");
     assert.equal(askPayload.timing.metrics.ttft.status, "unsupported");

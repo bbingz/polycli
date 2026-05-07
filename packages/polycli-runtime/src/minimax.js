@@ -1,36 +1,10 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { spawn } from "node:child_process";
-
-import { binaryAvailable } from "@bbingz/polycli-utils/process";
+import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 
 import { spawnStreamingCommand } from "./spawn.js";
 
-const MINI_AGENT_BIN = process.env.MINI_AGENT_BIN || "mini-agent";
-const MINI_AGENT_LOG_DIR =
-  process.env.MINI_AGENT_LOG_DIR || path.join(os.homedir(), ".mini-agent", "log");
-const MINI_AGENT_CONFIG_PATH =
-  process.env.MINI_AGENT_CONFIG_PATH || path.join(os.homedir(), ".mini-agent", "config", "config.yaml");
+const MMX_BIN = process.env.MMX_CLI_BIN || process.env.MINIMAX_CLI_BIN || "mmx";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
-
-function readMiniMaxConfig() {
-  try {
-    const text = fs.readFileSync(MINI_AGENT_CONFIG_PATH, "utf8");
-    const read = (key) => {
-      const match = text.match(new RegExp(`^${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^#\\n]+))`, "m"));
-      return match ? (match[1] ?? match[2] ?? match[3]?.trim() ?? null) : null;
-    };
-    return {
-      api_key: read("api_key"),
-      api_base: read("api_base"),
-      model: read("model"),
-    };
-  } catch {
-    return { api_key: null, api_base: null, model: null };
-  }
-}
 
 export function stripAnsiSgr(text) {
   return String(text ?? "").replace(/\x1b\[[0-9;]*m/g, "");
@@ -38,13 +12,24 @@ export function stripAnsiSgr(text) {
 
 export function buildMiniMaxInvocation({
   prompt,
-  cwd,
+  model = null,
   extraArgs = [],
-  bin = MINI_AGENT_BIN,
+  bin = MMX_BIN,
 } = {}) {
+  const args = [
+    "text",
+    "chat",
+    "--message",
+    String(prompt ?? ""),
+    "--output",
+    "json",
+    "--non-interactive",
+  ];
+  if (model) args.push("--model", model);
+  if (extraArgs.length > 0) args.push(...extraArgs);
   return {
     bin,
-    args: ["-t", String(prompt ?? ""), "-w", cwd || process.cwd(), ...extraArgs],
+    args,
   };
 }
 
@@ -147,73 +132,94 @@ export function extractMiniMaxEventText(event) {
   return "";
 }
 
-function snapshotLogDir(logDir) {
-  try {
-    return new Set(fs.readdirSync(logDir).filter((name) => name.endsWith(".log")));
-  } catch {
-    return new Set();
-  }
-}
-
-function diffLogSnapshot(beforeSet, logDir) {
-  try {
-    const current = fs.readdirSync(logDir).filter((name) => name.endsWith(".log"));
-    const novel = current.filter((name) => !beforeSet.has(name));
-    if (novel.length === 0) return null;
-    novel.sort();
-    return path.join(logDir, novel[novel.length - 1]);
-  } catch {
-    return null;
-  }
-}
-
 export function getMiniMaxAvailability(cwd) {
-  return binaryAvailable(MINI_AGENT_BIN, ["--version"], { cwd });
+  return binaryAvailable(MMX_BIN, ["--version"], { cwd });
 }
 
 export async function getMiniMaxAuthStatus(cwd) {
-  const config = readMiniMaxConfig();
-  if (!config.api_key || config.api_key === "YOUR_API_KEY_HERE") {
-    return { loggedIn: false, detail: "api_key is placeholder or missing" };
-  }
-
-  const result = await runMiniMaxPrompt({
-    prompt: "ping",
+  const result = runCommand(MMX_BIN, ["auth", "status", "--output", "json", "--non-interactive"], {
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS,
   });
 
+  if (result.error) {
+    return { loggedIn: false, detail: result.error.message };
+  }
+  if (result.status !== 0) {
+    return { loggedIn: false, detail: result.stderr.trim() || `mmx auth status exited with code ${result.status}` };
+  }
+
+  const text = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {}
+  const loggedIn = parsed
+    ? parsed.authenticated === true || parsed.loggedIn === true || parsed.status === "authenticated"
+    : /\b(authenticated|logged in|ok)\b/i.test(text);
+
   return {
-    loggedIn: result.ok,
-    detail: result.ok ? "authenticated" : result.error,
-    model: config.model,
-    apiBase: config.api_base,
+    loggedIn,
+    detail: loggedIn ? "authenticated" : (text || "mmx auth status did not report authenticated"),
+    model: parsed?.model ?? null,
+  };
+}
+
+export function extractMiniMaxResponseFromMmxJson(text) {
+  const raw = String(text ?? "").trim();
+  if (!raw) {
+    return { response: "", finishReason: null, toolCalls: [] };
+  }
+  let value = null;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return { response: stripAnsiSgr(raw), finishReason: null, toolCalls: [] };
+  }
+
+  const choice = Array.isArray(value.choices) ? value.choices[0] : null;
+  const message = choice?.message ?? choice?.delta ?? null;
+  const contentText = Array.isArray(value.content)
+    ? value.content
+      .filter((part) => part?.type === "text" && typeof part.text === "string")
+      .map((part) => part.text)
+      .join("")
+    : "";
+  const response = typeof value.content === "string"
+    ? value.content
+    : typeof value.response === "string"
+      ? value.response
+      : typeof value.text === "string"
+        ? value.text
+        : contentText || (typeof message?.content === "string" ? message.content : "");
+  const finishReason = value.finish_reason ?? value.finishReason ?? choice?.finish_reason ?? null;
+  const toolCalls = Array.isArray(value.tool_calls)
+    ? value.tool_calls
+    : Array.isArray(message?.tool_calls)
+      ? message.tool_calls
+      : [];
+
+  return {
+    response,
+    finishReason,
+    toolCalls,
+    ...(typeof value.model === "string" ? { model: value.model } : {}),
   };
 }
 
 export function runMiniMaxPrompt({
   prompt,
+  model = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
   defaultModel = null,
   env = process.env,
-  onProgressLine,
-  bin = MINI_AGENT_BIN,
+  bin = MMX_BIN,
   spawnImpl,
 } = {}) {
   return new Promise((resolve) => {
-    const beforeLogs = snapshotLogDir(MINI_AGENT_LOG_DIR);
-    const invocation = buildMiniMaxInvocation({ prompt, cwd, extraArgs, bin });
-    let logPath = null;
-
-    const handleStdoutLine = (line) => {
-      const clean = stripAnsiSgr(line);
-      if (!logPath) logPath = extractMiniMaxLogPath(clean);
-      if (typeof onProgressLine === "function") {
-        try { onProgressLine(clean); } catch {}
-      }
-    };
+    const invocation = buildMiniMaxInvocation({ prompt, model, extraArgs, bin });
 
     spawnStreamingCommand({
       bin: invocation.bin,
@@ -223,22 +229,21 @@ export function runMiniMaxPrompt({
       timeout,
       stdio: ["ignore", "pipe", "pipe"],
       spawnImpl,
-      onStdoutLine: handleStdoutLine,
+      onStdoutLine() {},
     }).then((result) => {
       try {
-        const effectiveLogPath = logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR);
-        const parsed = effectiveLogPath && fs.existsSync(effectiveLogPath)
-          ? extractMiniMaxResponseFromLogText(fs.readFileSync(effectiveLogPath, "utf8"))
-          : { response: "", finishReason: null, toolCalls: [] };
-
-        const resolvedModel = parsed.model ?? defaultModel ?? readMiniMaxConfig().model ?? null;
+        const parsed = extractMiniMaxResponseFromMmxJson(result.stdout);
+        const resolvedModel = parsed.model ?? model ?? defaultModel ?? null;
+        const hasVisibleText = Boolean(parsed.response.trim());
         resolve({
           ...result,
-          logPath: effectiveLogPath,
+          logPath: null,
           ...parsed,
           model: resolvedModel,
-          ok: result.ok && Boolean(parsed.response.trim()),
-          error: result.ok && parsed.response.trim() ? null : result.error,
+          ok: result.ok && hasVisibleText,
+          error: result.ok && hasVisibleText
+            ? null
+            : (result.error || result.stderr.trim() || "minimax produced no visible text"),
         });
       } catch (error) {
         resolve({
@@ -251,7 +256,8 @@ export function runMiniMaxPrompt({
           response: "",
           finishReason: null,
           toolCalls: [],
-          logPath: logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR),
+          logPath: null,
+          model: model ?? defaultModel ?? null,
           error: error.message,
         });
       }
@@ -266,7 +272,8 @@ export function runMiniMaxPrompt({
         response: "",
         finishReason: null,
         toolCalls: [],
-        logPath: logPath || diffLogSnapshot(beforeLogs, MINI_AGENT_LOG_DIR),
+        logPath: null,
+        model: model ?? defaultModel ?? null,
         error: error.message,
       });
     });
@@ -275,17 +282,20 @@ export function runMiniMaxPrompt({
 
 export async function runMiniMaxPromptStreaming({
   prompt,
+  model = null,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
   extraArgs = [],
   defaultModel = null,
   env = process.env,
   onEvent = () => {},
-  bin = MINI_AGENT_BIN,
+  bin = MMX_BIN,
   spawnImpl,
 } = {}) {
+  const events = [];
   return runMiniMaxPrompt({
     prompt,
+    model,
     cwd,
     timeout,
     extraArgs,
@@ -293,19 +303,18 @@ export async function runMiniMaxPromptStreaming({
     env,
     bin,
     spawnImpl,
-    onProgressLine(line) {
-      try { onEvent({ type: "progress", text: line }); } catch {}
-    },
   }).then((result) => {
     try {
-      onEvent({
+      const event = {
         type: "result",
         response: result.response,
         finishReason: result.finishReason,
         toolCalls: result.toolCalls,
         model: result.model ?? null,
-      });
+      };
+      events.push(event);
+      onEvent(event);
     } catch {}
-    return result;
+    return { ...result, events };
   });
 }

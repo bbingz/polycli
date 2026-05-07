@@ -18,6 +18,7 @@
     "validate:host-map": "node scripts/validate-host-command-map.mjs",
     "validate:codex-adapter": "node scripts/validate-codex-adapter.mjs",
     "check:review-drift": "node scripts/check-review-cli-drift.mjs",
+    "check:provider-paths": "node scripts/check-review-cli-drift.mjs",
     "pack:codex": "VERSION=$(node -p \"require('./plugins/polycli-codex/.codex-plugin/plugin.json').version\") && mkdir -p dist && tar -czf dist/polycli-codex-$VERSION.tgz -C plugins polycli-codex",
     "pack:opencode": "mkdir -p dist && npm pack ./plugins/polycli-opencode --pack-destination dist",
     "pack:utils": "mkdir -p dist && npm pack ./packages/polycli-utils --pack-destination dist",

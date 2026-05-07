@@ -12,18 +12,6 @@ import {
   normalizeReviewScope,
 } from "../lib/review.mjs";
 
-function buildMiniMaxReviewConfig(baseConfigText) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-minimax-base-"));
-  const baseConfigPath = path.join(root, "config.yaml");
-  fs.writeFileSync(baseConfigPath, baseConfigText, "utf8");
-  const options = buildReviewRuntimeOptions({
-    provider: "minimax",
-    cwd: process.cwd(),
-    env: { ...process.env, MINI_AGENT_CONFIG_PATH: baseConfigPath },
-  });
-  return fs.readFileSync(options.env.MINI_AGENT_CONFIG_PATH, "utf8");
-}
-
 test("normalizeReviewScope defaults to auto and rejects bad values", () => {
   assert.equal(normalizeReviewScope(undefined), "auto");
   assert.equal(normalizeReviewScope("staged"), "staged");
@@ -67,7 +55,22 @@ test("buildReviewRuntimeOptions applies claude hard constraints", () => {
     cwd: process.cwd(),
   });
 
-  assert.deepEqual(options.extraArgs, ["--max-turns", "1", "--tools", ""]);
+  assert.equal(options.maxTurns, 1);
+  assert.deepEqual(options.extraArgs, ["--tools", "", "--mcp-config", "{\"mcpServers\":{}}", "--strict-mcp-config"]);
+});
+
+test("buildReviewRuntimeOptions keeps qwen multi-turn but excludes tools", () => {
+  const options = buildReviewRuntimeOptions({
+    provider: "qwen",
+    cwd: process.cwd(),
+  });
+
+  assert.equal(options.approvalMode, "plan");
+  assert.equal(options.maxSteps, undefined);
+  assert.equal(options.appendSystem.includes("visible final markdown answer"), true);
+  assert.equal(options.extraArgs.filter((arg) => arg === "--exclude-tools").length > 0, true);
+  assert.equal(options.extraArgs.includes("exit_plan_mode"), true);
+  assert.equal(options.extraArgs.includes("read_file"), true);
 });
 
 test("buildReviewRuntimeOptions isolates gemini review without policy", () => {
@@ -95,6 +98,9 @@ test("buildReviewRuntimeOptions applies copilot tool-exclusion hard constraints"
     cwd: process.cwd(),
   });
 
+  assert.equal(options.allowAllTools, false);
+  assert.equal(options.allowAllPaths, false);
+  assert.equal(options.allowAllUrls, false);
   const excludedIndex = options.extraArgs.indexOf("--excluded-tools");
   assert.notEqual(excludedIndex, -1);
   assert.match(options.extraArgs[excludedIndex + 1], /apply_patch/);
@@ -134,7 +140,8 @@ test("buildReviewRuntimeOptions applies pi hard constraints", () => {
     cwd: process.cwd(),
   });
 
-  assert.deepEqual(options.extraArgs, ["--no-tools"]);
+  assert.equal(options.noSession, true);
+  assert.deepEqual(options.extraArgs, ["--no-tools", "--no-extensions", "--no-skills", "--no-context-files"]);
 });
 
 test("buildReviewRuntimeOptions applies cmd plan-mode hard constraints", () => {
@@ -146,114 +153,16 @@ test("buildReviewRuntimeOptions applies cmd plan-mode hard constraints", () => {
   assert.deepEqual(options.extraArgs, ["--permission-mode", "plan"]);
 });
 
-test("buildReviewRuntimeOptions writes a tool-disabled minimax config override", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-minimax-"));
-  const baseConfigPath = path.join(root, "config.yaml");
-  fs.writeFileSync(
-    baseConfigPath,
-    [
-      'api_key: "test-key"',
-      'api_base: "https://api.example.test"',
-      'model: "MiniMax-M1"',
-      'provider: "anthropic"',
-    ].join("\n"),
-    "utf8"
-  );
-
+test("buildReviewRuntimeOptions leaves minimax on mmx text chat defaults", () => {
   const options = buildReviewRuntimeOptions({
     provider: "minimax",
     cwd: process.cwd(),
-    env: { ...process.env, MINI_AGENT_CONFIG_PATH: baseConfigPath },
+    env: {
+      SECRET_TOKEN: "do-not-persist",
+    },
   });
 
-  const configText = fs.readFileSync(options.env.MINI_AGENT_CONFIG_PATH, "utf8");
-  assert.match(configText, /enable_file_tools: false/);
-  assert.match(configText, /enable_bash: false/);
-  assert.match(configText, /enable_note: false/);
-  assert.match(configText, /enable_skills: false/);
-  assert.match(configText, /enable_mcp: false/);
-});
-
-test("buildReviewRuntimeOptions does not persist parent env for minimax review jobs", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-minimax-"));
-  const baseConfigPath = path.join(root, "config.yaml");
-  fs.writeFileSync(baseConfigPath, "provider: minimax\nmodel: MiniMax-M1\n", "utf8");
-
-  try {
-    const options = buildReviewRuntimeOptions({
-      provider: "minimax",
-      cwd: process.cwd(),
-      env: {
-        MINI_AGENT_CONFIG_PATH: baseConfigPath,
-        SECRET_TOKEN: "do-not-persist",
-      },
-    });
-
-    assert.deepEqual(Object.keys(options.env), ["MINI_AGENT_CONFIG_PATH"]);
-    assert.notEqual(options.env.MINI_AGENT_CONFIG_PATH, baseConfigPath);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("buildReviewRuntimeOptions reads minimax YAML scalar forms", () => {
-  const configText = buildMiniMaxReviewConfig([
-    "# comment before scalar",
-    "api_key: plain-key",
-    'api_base: "https://api with spaces.example.test"',
-    "model: 'MiniMax M2'",
-    "provider: anthropic",
-  ].join("\n"));
-
-  assert.match(configText, /api_key: "plain-key"/);
-  assert.match(configText, /api_base: "https:\/\/api with spaces\.example\.test"/);
-  assert.match(configText, /model: "MiniMax M2"/);
-  assert.match(configText, /provider: "anthropic"/);
-});
-
-test("buildReviewRuntimeOptions rejects unsupported minimax YAML block scalars", () => {
-  assert.throws(
-    () => buildMiniMaxReviewConfig([
-      "api_key: |",
-      "  secret",
-    ].join("\n")),
-    /Unsupported YAML block scalar for 'api_key'/i
-  );
-});
-
-test("buildReviewRuntimeOptions rejects malformed minimax YAML lines", () => {
-  assert.throws(
-    () => buildMiniMaxReviewConfig([
-      "api_key: plain-key",
-      "this is not yaml",
-    ].join("\n")),
-    /Malformed YAML line/i
-  );
-});
-
-test("review temp files are removed on process exit", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-child-base-"));
-  const baseConfigPath = path.join(root, "config.yaml");
-  fs.writeFileSync(baseConfigPath, "api_key: test-key\n", "utf8");
-  const reviewModulePath = path.resolve("plugins/polycli/scripts/lib/review.mjs");
-  const script = `
-import { pathToFileURL } from "node:url";
-const { buildReviewRuntimeOptions } = await import(pathToFileURL(${JSON.stringify(reviewModulePath)}).href);
-const options = buildReviewRuntimeOptions({
-  provider: "minimax",
-  cwd: process.cwd(),
-  env: { ...process.env, MINI_AGENT_CONFIG_PATH: process.env.TEST_MINIMAX_CONFIG_PATH },
-});
-console.log(options.env.MINI_AGENT_CONFIG_PATH);
-`;
-
-  const stdout = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
-    cwd: process.cwd(),
-    env: { ...process.env, TEST_MINIMAX_CONFIG_PATH: baseConfigPath },
-    encoding: "utf8",
-  });
-  const generatedConfigPath = stdout.trim().split(/\r?\n/).at(-1);
-  assert.equal(fs.existsSync(path.dirname(generatedConfigPath)), false);
+  assert.deepEqual(options, {});
 });
 
 test("buildReviewRuntimeOptions rejects conflicting user overrides", () => {

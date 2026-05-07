@@ -1,9 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
@@ -15,14 +12,83 @@ import {
   stripAnsiSgr,
 } from "../src/index.js";
 
-test("buildMiniMaxInvocation targets mini-agent task mode", () => {
+test("buildMiniMaxInvocation targets mmx text chat in non-interactive json mode", () => {
   const invocation = buildMiniMaxInvocation({
     prompt: "fix the bug",
     cwd: "/tmp/project",
     extraArgs: ["--model", "MiniMax-M1"],
   });
 
-  assert.deepEqual(invocation.args, ["-t", "fix the bug", "-w", "/tmp/project", "--model", "MiniMax-M1"]);
+  assert.deepEqual(invocation.args, [
+    "text",
+    "chat",
+    "--message",
+    "fix the bug",
+    "--output",
+    "json",
+    "--non-interactive",
+    "--model",
+    "MiniMax-M1",
+  ]);
+});
+
+test("runMiniMaxPrompt parses mmx json responses without log files", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runMiniMaxPrompt({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", `${JSON.stringify({
+          model: "MiniMax-M2.7",
+          choices: [{ message: { content: "pong" }, finish_reason: "stop" }],
+        })}\n`);
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.response, "pong");
+  assert.equal(result.finishReason, "stop");
+  assert.equal(result.model, "MiniMax-M2.7");
+});
+
+test("runMiniMaxPrompt parses real mmx content arrays and ignores auth notices on success", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runMiniMaxPrompt({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stderr.emit("data", "API key saved to /Users/example/.mmx/config.json\n");
+        child.stdout.emit("data", `${JSON.stringify({
+          model: "MiniMax-M2.7",
+          content: [
+            { type: "thinking", thinking: "hidden chain of thought" },
+            { type: "text", text: "pong" },
+          ],
+          stop_reason: "end_turn",
+        })}\n`);
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.response, "pong");
+  assert.equal(result.error, null);
+  assert.equal(result.model, "MiniMax-M2.7");
 });
 
 test("minimax log helpers extract response blocks and sanitize ansi", () => {
@@ -75,7 +141,7 @@ test("runMiniMaxPrompt returns a structured failure on spawn error", async () =>
     defaultModel: "minimax-fallback",
     spawnImpl() {
       queueMicrotask(() => {
-        const error = new Error("spawn mini-agent ENOENT");
+        const error = new Error("spawn mmx ENOENT");
         error.code = "ENOENT";
         child.emit("error", error);
       });
@@ -88,33 +154,26 @@ test("runMiniMaxPrompt returns a structured failure on spawn error", async () =>
   assert.equal(result.model, "minimax-fallback");
 });
 
-test("runMiniMaxPrompt resolves a failure when the discovered log path is unreadable", async () => {
+test("runMiniMaxPrompt reports empty mmx output as no visible text", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.stdin = { write() {}, end() {}, on() {} };
   child.kill = () => {};
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-minimax-bad-log-"));
-  const badLogDir = path.join(root, "bad.log");
-  fs.mkdirSync(badLogDir);
 
-  try {
-    const result = await runMiniMaxPrompt({
-      prompt: "ping",
-      spawnImpl() {
-        queueMicrotask(() => {
-          child.stdout.emit("data", `Log file: ${badLogDir}\n`);
-          child.emit("close", 0, null);
-        });
-        return child;
-      },
-    });
+  const result = await runMiniMaxPrompt({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", `${JSON.stringify({ choices: [{ message: { content: "" } }] })}\n`);
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
 
-    assert.equal(result.ok, false);
-    assert.match(result.error, /EISDIR|illegal operation|operation on a directory/i);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+  assert.equal(result.ok, false);
+  assert.match(result.error, /minimax produced no visible text/i);
 });
 
 test("minimax helpers replay a captured real cli fixture", () => {

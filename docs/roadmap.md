@@ -50,6 +50,7 @@ Current guardrails:
 - `scripts/tests/open-source-packaging.test.mjs` verifies public package export targets, license files, and explicit publish surfaces.
 - GitHub Actions runs Node 20 install, audit, tests, generated-bundle validation, fixture metadata validation, release manifest validation, host-map validation, Codex adapter validation, and tarball dry-runs.
 - `npm run check:review-drift` watches provider review hard-constraint flags that can be checked from local CLI help.
+- `npm run check:provider-paths` is the periodic provider-path review command; keep it aligned with `docs/provider-paths.md`.
 
 Watch items:
 
@@ -75,6 +76,23 @@ Phase plan:
 Sequencing rule: do not start TUI implementation until the headless CLI and run ledger can answer why a provider was adopted, skipped, or failed.
 
 Spec 1 released in v0.6.7 (2026-05-07): terminal package wrapper (`@bbingz/polycli` on npm), shared `debug` companion vocabulary (`debug runs/show/explain`), and redacted run ledger foundation (per-workspace NDJSON with `--run-id` / `POLYCLI_RUN_ID`). Spec 2 + Spec 3 released in v0.6.8 (2026-05-07): background-worker ledger plumbing (parent persists `runContext` into the per-job config and writes `job_started` after spawn; `_job-worker` writes `attempt_started` / `attempt_result` / `provider_decision` against the originating `runId`) and the read-only `polycli tui` inspector (run list, provider matrix, event timeline, detail / explanation / repro panes; renders `started` / `attempt_started` without a terminal `attempt_result` / `provider_decision` as `unfinished` / `unknown` rather than inventing a result; real-pty `q` exit fixed by explicit stdin resume). Post-v0.6.8 hardening adds scan-on-read dead-worker recovery for missing terminal ledger events and TUI rendering of local log-file pointers without reading log contents.
+
+### Q7 — Provider capability and path reference matrix
+
+Source: 2026-05-07 user question — "can we attach a credible standardized benchmark to polycli docs so Claude (Code) routes to the right provider per task?"
+
+Status: landed as a conservative path table, not a benchmark oracle. The durable table is `docs/provider-paths.md`; review it monthly, before release, and whenever provider CLIs or local model defaults change.
+
+Survey verdict (durable; do not re-survey unless these benchmarks change):
+
+- All credible benchmarks are **model-level**; polycli is **CLI-level**. `pi` / `opencode` / `cmd` route to user-configured backends, so any "provider X excels at Y" claim only holds under "default upstream model" assumption — must be banner-disclaimed.
+- A real routing oracle would push polycli toward framework — violates Path B. Acceptable form is a reference matrix banner-tagged "reference only, not routing oracle".
+- Cite only: **Aider Polyglot** ([leaderboard](https://aider.chat/docs/leaderboards/), fairest cross-vendor code-edit comparison), **Terminal-Bench 2.0** ([leaderboard](https://www.tbench.ai/leaderboard), only official horizontal eval covering Claude Code / Codex CLI / Gemini CLI — but [5pp+ docker infra noise per Anthropic](https://www.anthropic.com/engineering/infrastructure-noise)), **Artificial Analysis Intelligence Index** ([models](https://artificialanalysis.ai/models), third-party weighted composite).
+- Do **not** cite: LMArena Elo (chat preference, not CLI), SWE-bench Verified single score (OpenAI publicly disputes contamination), third-party blog comparisons (no published task set), CMMLU / C-Eval / SuperCLUE (knowledge focus, not agentic CLI).
+- Every number must carry vendor system card / official GitHub / official blog URL + date — public web search is currently SEO-polluted with fabricated future versions.
+- Landing place: `docs/provider-paths.md`, cross-linked from `docs/polycli-v1-public-surface.md`.
+
+Memory: `project_provider_capability_matrix_deferred.md`; updated by the 2026-05-07 provider-path implementation.
 
 ---
 

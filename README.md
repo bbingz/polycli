@@ -22,7 +22,7 @@
 
 ## What is polycli?
 
-`polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, **`cmd`** (Command Code), and **`mini-agent`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing`, `debug`, background-job controls, and terminal inspection — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
+`polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, **`cmd`** (Command Code), and **`mmx-cli`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing`, `debug`, background-job controls, and terminal inspection — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
 
 > **polycli is primarily an in-host plugin.** Each host adapter exposes the same `health / ask / review / rescue / timing / debug` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, an installed `polycli` skill in Codex). For environments without a supported host, the optional `@bbingz/polycli` terminal package adds a PATH-callable wrapper around the same companion. See [Outside a supported host](#outside-a-supported-host).
 
@@ -64,7 +64,7 @@ Workflows where bare-shell has **no equivalent at all** (adversarial-review, bac
 
 | Hosts (where polycli is installed) | Providers (what polycli can call) |
 |---|---|
-| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `mini-agent` |
+| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `minimax` (`mmx-cli`) |
 
 See [Capability matrix](#capability-matrix) for what each provider supports.
 
@@ -184,7 +184,7 @@ Source of truth: [`packages/polycli-runtime/src/registry.js`](./packages/polycli
 | `gemini` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `kimi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `qwen` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `mini-agent` | ✓ | — | — | — | — | — | — |
+| `minimax` (`mmx-cli`) | ✓ | — | ✓ | — | — | — | — |
 | `opencode` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `pi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `cmd` | ✓ | — | — | ✓ | ✓ | ✓ | — |
@@ -192,7 +192,7 @@ Source of truth: [`packages/polycli-runtime/src/registry.js`](./packages/polycli
 Notes:
 
 - `cold` and `retry` are `unsupported` for every provider. Upstream CLIs lack a stable signal, and polycli refuses to fake them. `total` is always `measured`.
-- `mini-agent` uses log replay; no session resume, no structured output, no fine-grained streaming timing. `cmd` uses documented Command Code headless mode, where each invocation is a standalone session and stdout is the visible answer.
+- `minimax` uses official `mmx text chat --output json --non-interactive`; no session resume and no fine-grained streaming timing. `cmd` uses documented Command Code headless mode, where each invocation is a standalone session and stdout is the visible answer.
 - Only `qwen` declares `tool: true`. When no tool is invoked, `qwen` reports `missing` (observable but absent); the others report `unsupported` (capability-level not tracked). The two states are not interchangeable.
 
 ## Timing semantics
