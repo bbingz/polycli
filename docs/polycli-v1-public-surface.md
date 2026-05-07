@@ -98,3 +98,112 @@ Non-goals for this package:
 ## Runtime And Provider Split
 
 This keeps v1 small, testable, and publishable without pretending the provider model is a public framework.
+
+## Run Ledger Debug Examples
+
+The redacted, append-only run ledger lets `polycli debug` answer "what happened in this run, and why was that provider not adopted?" without re-running the provider. The two narratives below come from the original Codex multi-provider failure case (Q6 source) and are reproducible from the persisted ledger alone.
+
+### Pin a multi-provider run to one `runId`
+
+Use `--run-id` (or `POLYCLI_RUN_ID`) so a sequence of `health` / `ask` / `review` calls share one ledger run:
+
+```bash
+polycli health --provider cmd --json --run-id run-demo
+polycli ask --provider cmd --run-id run-demo "..."
+polycli ask --provider cmd --run-id run-demo "..."
+polycli health --provider pi --json --run-id run-demo
+```
+
+`debug runs` lists ledger runs with their adopted/skipped/failed counts; `debug show` returns the raw events for one run; `debug explain` summarizes provider decisions:
+
+```bash
+polycli debug runs
+polycli debug show run-demo --json
+polycli debug explain run-demo
+```
+
+### Case 1 — `cmd` health passed, but two `ask` attempts failed
+
+Narrative shape of `debug show run-demo --json` for the `cmd` portion of the run (event values redacted to schema slots, not real provider output):
+
+```json
+{
+  "phase": "health_result",
+  "provider": "cmd",
+  "status": "passed",
+  "reason": "health_passed"
+}
+{
+  "phase": "provider_decision",
+  "provider": "cmd",
+  "status": "passed",
+  "reason": "health_passed"
+}
+{
+  "phase": "attempt_started",
+  "provider": "cmd",
+  "kind": "ask",
+  "attempt": { "ordinal": 1 }
+}
+{
+  "phase": "attempt_result",
+  "provider": "cmd",
+  "kind": "ask",
+  "status": "failed",
+  "stdoutBytes": 0,
+  "stderrBytes": 0,
+  "preview": null,
+  "error": { "message": "<short error preview>" }
+}
+{
+  "phase": "provider_decision",
+  "provider": "cmd",
+  "status": "failed",
+  "reason": "ask_failed"
+}
+```
+
+A second `ask` attempt produces another `attempt_started` / `attempt_result status=failed` / `provider_decision status=failed reason=ask_failed` triple. Two failed `provider_decision` events for `cmd` mean it was not adopted, even though `health` passed first.
+
+`debug explain run-demo` collapses the decisions into one line per `(provider, status, reason)`:
+
+```text
+cmd passed (health_passed)
+cmd failed (ask_failed)
+cmd failed (ask_failed)
+```
+
+### Case 2 — `pi` health failed, so it was skipped before any prompt-bearing work
+
+For the `pi` portion of the same run:
+
+```json
+{
+  "phase": "health_result",
+  "provider": "pi",
+  "status": "failed",
+  "reason": "health_failed",
+  "error": { "message": "<short error preview>" }
+}
+{
+  "phase": "provider_decision",
+  "provider": "pi",
+  "status": "skipped",
+  "reason": "health_failed"
+}
+```
+
+There are no `attempt_started` / `attempt_result` events for `pi` because `health` failed before any `ask` / `review` / `rescue` was issued. `debug explain` will only show:
+
+```text
+pi skipped (health_failed)
+```
+
+### Field-shape reminders
+
+The ledger is intentionally narrow:
+
+- `argv` is redacted: prompt and focus positionals collapse to `<prompt:redacted>`, secret-bearing options collapse to `<secret:redacted>`. `provider`, `model`, `json`, `background`, and `run-id` stay visible.
+- Full prompt text, full stdout/stderr, and environment variables are never persisted. Failure reasoning uses `preview`, `stdoutBytes`, `stderrBytes`, and a truncated `error.message`.
+- Background-job runs add `job_started` (parent) and worker-side `attempt_started` / `attempt_result` / `provider_decision` events under the same `runId` and `jobId`.
+- Worker-observed cancellation produces `attempt_result status=cancelled` plus `provider_decision status=cancelled reason=job_cancelled`.

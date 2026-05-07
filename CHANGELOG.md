@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — docs: run ledger failure examples
+
+- Added "Run ledger debug examples" section to `docs/polycli-v1-public-surface.md`, covering the original Q6 narrative: `cmd` health passed but two `ask` attempts failed (not adopted); `pi` health failed and was skipped before any prompt-bearing work. Examples use `polycli debug runs / show / explain` and reference event-schema slots, not invented live provider output.
+- Closed the "Add docs examples for the concrete failure case" item in `tasks/terminal-cli-tui-observability.md`.
+- Docs-only; no source change, no rebuild, no version bump, no tag, no publish.
+
 ## 2026-05-07 — Claude — background-job ledger plumbing (Q6 Spec 2)
 
 - Parent process now persists a top-level `runContext` (runId / command / hostSurface / argv / jobId / provider / kind / model / defaultModel / logFile) into the per-job config when `--run-id` (or `POLYCLI_RUN_ID`) is in scope.
