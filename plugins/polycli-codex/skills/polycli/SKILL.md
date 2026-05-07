@@ -27,8 +27,8 @@ Supported subcommands:
 - `health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]`
 - `ask --provider <provider> [--model <model>] [--background] [--json] <prompt>`
 - `rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>`
-- `review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--json] [focus ...]`
-- `adversarial-review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--json] [focus ...]`
+- `review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--max-diff-bytes <n>] [--json] [focus ...]`
+- `adversarial-review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--max-diff-bytes <n>] [--json] [focus ...]`
 - `status [job-id] [--all] [--wait] [--timeout-ms <ms>] [--json]`
 - `result [job-id] [--json]`
 - `cancel [job-id] [--json]`
