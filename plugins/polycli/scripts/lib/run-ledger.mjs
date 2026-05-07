@@ -188,7 +188,7 @@ export function createRunLedgerEvent(event = {}) {
   };
 }
 
-export async function appendRunLedgerEvent(workspaceRoot, event) {
+export function appendRunLedgerEvent(workspaceRoot, event) {
   const file = resolveRunLedgerFile(workspaceRoot);
   const workspaceSlug = workspaceRoot ? computeWorkspaceSlug(workspaceRoot) : null;
   const full = createRunLedgerEvent({
@@ -200,7 +200,7 @@ export async function appendRunLedgerEvent(workspaceRoot, event) {
   return full;
 }
 
-export async function readRunLedgerEvents(workspaceRoot) {
+export function readRunLedgerEvents(workspaceRoot) {
   const file = resolveRunLedgerFile(workspaceRoot);
   return readNdjson(file);
 }

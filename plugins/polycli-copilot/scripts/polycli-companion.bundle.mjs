@@ -3747,8 +3747,8 @@ async function runProviderPromptStreaming({
 }
 
 // plugins/polycli/scripts/lib/job-control.mjs
-import fs4 from "node:fs";
-import process3 from "node:process";
+import fs6 from "node:fs";
+import process4 from "node:process";
 
 // plugins/polycli/scripts/lib/state.mjs
 import crypto from "node:crypto";
@@ -4077,6 +4077,450 @@ function removeJobConfigFile(workspaceRoot, jobId) {
   }
 }
 
+// plugins/polycli/scripts/lib/run-ledger.mjs
+import { randomUUID } from "node:crypto";
+import path5 from "node:path";
+
+// packages/polycli-utils/src/ndjson.js
+import fs5 from "node:fs";
+
+// packages/polycli-utils/src/atomic-save.js
+import crypto2 from "node:crypto";
+import fs4 from "node:fs";
+import path4 from "node:path";
+import process3 from "node:process";
+var LockfileTimeoutError = class extends Error {
+  constructor(lockPath, timeoutMs) {
+    super(`Timed out acquiring lockfile ${lockPath} after ${timeoutMs}ms`);
+    this.code = "ELOCKTIMEOUT";
+    this.lockPath = lockPath;
+    this.timeoutMs = timeoutMs;
+  }
+};
+function sleepSync2(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function ensureParentDir(filePath) {
+  fs4.mkdirSync(path4.dirname(filePath), { recursive: true });
+}
+function normalizeWriteOptions(options) {
+  if (typeof options === "string") {
+    return {
+      flag: "w",
+      mode: 438,
+      writeOptions: options
+    };
+  }
+  if (options && typeof options === "object") {
+    const { flag = "w", mode = 438, ...writeOptions } = options;
+    return {
+      flag,
+      mode,
+      writeOptions: Object.keys(writeOptions).length > 0 ? writeOptions : void 0
+    };
+  }
+  return {
+    flag: "w",
+    mode: 438,
+    writeOptions: void 0
+  };
+}
+function writeFileAtomicSync(filePath, contents, options = {}) {
+  ensureParentDir(filePath);
+  const tmpPath = `${filePath}.tmp.${process3.pid}.${Date.now()}.${crypto2.randomUUID()}`;
+  const { flag, mode, writeOptions } = normalizeWriteOptions(options);
+  const fd = fs4.openSync(tmpPath, flag, mode);
+  try {
+    fs4.writeFileSync(fd, contents, writeOptions);
+    fs4.fsyncSync(fd);
+  } finally {
+    fs4.closeSync(fd);
+  }
+  fs4.renameSync(tmpPath, filePath);
+  const dirFd = fs4.openSync(path4.dirname(filePath), "r");
+  try {
+    fs4.fsyncSync(dirFd);
+  } catch (error) {
+    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
+      throw error;
+    }
+  } finally {
+    fs4.closeSync(dirFd);
+  }
+}
+function writeFileAtomic(filePath, contents, options = {}) {
+  writeFileAtomicSync(filePath, contents, options);
+  return filePath;
+}
+function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 25 } = {}) {
+  ensureParentDir(lockPath);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const fd = fs4.openSync(
+        lockPath,
+        fs4.constants.O_CREAT | fs4.constants.O_EXCL | fs4.constants.O_WRONLY,
+        384
+      );
+      try {
+        fs4.writeFileSync(fd, JSON.stringify({ pid: process3.pid, acquiredAt: Date.now() }), "utf8");
+        fs4.fsyncSync(fd);
+      } finally {
+        fs4.closeSync(fd);
+      }
+      try {
+        return fn();
+      } finally {
+        try {
+          fs4.unlinkSync(lockPath);
+        } catch {
+        }
+      }
+    } catch (error) {
+      if (error.code !== "EEXIST") {
+        throw error;
+      }
+      try {
+        const lock = JSON.parse(fs4.readFileSync(lockPath, "utf8"));
+        const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
+        const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
+        const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
+        let ownerAlive = false;
+        if (pid != null) {
+          try {
+            process3.kill(pid, 0);
+            ownerAlive = true;
+          } catch (killError) {
+            if (killError.code === "ESRCH") {
+              fs4.unlinkSync(lockPath);
+              continue;
+            }
+            if (killError.code !== "EPERM") {
+              throw killError;
+            }
+            ownerAlive = true;
+          }
+        }
+        if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
+          fs4.unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      sleepSync2(pollMs);
+    }
+  }
+  throw new LockfileTimeoutError(lockPath, timeoutMs);
+}
+
+// packages/polycli-utils/src/ndjson.js
+function safeParseLine(line) {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+function readNdjson(filePath) {
+  let text;
+  try {
+    text = fs5.readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+  if (text.length === 0) {
+    return [];
+  }
+  const records = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parsed = safeParseLine(trimmed);
+    if (parsed != null) {
+      records.push(parsed);
+    }
+  }
+  return records;
+}
+function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs = 25, maxBytes = null, keepRatio = 0.5 } = {}) {
+  const lockPath = `${filePath}.lock`;
+  return withLockfile2(lockPath, () => {
+    ensureParentDir(filePath);
+    let needsLeadingNewline = false;
+    try {
+      const stat = fs5.statSync(filePath);
+      if (stat.size > 0) {
+        const fd = fs5.openSync(filePath, "r");
+        const lastByte = Buffer.alloc(1);
+        try {
+          fs5.readSync(fd, lastByte, 0, 1, stat.size - 1);
+        } finally {
+          fs5.closeSync(fd);
+        }
+        needsLeadingNewline = lastByte[0] !== 10;
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}
+`;
+    fs5.appendFileSync(filePath, line, "utf8");
+    if (maxBytes != null) {
+      const stat = fs5.statSync(filePath);
+      if (stat.size > maxBytes) {
+        const lines = fs5.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
+        const valid = lines.filter((entry) => safeParseLine(entry) != null);
+        const keepFrom = Math.floor(valid.length * (1 - keepRatio));
+        const kept = valid.slice(keepFrom);
+        writeFileAtomic(filePath, `${kept.join("\n")}
+`, "utf8");
+      }
+    }
+    return true;
+  }, { timeoutMs, staleMs, pollMs });
+}
+
+// plugins/polycli/scripts/lib/run-ledger.mjs
+var MAX_LEDGER_BYTES = 2e6;
+var KEEP_RATIO = 0.5;
+var RUN_ID_RE = /^[A-Za-z0-9_.-]{1,96}$/;
+var SECRET_LONG_OPT_RE = /(token|secret|password|api-?key|access-?key|credential)/i;
+var SECRET_ENV_KEY_RE = /(TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_KEY|CREDENTIAL)/i;
+var PROMPT_COMMANDS = /* @__PURE__ */ new Set(["ask", "rescue", "review", "adversarial-review"]);
+var VALUE_OPTIONS = /* @__PURE__ */ new Set([
+  "--provider",
+  "--model",
+  "--base",
+  "--scope",
+  "--resume",
+  "--effort",
+  "--run-id",
+  "--timeout-ms",
+  "--history"
+]);
+var SHORT_VALUE_OPTIONS = /* @__PURE__ */ new Set(["-m"]);
+var FOCUS_VALUE_OPTIONS = /* @__PURE__ */ new Set(["--focus"]);
+var VALID_HOST_SURFACES = /* @__PURE__ */ new Set([
+  "terminal",
+  "claude-plugin",
+  "codex-skill",
+  "copilot-skill",
+  "opencode-plugin",
+  "unknown"
+]);
+function resolveRunLedgerFile(workspaceRoot) {
+  return path5.join(resolveStateDir(workspaceRoot), "run-ledger.ndjson");
+}
+function createRunId() {
+  return `run_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+}
+function resolveRunId(options = {}, env = process.env) {
+  const runId = options.runId || env.POLYCLI_RUN_ID || createRunId();
+  if (!RUN_ID_RE.test(runId)) {
+    throw new Error(`Invalid run id: ${runId}`);
+  }
+  return runId;
+}
+function resolveHostSurface(env = process.env, companionUrl = import.meta.url) {
+  if (VALID_HOST_SURFACES.has(env.POLYCLI_HOST_SURFACE)) return env.POLYCLI_HOST_SURFACE;
+  if (env.CLAUDE_PLUGIN_ROOT) return "claude-plugin";
+  if (companionUrl.includes("polycli-codex")) return "codex-skill";
+  if (companionUrl.includes("polycli-copilot")) return "copilot-skill";
+  if (companionUrl.includes("polycli-opencode")) return "opencode-plugin";
+  return "unknown";
+}
+function stripRunIdArgs(argv) {
+  const next = [];
+  let runId = null;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--run-id") {
+      runId = argv[i + 1] || "";
+      i += 1;
+      continue;
+    }
+    if (typeof arg === "string" && arg.startsWith("--run-id=")) {
+      runId = arg.slice("--run-id=".length);
+      continue;
+    }
+    next.push(arg);
+  }
+  return { argv: next, runId };
+}
+function redactInlineValue(arg) {
+  const eq = arg.indexOf("=");
+  if (eq === -1) return arg;
+  const key = arg.slice(0, eq);
+  if (key.startsWith("--") && SECRET_LONG_OPT_RE.test(key)) {
+    return `${key}=<secret:redacted>`;
+  }
+  if (!key.startsWith("--") && SECRET_ENV_KEY_RE.test(key)) {
+    return `${key}=<secret:redacted>`;
+  }
+  return arg;
+}
+function redactArgv(argv, { command } = {}) {
+  const redacted = [];
+  const isPromptCommand = PROMPT_COMMANDS.has(command);
+  let sawSubcommand = false;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (typeof arg !== "string") {
+      redacted.push(arg);
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      if (arg.includes("=")) {
+        redacted.push(redactInlineValue(arg));
+        continue;
+      }
+      redacted.push(arg);
+      const hasNext = i + 1 < argv.length;
+      if (!hasNext) continue;
+      if (SECRET_LONG_OPT_RE.test(arg)) {
+        redacted.push("<secret:redacted>");
+        i += 1;
+        continue;
+      }
+      if (FOCUS_VALUE_OPTIONS.has(arg) && (command === "review" || command === "adversarial-review")) {
+        redacted.push("<prompt:redacted>");
+        i += 1;
+        continue;
+      }
+      if (VALUE_OPTIONS.has(arg)) {
+        redacted.push(argv[i + 1]);
+        i += 1;
+        continue;
+      }
+      continue;
+    }
+    if (arg.startsWith("-") && arg.length > 1) {
+      redacted.push(arg);
+      if (SHORT_VALUE_OPTIONS.has(arg) && i + 1 < argv.length) {
+        redacted.push(argv[i + 1]);
+        i += 1;
+      }
+      continue;
+    }
+    if (!sawSubcommand && command && arg === command) {
+      sawSubcommand = true;
+      redacted.push(arg);
+      continue;
+    }
+    const inlineRedacted = redactInlineValue(arg);
+    if (inlineRedacted !== arg) {
+      redacted.push(inlineRedacted);
+      continue;
+    }
+    if (isPromptCommand) {
+      redacted.push("<prompt:redacted>");
+      continue;
+    }
+    redacted.push(arg);
+  }
+  return redacted;
+}
+function createRunLedgerEvent(event = {}) {
+  const at = event.at || (/* @__PURE__ */ new Date()).toISOString();
+  const command = event.command || null;
+  const commands = [...new Set(event.commands || (command ? [command] : []))].filter(Boolean).sort();
+  return {
+    version: 1,
+    eventId: event.eventId || `evt_${randomUUID().replaceAll("-", "").slice(0, 20)}`,
+    at,
+    runId: event.runId || null,
+    workspaceRoot: event.workspaceRoot || null,
+    workspaceSlug: event.workspaceSlug || null,
+    kind: event.kind || event.command || null,
+    provider: event.provider ?? null,
+    reason: event.reason ?? null,
+    attempt: event.attempt ?? null,
+    jobId: event.jobId ?? null,
+    model: event.model ?? null,
+    defaultModel: event.defaultModel ?? null,
+    timingRef: event.timingRef ?? null,
+    error: event.error ?? null,
+    preview: event.preview ?? null,
+    stdoutBytes: event.stdoutBytes ?? null,
+    stderrBytes: event.stderrBytes ?? null,
+    durationMs: event.durationMs ?? null,
+    pid: event.pid ?? null,
+    logFile: event.logFile ?? null,
+    argv: event.argv || [],
+    command,
+    commands,
+    status: event.status,
+    phase: event.phase,
+    hostSurface: event.hostSurface || "unknown"
+  };
+}
+function appendRunLedgerEvent(workspaceRoot, event) {
+  const file = resolveRunLedgerFile(workspaceRoot);
+  const workspaceSlug = workspaceRoot ? computeWorkspaceSlug(workspaceRoot) : null;
+  const full = createRunLedgerEvent({
+    ...event,
+    workspaceRoot: workspaceRoot ?? event.workspaceRoot ?? null,
+    workspaceSlug: event.workspaceSlug ?? workspaceSlug
+  });
+  appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO });
+  return full;
+}
+function readRunLedgerEvents(workspaceRoot) {
+  const file = resolveRunLedgerFile(workspaceRoot);
+  return readNdjson(file);
+}
+function groupRunLedgerEvents(events) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const event of events) {
+    if (!event?.runId) continue;
+    const group = groups.get(event.runId) || { runId: event.runId, commands: [], events: [] };
+    group.events.push(event);
+    group.commands = [
+      ...new Set([...group.commands, ...event.commands || [], event.command].filter(Boolean))
+    ].sort();
+    groups.set(event.runId, group);
+  }
+  for (const group of groups.values()) {
+    group.events.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  }
+  return groups;
+}
+function summarizeRunLedger(events) {
+  return [...groupRunLedgerEvents(events).values()].map((group) => {
+    const decisions = group.events.filter(
+      (event) => event.phase === "provider_decision" && event.provider
+    );
+    return {
+      runId: group.runId,
+      commands: group.commands,
+      startedAt: group.events[0]?.at || null,
+      updatedAt: group.events.at(-1)?.at || null,
+      providerCount: new Set(decisions.map((event) => event.provider)).size,
+      adoptedCount: decisions.filter((event) => event.status === "adopted").length,
+      skippedCount: decisions.filter((event) => event.status === "skipped").length,
+      failedCount: decisions.filter((event) => event.status === "failed").length
+    };
+  });
+}
+function buildRunExplanation(events, runId) {
+  const group = groupRunLedgerEvents(events).get(runId);
+  if (!group) {
+    return { runId, found: false, text: `Run ${runId} was not found.`, events: [] };
+  }
+  const decisions = group.events.filter((event) => event.phase === "provider_decision");
+  const lines = decisions.map(
+    (event) => `${event.provider || "run"} ${event.status}${event.reason ? ` (${event.reason})` : ""}`
+  );
+  return { runId, found: true, text: lines.join("\n"), events: group.events };
+}
+
 // plugins/polycli/scripts/lib/job-control.mjs
 var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["queued", "running"]);
 var TERMINAL_STATUSES = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
@@ -4084,7 +4528,7 @@ var DEFAULT_STATUS_LIMIT = 8;
 function isProcessAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
-    process3.kill(pid, 0);
+    process4.kill(pid, 0);
     return true;
   } catch {
     return false;
@@ -4096,7 +4540,7 @@ function sortJobsNewestFirst(jobs) {
 function readProgressPreview(logFile, maxLines = 4) {
   if (!logFile) return "";
   try {
-    const lines = fs4.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const lines = fs6.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return lines.slice(-maxLines).join("\n");
   } catch {
     return "";
@@ -4109,6 +4553,61 @@ function enrichJob(workspaceRoot, job) {
     progressPreview: readProgressPreview(job.logFile),
     result: envelope?.result ?? null
   };
+}
+function hasLedgerPhase(events, runId, jobId, phase) {
+  return events.some((event) => event.runId === runId && event.jobId === jobId && event.phase === phase);
+}
+function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason = "worker_exited" } = {}) {
+  const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
+  const runContext = config?.runContext;
+  if (!runContext?.runId) return;
+  const events = readRunLedgerEvents(workspaceRoot);
+  const command = runContext.command || config?.execution?.kind || job.kind || null;
+  const provider = runContext.provider || config?.execution?.provider || job.provider || null;
+  const kind = runContext.kind || config?.execution?.kind || job.kind || command;
+  const status = result?.ok ? "completed" : "failed";
+  const decisionStatus = result?.ok ? "adopted" : "failed";
+  const decisionReason = result?.ok ? null : reason;
+  const errorMessage = result?.ok ? null : result?.error || job.error || "worker exited before writing a result envelope";
+  const base = {
+    runId: runContext.runId,
+    command,
+    commands: command ? [command] : [],
+    kind,
+    provider,
+    jobId: job.jobId,
+    model: result?.model || runContext.model || config?.execution?.model || job.model || null,
+    defaultModel: result?.defaultModel || runContext.defaultModel || config?.execution?.defaultModel || null,
+    hostSurface: runContext.hostSurface || "unknown",
+    logFile: runContext.logFile || job.logFile || null
+  };
+  if (!hasLedgerPhase(events, runContext.runId, job.jobId, "attempt_result")) {
+    appendRunLedgerEvent(workspaceRoot, {
+      ...base,
+      phase: "attempt_result",
+      status,
+      reason,
+      attempt: { ordinal: 1 },
+      preview: result?.response ? String(result.response).slice(0, 180) : null,
+      stdoutBytes: result?.stdoutBytes ?? null,
+      stderrBytes: result?.stderrBytes ?? null,
+      timingRef: result?.timing ? {
+        provider: result.timing.provider,
+        kind: result.timing.kind,
+        completedAt: result.timing.completedAt
+      } : null,
+      error: errorMessage ? { message: String(errorMessage).slice(0, 300) } : null
+    });
+  }
+  if (!hasLedgerPhase(events, runContext.runId, job.jobId, "provider_decision")) {
+    appendRunLedgerEvent(workspaceRoot, {
+      ...base,
+      phase: "provider_decision",
+      status: decisionStatus,
+      reason: decisionReason
+    });
+  }
+  removeJobConfigFile(workspaceRoot, job.jobId);
 }
 function refreshJob(workspaceRoot, job) {
   if (!job || !ACTIVE_STATUSES.has(job.status)) {
@@ -4125,6 +4624,7 @@ function refreshJob(workspaceRoot, job) {
       pid: null
     };
     upsertJob(workspaceRoot, finalized);
+    recoverLedgerTerminalEvents(workspaceRoot, finalized, { result: envelope.result || null, reason: `${finalized.kind || job.kind}_failed` });
     return enrichJob(workspaceRoot, finalized);
   }
   const failed = {
@@ -4139,6 +4639,10 @@ function refreshJob(workspaceRoot, job) {
     job: failed,
     result: { ok: false, error: failed.error }
   });
+  recoverLedgerTerminalEvents(workspaceRoot, failed, {
+    result: { ok: false, error: failed.error },
+    reason: "worker_exited"
+  });
   return enrichJob(workspaceRoot, failed);
 }
 function buildStatusSnapshot(workspaceRoot, { showAll = false } = {}) {
@@ -4149,6 +4653,9 @@ function buildStatusSnapshot(workspaceRoot, { showAll = false } = {}) {
     running: limited.filter((job) => ACTIVE_STATUSES.has(job.status)),
     recent: limited.filter((job) => TERMINAL_STATUSES.has(job.status))
   };
+}
+function refreshJobsForLedgerRecovery(workspaceRoot) {
+  return sortJobsNewestFirst(listJobs(workspaceRoot)).map((job) => refreshJob(workspaceRoot, job));
 }
 function resolveJobReference(workspaceRoot, reference, predicate = () => true) {
   const candidates = sortJobsNewestFirst(listJobs(workspaceRoot)).filter(predicate);
@@ -4289,10 +4796,10 @@ function resolveProvider({ provider, positionals = [] } = {}) {
 }
 
 // plugins/polycli/scripts/lib/review.mjs
-import fs5 from "node:fs";
+import fs7 from "node:fs";
 import os4 from "node:os";
-import path4 from "node:path";
-import { randomUUID } from "node:crypto";
+import path6 from "node:path";
+import { randomUUID as randomUUID2 } from "node:crypto";
 var DEFAULT_MAX_DIFF_BYTES = 2e5;
 var REVIEW_SCOPES = /* @__PURE__ */ new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
 var REVIEW_APPEND_SYSTEM = "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
@@ -4326,7 +4833,7 @@ var reviewTempDirs = /* @__PURE__ */ new Set();
 process.once("exit", () => {
   for (const dir of reviewTempDirs) {
     try {
-      fs5.rmSync(dir, { recursive: true, force: true });
+      fs7.rmSync(dir, { recursive: true, force: true });
     } catch {
     }
   }
@@ -4342,14 +4849,14 @@ function git(cwd, args) {
   return runCommand("git", args, { cwd });
 }
 function writeReviewTempFile(prefix, extension, text) {
-  const root = fs5.mkdtempSync(path4.join(os4.tmpdir(), `polycli-review-${prefix}-`));
+  const root = fs7.mkdtempSync(path6.join(os4.tmpdir(), `polycli-review-${prefix}-`));
   reviewTempDirs.add(root);
-  const filePath = path4.join(root, `${prefix}-${randomUUID()}${extension}`);
-  fs5.writeFileSync(filePath, text, "utf8");
+  const filePath = path6.join(root, `${prefix}-${randomUUID2()}${extension}`);
+  fs7.writeFileSync(filePath, text, "utf8");
   return filePath;
 }
 function makeReviewTempDir(prefix) {
-  return fs5.mkdtempSync(path4.join(os4.tmpdir(), `polycli-review-${prefix}-`));
+  return fs7.mkdtempSync(path6.join(os4.tmpdir(), `polycli-review-${prefix}-`));
 }
 function findSingleQuotedScalarEnd(raw) {
   for (let index = 1; index < raw.length; index += 1) {
@@ -4455,10 +4962,10 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   }
 }
 function buildMiniMaxReviewEnv(parentEnv = process.env) {
-  const baseConfigPath = parentEnv.MINI_AGENT_CONFIG_PATH || path4.join(os4.homedir(), ".mini-agent", "config", "config.yaml");
+  const baseConfigPath = parentEnv.MINI_AGENT_CONFIG_PATH || path6.join(os4.homedir(), ".mini-agent", "config", "config.yaml");
   let baseConfigText = "";
   try {
-    baseConfigText = fs5.readFileSync(baseConfigPath, "utf8");
+    baseConfigText = fs7.readFileSync(baseConfigPath, "utf8");
   } catch {
   }
   const lines = [];
@@ -4674,219 +5181,11 @@ function buildReviewPrompt({
 }
 
 // plugins/polycli/scripts/lib/timing.mjs
-import path6 from "node:path";
-
-// packages/polycli-utils/src/ndjson.js
-import fs7 from "node:fs";
-
-// packages/polycli-utils/src/atomic-save.js
-import crypto2 from "node:crypto";
-import fs6 from "node:fs";
-import path5 from "node:path";
-import process4 from "node:process";
-var LockfileTimeoutError = class extends Error {
-  constructor(lockPath, timeoutMs) {
-    super(`Timed out acquiring lockfile ${lockPath} after ${timeoutMs}ms`);
-    this.code = "ELOCKTIMEOUT";
-    this.lockPath = lockPath;
-    this.timeoutMs = timeoutMs;
-  }
-};
-function sleepSync2(ms) {
-  if (ms <= 0) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-function ensureParentDir(filePath) {
-  fs6.mkdirSync(path5.dirname(filePath), { recursive: true });
-}
-function normalizeWriteOptions(options) {
-  if (typeof options === "string") {
-    return {
-      flag: "w",
-      mode: 438,
-      writeOptions: options
-    };
-  }
-  if (options && typeof options === "object") {
-    const { flag = "w", mode = 438, ...writeOptions } = options;
-    return {
-      flag,
-      mode,
-      writeOptions: Object.keys(writeOptions).length > 0 ? writeOptions : void 0
-    };
-  }
-  return {
-    flag: "w",
-    mode: 438,
-    writeOptions: void 0
-  };
-}
-function writeFileAtomicSync(filePath, contents, options = {}) {
-  ensureParentDir(filePath);
-  const tmpPath = `${filePath}.tmp.${process4.pid}.${Date.now()}.${crypto2.randomUUID()}`;
-  const { flag, mode, writeOptions } = normalizeWriteOptions(options);
-  const fd = fs6.openSync(tmpPath, flag, mode);
-  try {
-    fs6.writeFileSync(fd, contents, writeOptions);
-    fs6.fsyncSync(fd);
-  } finally {
-    fs6.closeSync(fd);
-  }
-  fs6.renameSync(tmpPath, filePath);
-  const dirFd = fs6.openSync(path5.dirname(filePath), "r");
-  try {
-    fs6.fsyncSync(dirFd);
-  } catch (error) {
-    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
-      throw error;
-    }
-  } finally {
-    fs6.closeSync(dirFd);
-  }
-}
-function writeFileAtomic(filePath, contents, options = {}) {
-  writeFileAtomicSync(filePath, contents, options);
-  return filePath;
-}
-function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 25 } = {}) {
-  ensureParentDir(lockPath);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const fd = fs6.openSync(
-        lockPath,
-        fs6.constants.O_CREAT | fs6.constants.O_EXCL | fs6.constants.O_WRONLY,
-        384
-      );
-      try {
-        fs6.writeFileSync(fd, JSON.stringify({ pid: process4.pid, acquiredAt: Date.now() }), "utf8");
-        fs6.fsyncSync(fd);
-      } finally {
-        fs6.closeSync(fd);
-      }
-      try {
-        return fn();
-      } finally {
-        try {
-          fs6.unlinkSync(lockPath);
-        } catch {
-        }
-      }
-    } catch (error) {
-      if (error.code !== "EEXIST") {
-        throw error;
-      }
-      try {
-        const lock = JSON.parse(fs6.readFileSync(lockPath, "utf8"));
-        const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
-        const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
-        const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
-        let ownerAlive = false;
-        if (pid != null) {
-          try {
-            process4.kill(pid, 0);
-            ownerAlive = true;
-          } catch (killError) {
-            if (killError.code === "ESRCH") {
-              fs6.unlinkSync(lockPath);
-              continue;
-            }
-            if (killError.code !== "EPERM") {
-              throw killError;
-            }
-            ownerAlive = true;
-          }
-        }
-        if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
-          fs6.unlinkSync(lockPath);
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      sleepSync2(pollMs);
-    }
-  }
-  throw new LockfileTimeoutError(lockPath, timeoutMs);
-}
-
-// packages/polycli-utils/src/ndjson.js
-function safeParseLine(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
-function readNdjson(filePath) {
-  let text;
-  try {
-    text = fs7.readFileSync(filePath, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-  if (text.length === 0) {
-    return [];
-  }
-  const records = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const parsed = safeParseLine(trimmed);
-    if (parsed != null) {
-      records.push(parsed);
-    }
-  }
-  return records;
-}
-function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs = 25, maxBytes = null, keepRatio = 0.5 } = {}) {
-  const lockPath = `${filePath}.lock`;
-  return withLockfile2(lockPath, () => {
-    ensureParentDir(filePath);
-    let needsLeadingNewline = false;
-    try {
-      const stat = fs7.statSync(filePath);
-      if (stat.size > 0) {
-        const fd = fs7.openSync(filePath, "r");
-        const lastByte = Buffer.alloc(1);
-        try {
-          fs7.readSync(fd, lastByte, 0, 1, stat.size - 1);
-        } finally {
-          fs7.closeSync(fd);
-        }
-        needsLeadingNewline = lastByte[0] !== 10;
-      }
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        throw error;
-      }
-    }
-    const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}
-`;
-    fs7.appendFileSync(filePath, line, "utf8");
-    if (maxBytes != null) {
-      const stat = fs7.statSync(filePath);
-      if (stat.size > maxBytes) {
-        const lines = fs7.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
-        const valid = lines.filter((entry) => safeParseLine(entry) != null);
-        const keepFrom = Math.floor(valid.length * (1 - keepRatio));
-        const kept = valid.slice(keepFrom);
-        writeFileAtomic(filePath, `${kept.join("\n")}
-`, "utf8");
-      }
-    }
-    return true;
-  }, { timeoutMs, staleMs, pollMs });
-}
-
-// plugins/polycli/scripts/lib/timing.mjs
+import path7 from "node:path";
 var TIMING_FILE_NAME = "timings.ndjson";
 var MAX_TIMING_BYTES = 2e6;
 function resolveTimingHistoryFile(workspaceRoot) {
-  return path6.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
+  return path7.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
 }
 function appendTimingRecord(workspaceRoot, record) {
   const validation = validateTimingRecord(record);
@@ -5008,242 +5307,6 @@ function appendPreview(logFile, provider, event, { fsImpl = fs8, tailCache = PRE
   fsImpl.appendFileSync(logFile, `${lines.join("\n")}
 `, "utf8");
   tailCache.set(logFile, [...currentTail, ...lines].slice(-PREVIEW_MAX_LINES));
-}
-
-// plugins/polycli/scripts/lib/run-ledger.mjs
-import { randomUUID as randomUUID2 } from "node:crypto";
-import path7 from "node:path";
-var MAX_LEDGER_BYTES = 2e6;
-var KEEP_RATIO = 0.5;
-var RUN_ID_RE = /^[A-Za-z0-9_.-]{1,96}$/;
-var SECRET_LONG_OPT_RE = /(token|secret|password|api-?key|access-?key|credential)/i;
-var SECRET_ENV_KEY_RE = /(TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_KEY|CREDENTIAL)/i;
-var PROMPT_COMMANDS = /* @__PURE__ */ new Set(["ask", "rescue", "review", "adversarial-review"]);
-var VALUE_OPTIONS = /* @__PURE__ */ new Set([
-  "--provider",
-  "--model",
-  "--base",
-  "--scope",
-  "--resume",
-  "--effort",
-  "--run-id",
-  "--timeout-ms",
-  "--history"
-]);
-var SHORT_VALUE_OPTIONS = /* @__PURE__ */ new Set(["-m"]);
-var FOCUS_VALUE_OPTIONS = /* @__PURE__ */ new Set(["--focus"]);
-var VALID_HOST_SURFACES = /* @__PURE__ */ new Set([
-  "terminal",
-  "claude-plugin",
-  "codex-skill",
-  "copilot-skill",
-  "opencode-plugin",
-  "unknown"
-]);
-function resolveRunLedgerFile(workspaceRoot) {
-  return path7.join(resolveStateDir(workspaceRoot), "run-ledger.ndjson");
-}
-function createRunId() {
-  return `run_${randomUUID2().replaceAll("-", "").slice(0, 20)}`;
-}
-function resolveRunId(options = {}, env = process.env) {
-  const runId = options.runId || env.POLYCLI_RUN_ID || createRunId();
-  if (!RUN_ID_RE.test(runId)) {
-    throw new Error(`Invalid run id: ${runId}`);
-  }
-  return runId;
-}
-function resolveHostSurface(env = process.env, companionUrl = import.meta.url) {
-  if (VALID_HOST_SURFACES.has(env.POLYCLI_HOST_SURFACE)) return env.POLYCLI_HOST_SURFACE;
-  if (env.CLAUDE_PLUGIN_ROOT) return "claude-plugin";
-  if (companionUrl.includes("polycli-codex")) return "codex-skill";
-  if (companionUrl.includes("polycli-copilot")) return "copilot-skill";
-  if (companionUrl.includes("polycli-opencode")) return "opencode-plugin";
-  return "unknown";
-}
-function stripRunIdArgs(argv) {
-  const next = [];
-  let runId = null;
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === "--run-id") {
-      runId = argv[i + 1] || "";
-      i += 1;
-      continue;
-    }
-    if (typeof arg === "string" && arg.startsWith("--run-id=")) {
-      runId = arg.slice("--run-id=".length);
-      continue;
-    }
-    next.push(arg);
-  }
-  return { argv: next, runId };
-}
-function redactInlineValue(arg) {
-  const eq = arg.indexOf("=");
-  if (eq === -1) return arg;
-  const key = arg.slice(0, eq);
-  if (key.startsWith("--") && SECRET_LONG_OPT_RE.test(key)) {
-    return `${key}=<secret:redacted>`;
-  }
-  if (!key.startsWith("--") && SECRET_ENV_KEY_RE.test(key)) {
-    return `${key}=<secret:redacted>`;
-  }
-  return arg;
-}
-function redactArgv(argv, { command } = {}) {
-  const redacted = [];
-  const isPromptCommand = PROMPT_COMMANDS.has(command);
-  let sawSubcommand = false;
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (typeof arg !== "string") {
-      redacted.push(arg);
-      continue;
-    }
-    if (arg.startsWith("--")) {
-      if (arg.includes("=")) {
-        redacted.push(redactInlineValue(arg));
-        continue;
-      }
-      redacted.push(arg);
-      const hasNext = i + 1 < argv.length;
-      if (!hasNext) continue;
-      if (SECRET_LONG_OPT_RE.test(arg)) {
-        redacted.push("<secret:redacted>");
-        i += 1;
-        continue;
-      }
-      if (FOCUS_VALUE_OPTIONS.has(arg) && (command === "review" || command === "adversarial-review")) {
-        redacted.push("<prompt:redacted>");
-        i += 1;
-        continue;
-      }
-      if (VALUE_OPTIONS.has(arg)) {
-        redacted.push(argv[i + 1]);
-        i += 1;
-        continue;
-      }
-      continue;
-    }
-    if (arg.startsWith("-") && arg.length > 1) {
-      redacted.push(arg);
-      if (SHORT_VALUE_OPTIONS.has(arg) && i + 1 < argv.length) {
-        redacted.push(argv[i + 1]);
-        i += 1;
-      }
-      continue;
-    }
-    if (!sawSubcommand && command && arg === command) {
-      sawSubcommand = true;
-      redacted.push(arg);
-      continue;
-    }
-    const inlineRedacted = redactInlineValue(arg);
-    if (inlineRedacted !== arg) {
-      redacted.push(inlineRedacted);
-      continue;
-    }
-    if (isPromptCommand) {
-      redacted.push("<prompt:redacted>");
-      continue;
-    }
-    redacted.push(arg);
-  }
-  return redacted;
-}
-function createRunLedgerEvent(event = {}) {
-  const at = event.at || (/* @__PURE__ */ new Date()).toISOString();
-  const command = event.command || null;
-  const commands = [...new Set(event.commands || (command ? [command] : []))].filter(Boolean).sort();
-  return {
-    version: 1,
-    eventId: event.eventId || `evt_${randomUUID2().replaceAll("-", "").slice(0, 20)}`,
-    at,
-    runId: event.runId || null,
-    workspaceRoot: event.workspaceRoot || null,
-    workspaceSlug: event.workspaceSlug || null,
-    kind: event.kind || event.command || null,
-    provider: event.provider ?? null,
-    reason: event.reason ?? null,
-    attempt: event.attempt ?? null,
-    jobId: event.jobId ?? null,
-    model: event.model ?? null,
-    defaultModel: event.defaultModel ?? null,
-    timingRef: event.timingRef ?? null,
-    error: event.error ?? null,
-    preview: event.preview ?? null,
-    stdoutBytes: event.stdoutBytes ?? null,
-    stderrBytes: event.stderrBytes ?? null,
-    durationMs: event.durationMs ?? null,
-    pid: event.pid ?? null,
-    logFile: event.logFile ?? null,
-    argv: event.argv || [],
-    command,
-    commands,
-    status: event.status,
-    phase: event.phase,
-    hostSurface: event.hostSurface || "unknown"
-  };
-}
-async function appendRunLedgerEvent(workspaceRoot, event) {
-  const file = resolveRunLedgerFile(workspaceRoot);
-  const workspaceSlug = workspaceRoot ? computeWorkspaceSlug(workspaceRoot) : null;
-  const full = createRunLedgerEvent({
-    ...event,
-    workspaceRoot: workspaceRoot ?? event.workspaceRoot ?? null,
-    workspaceSlug: event.workspaceSlug ?? workspaceSlug
-  });
-  appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO });
-  return full;
-}
-async function readRunLedgerEvents(workspaceRoot) {
-  const file = resolveRunLedgerFile(workspaceRoot);
-  return readNdjson(file);
-}
-function groupRunLedgerEvents(events) {
-  const groups = /* @__PURE__ */ new Map();
-  for (const event of events) {
-    if (!event?.runId) continue;
-    const group = groups.get(event.runId) || { runId: event.runId, commands: [], events: [] };
-    group.events.push(event);
-    group.commands = [
-      ...new Set([...group.commands, ...event.commands || [], event.command].filter(Boolean))
-    ].sort();
-    groups.set(event.runId, group);
-  }
-  for (const group of groups.values()) {
-    group.events.sort((a, b) => String(a.at).localeCompare(String(b.at)));
-  }
-  return groups;
-}
-function summarizeRunLedger(events) {
-  return [...groupRunLedgerEvents(events).values()].map((group) => {
-    const decisions = group.events.filter(
-      (event) => event.phase === "provider_decision" && event.provider
-    );
-    return {
-      runId: group.runId,
-      commands: group.commands,
-      startedAt: group.events[0]?.at || null,
-      updatedAt: group.events.at(-1)?.at || null,
-      providerCount: new Set(decisions.map((event) => event.provider)).size,
-      adoptedCount: decisions.filter((event) => event.status === "adopted").length,
-      skippedCount: decisions.filter((event) => event.status === "skipped").length,
-      failedCount: decisions.filter((event) => event.status === "failed").length
-    };
-  });
-}
-function buildRunExplanation(events, runId) {
-  const group = groupRunLedgerEvents(events).get(runId);
-  if (!group) {
-    return { runId, found: false, text: `Run ${runId} was not found.`, events: [] };
-  }
-  const decisions = group.events.filter((event) => event.phase === "provider_decision");
-  const lines = decisions.map(
-    (event) => `${event.provider || "run"} ${event.status}${event.reason ? ` (${event.reason})` : ""}`
-  );
-  return { runId, found: true, text: lines.join("\n"), events: group.events };
 }
 
 // plugins/polycli/scripts/polycli-companion.mjs
@@ -6540,6 +6603,7 @@ async function runDebugCommand(rawArgs) {
   });
   const subcommand = positionals[0] || "runs";
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  refreshJobsForLedgerRecovery(workspaceRoot);
   const events = await readRunLedgerEvents(workspaceRoot);
   const asJson = Boolean(options.json);
   if (subcommand === "runs") {

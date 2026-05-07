@@ -14,6 +14,7 @@ import {
   buildStatusSnapshot,
   cancelJob,
   refreshJob,
+  refreshJobsForLedgerRecovery,
   resolveJobReference,
   resolveLatestActiveJob,
   resolveLatestTerminalJob,
@@ -1466,6 +1467,7 @@ async function runDebugCommand(rawArgs) {
   });
   const subcommand = positionals[0] || "runs";
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
+  refreshJobsForLedgerRecovery(workspaceRoot);
   const events = await readRunLedgerEvents(workspaceRoot);
   const asJson = Boolean(options.json);
 

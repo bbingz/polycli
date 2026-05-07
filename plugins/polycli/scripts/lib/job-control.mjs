@@ -7,11 +7,18 @@ import {
   getJob,
   listJobs,
   readJobFile,
+  readJobConfigFile,
+  removeJobConfigFile,
+  resolveJobConfigFile,
   resolveJobFile,
   updateJobAtomically,
   writeJobFile,
   upsertJob,
 } from "./state.mjs";
+import {
+  appendRunLedgerEvent,
+  readRunLedgerEvents,
+} from "./run-ledger.mjs";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
@@ -55,6 +62,70 @@ function enrichJob(workspaceRoot, job) {
   };
 }
 
+function hasLedgerPhase(events, runId, jobId, phase) {
+  return events.some((event) => event.runId === runId && event.jobId === jobId && event.phase === phase);
+}
+
+function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason = "worker_exited" } = {}) {
+  const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
+  const runContext = config?.runContext;
+  if (!runContext?.runId) return;
+
+  const events = readRunLedgerEvents(workspaceRoot);
+  const command = runContext.command || config?.execution?.kind || job.kind || null;
+  const provider = runContext.provider || config?.execution?.provider || job.provider || null;
+  const kind = runContext.kind || config?.execution?.kind || job.kind || command;
+  const status = result?.ok ? "completed" : "failed";
+  const decisionStatus = result?.ok ? "adopted" : "failed";
+  const decisionReason = result?.ok ? null : reason;
+  const errorMessage = result?.ok ? null : (result?.error || job.error || "worker exited before writing a result envelope");
+
+  const base = {
+    runId: runContext.runId,
+    command,
+    commands: command ? [command] : [],
+    kind,
+    provider,
+    jobId: job.jobId,
+    model: result?.model || runContext.model || config?.execution?.model || job.model || null,
+    defaultModel: result?.defaultModel || runContext.defaultModel || config?.execution?.defaultModel || null,
+    hostSurface: runContext.hostSurface || "unknown",
+    logFile: runContext.logFile || job.logFile || null,
+  };
+
+  if (!hasLedgerPhase(events, runContext.runId, job.jobId, "attempt_result")) {
+    appendRunLedgerEvent(workspaceRoot, {
+      ...base,
+      phase: "attempt_result",
+      status,
+      reason,
+      attempt: { ordinal: 1 },
+      preview: result?.response ? String(result.response).slice(0, 180) : null,
+      stdoutBytes: result?.stdoutBytes ?? null,
+      stderrBytes: result?.stderrBytes ?? null,
+      timingRef: result?.timing
+        ? {
+          provider: result.timing.provider,
+          kind: result.timing.kind,
+          completedAt: result.timing.completedAt,
+        }
+        : null,
+      error: errorMessage ? { message: String(errorMessage).slice(0, 300) } : null,
+    });
+  }
+
+  if (!hasLedgerPhase(events, runContext.runId, job.jobId, "provider_decision")) {
+    appendRunLedgerEvent(workspaceRoot, {
+      ...base,
+      phase: "provider_decision",
+      status: decisionStatus,
+      reason: decisionReason,
+    });
+  }
+
+  removeJobConfigFile(workspaceRoot, job.jobId);
+}
+
 export function refreshJob(workspaceRoot, job) {
   if (!job || !ACTIVE_STATUSES.has(job.status)) {
     return job ? enrichJob(workspaceRoot, job) : null;
@@ -71,6 +142,7 @@ export function refreshJob(workspaceRoot, job) {
       pid: null,
     };
     upsertJob(workspaceRoot, finalized);
+    recoverLedgerTerminalEvents(workspaceRoot, finalized, { result: envelope.result || null, reason: `${finalized.kind || job.kind}_failed` });
     return enrichJob(workspaceRoot, finalized);
   }
 
@@ -86,6 +158,10 @@ export function refreshJob(workspaceRoot, job) {
     job: failed,
     result: { ok: false, error: failed.error },
   });
+  recoverLedgerTerminalEvents(workspaceRoot, failed, {
+    result: { ok: false, error: failed.error },
+    reason: "worker_exited",
+  });
   return enrichJob(workspaceRoot, failed);
 }
 
@@ -97,6 +173,10 @@ export function buildStatusSnapshot(workspaceRoot, { showAll = false } = {}) {
     running: limited.filter((job) => ACTIVE_STATUSES.has(job.status)),
     recent: limited.filter((job) => TERMINAL_STATUSES.has(job.status)),
   };
+}
+
+export function refreshJobsForLedgerRecovery(workspaceRoot) {
+  return sortJobsNewestFirst(listJobs(workspaceRoot)).map((job) => refreshJob(workspaceRoot, job));
 }
 
 export function resolveJobReference(workspaceRoot, reference, predicate = () => true) {

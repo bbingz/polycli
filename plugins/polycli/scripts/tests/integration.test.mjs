@@ -8,7 +8,14 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { createClaudeFixtureReplay } from "./helpers/fixture-replay.mjs";
-import { readLastUsedProvider, resolveWorkspaceRoot } from "../lib/state.mjs";
+import {
+  ensureStateDir,
+  readLastUsedProvider,
+  resolveJobLogFile,
+  resolveWorkspaceRoot,
+  upsertJob,
+  writeJobConfigFile,
+} from "../lib/state.mjs";
 import { appendRunLedgerEvent, readRunLedgerEvents } from "../lib/run-ledger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -2258,4 +2265,77 @@ test("integration: background worker preserves explicit POLYCLI_HOST_SURFACE", a
   for (const event of events) {
     assert.equal(event.hostSurface, "codex-skill", `event ${event.phase} hostSurface should be codex-skill`);
   }
+});
+
+test("integration: debug show recovers ledger terminal events for a dead background worker", async (t) => {
+  const context = createBackgroundLedgerContext(t);
+  const jobId = "job-debug-recover";
+  ensureStateDir(context.cwd);
+  const logFile = resolveJobLogFile(context.cwd, jobId);
+  fs.writeFileSync(logFile, "worker made progress before exit\n");
+  upsertJob(context.cwd, {
+    jobId,
+    provider: "qwen",
+    kind: "ask",
+    status: "running",
+    pid: 999999,
+    logFile,
+  });
+  writeJobConfigFile(context.cwd, jobId, {
+    workspaceRoot: context.cwd,
+    jobId,
+    execution: {
+      provider: "qwen",
+      kind: "ask",
+      model: "qwen-test",
+      defaultModel: "qwen-default",
+    },
+    runContext: {
+      runId: "run-debug-recover",
+      command: "ask",
+      hostSurface: "terminal",
+      rawArgs: ["ask", "--provider", "qwen", "<prompt:redacted>"],
+      jobId,
+      provider: "qwen",
+      kind: "ask",
+      model: "qwen-test",
+      defaultModel: "qwen-default",
+      logFile,
+    },
+  });
+  await appendRunLedgerEvent(context.cwd, {
+    runId: "run-debug-recover",
+    command: "ask",
+    commands: ["ask"],
+    kind: "ask",
+    provider: "qwen",
+    phase: "attempt_started",
+    status: "started",
+    jobId,
+    hostSurface: "terminal",
+    logFile,
+  });
+
+  const show = await runCompanion(["debug", "show", "run-debug-recover", "--json"], context);
+  assert.equal(show.code, 0, show.stderr);
+  const parsed = JSON.parse(show.stdout);
+  const terminalEvents = parsed.events.filter((event) =>
+    event.jobId === jobId && ["attempt_result", "provider_decision"].includes(event.phase),
+  );
+  assert.equal(terminalEvents.length, 2, JSON.stringify(parsed.events, null, 2));
+  assert.equal(terminalEvents.find((event) => event.phase === "attempt_result").status, "failed");
+  assert.equal(terminalEvents.find((event) => event.phase === "attempt_result").reason, "worker_exited");
+  assert.equal(terminalEvents.find((event) => event.phase === "provider_decision").reason, "worker_exited");
+
+  const showAgain = await runCompanion(["debug", "show", "run-debug-recover", "--json"], context);
+  assert.equal(showAgain.code, 0, showAgain.stderr);
+  const parsedAgain = JSON.parse(showAgain.stdout);
+  assert.equal(
+    parsedAgain.events.filter((event) => event.jobId === jobId && event.phase === "attempt_result").length,
+    1,
+  );
+  assert.equal(
+    parsedAgain.events.filter((event) => event.jobId === jobId && event.phase === "provider_decision").length,
+    1,
+  );
 });
