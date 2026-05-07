@@ -8,7 +8,7 @@ Wire background `_job-worker` executions into the existing redacted run ledger s
 
 ## Constraints
 
-- Stay inside `/Users/bing/-Code-/polycli`.
+- Stay inside the polycli repository root.
 - Keep provider adapters flat and explicit; do not add a provider framework.
 - Do not add a long-lived process.
 - Do not store full prompts, full stdout/stderr, env, or secrets in the ledger.
