@@ -22,7 +22,7 @@
 
 ## polycli 是什么？
 
-`polycli` 让你在 Claude Code、Codex、GitHub Copilot CLI 或 OpenCode 中，用同一套命令（`health`、`ask`、`review`、`rescue`、`timing`）驱动 9 个 AI coding CLI：**`claude`**、**`gemini`**、**`kimi`**、**`qwen`**、**`copilot`**、**`opencode`**、**`pi`**、**`cmd`**（Command Code）和 **`mini-agent`**（MiniMax）。
+`polycli` 让你在 Claude Code、Codex、GitHub Copilot CLI 或 OpenCode 中，用同一套命令（`health`、`ask`、`review`、`rescue`、`timing`、`debug`，以及后台作业管控和终端 inspector）驱动 9 个 AI coding CLI：**`claude`**、**`gemini`**、**`kimi`**、**`qwen`**、**`copilot`**、**`opencode`**、**`pi`**、**`cmd`**（Command Code）和 **`mini-agent`**（MiniMax）。
 
 这是一个 **utility-only 的 Path B monorepo**：不假装能抹平 provider 之间的差异，也不引入 runtime 基类。它把官方上游 CLI 作为子进程组合起来，统一命令面，并通过四态 timing schema 如实暴露能力差异。
 

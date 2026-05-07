@@ -22,7 +22,7 @@
 
 ## What is polycli?
 
-`polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, **`cmd`** (Command Code), and **`mini-agent`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing` — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
+`polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, **`cmd`** (Command Code), and **`mini-agent`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing`, `debug`, background-job controls, and terminal inspection — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
 
 > **polycli is primarily an in-host plugin.** Each host adapter exposes the same `health / ask / review / rescue / timing / debug` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, an installed `polycli` skill in Codex). For environments without a supported host, the optional `@bbingz/polycli` terminal package adds a PATH-callable wrapper around the same companion. See [Outside a supported host](#outside-a-supported-host).
 

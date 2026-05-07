@@ -22,7 +22,7 @@
 
 ## polycli とは？
 
-`polycli` は、Claude Code・Codex・GitHub Copilot CLI・OpenCode のいずれかのホスト上で、共通のコマンド (`health`・`ask`・`review`・`rescue`・`timing`) を使って 9 種類の AI コーディング CLI — **`claude`**・**`gemini`**・**`kimi`**・**`qwen`**・**`copilot`**・**`opencode`**・**`pi`**・**`cmd`** (Command Code)・**`mini-agent`** (MiniMax) — を操作できるツールです。
+`polycli` は、Claude Code・Codex・GitHub Copilot CLI・OpenCode のいずれかのホスト上で、共通のコマンド (`health`・`ask`・`review`・`rescue`・`timing`・`debug`、加えてバックグラウンドジョブ制御とターミナル inspector) を使って 9 種類の AI コーディング CLI — **`claude`**・**`gemini`**・**`kimi`**・**`qwen`**・**`copilot`**・**`opencode`**・**`pi`**・**`cmd`** (Command Code)・**`mini-agent`** (MiniMax) — を操作できるツールです。
 
 これは **ユーティリティ専用の Path B モノレポ** です。プロバイダ間の差異を偽の抽象化で覆い隠したり、ランタイム基底クラスを発明したりはしません。公式の上流 CLI をサブプロセスとして組み合わせ、単一のコマンド面を公開し、4 状態の timing スキーマで能力の違いを正直に表現します。
 
