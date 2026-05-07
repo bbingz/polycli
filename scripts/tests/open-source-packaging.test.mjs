@@ -71,7 +71,7 @@ test("terminal package exposes polycli bin and keeps runtime private", () => {
   const pkg = readJson("packages/polycli-terminal/package.json");
   assert.equal(pkg.name, "@bbingz/polycli");
   assert.equal(pkg.private, undefined);
-  assert.equal(pkg.bin?.polycli, "./bin/polycli.mjs");
+  assert.match(pkg.bin?.polycli ?? "", /^(?:\.\/)?bin\/polycli\.mjs$/);
   assert.ok(Array.isArray(pkg.files), "terminal package must declare files");
   assert.ok(pkg.files.includes("bin/polycli.mjs"), "terminal package must publish bin/polycli.mjs");
   assert.ok(

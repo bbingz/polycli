@@ -4,7 +4,7 @@
   "description": "Terminal CLI for Polycli provider diagnostics and host-compatible commands.",
   "type": "module",
   "bin": {
-    "polycli": "./bin/polycli.mjs"
+    "polycli": "bin/polycli.mjs"
   },
   "files": [
     "bin/polycli.mjs",
