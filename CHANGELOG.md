@@ -6,6 +6,11 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Codex — memory and Claude handoff closeout
+
+- Added project memory for the Q6 terminal CLI/TUI observability track, including v0.6.7/v0.6.8 shipped surfaces, post-v0.6.8 hardening, and the next `v0.6.9` release-prep handoff.
+- Added and pushed `docs/superpowers/plans/2026-05-07-claude-remaining-work-handoff.md` so Claude can fully take over remaining P0/P1/P2 work without reopening completed Q6 implementation scope.
+
 ## 2026-05-07 — Codex — Q6 phase 5-7 hardening closeout
 
 - Added scan-on-read dead-worker recovery for background runs with residual `runContext`; `debug runs/show/explain` refresh job state before reading the ledger and append missing terminal `attempt_result` / `provider_decision` events idempotently.
