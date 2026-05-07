@@ -2,7 +2,7 @@
 
 Date: 2026-05-07
 Owner handoff from: Codex
-Repo: `/Users/bing/-Code-/polycli`
+Repo: `bbingz/polycli`
 Current `main`: `25872cc632cc20d133af89d1c81c8c9f3d7d376e`
 Latest public release: `v0.6.8`
 
