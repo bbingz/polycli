@@ -11,6 +11,7 @@ const DEFAULT_TARGETS = [
   "plugins/polycli-codex/scripts/polycli-companion.bundle.mjs",
   "plugins/polycli-copilot/scripts/polycli-companion.bundle.mjs",
   "plugins/polycli-opencode/scripts/polycli-companion.bundle.mjs",
+  "packages/polycli-terminal/bin/polycli-companion.bundle.mjs",
 ];
 
 function readTarget(root, relativePath) {

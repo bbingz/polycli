@@ -1,6 +1,6 @@
 # Host Command Map
 
-polycli ships four host plugins. They expose the same ten capabilities, but each host's invocation surface is shaped by what the host can express — slash-commands, skill subcommands, tool calls. This document is the Rosetta stone.
+polycli ships four host plugins plus an optional standalone Terminal CLI. They expose the same eleven capabilities, but each host's invocation surface is shaped by what the host can express — slash-commands, skill subcommands, tool calls, or a PATH binary. This document is the Rosetta stone.
 
 If you are switching between hosts, read the first two sections (identity + sample command) and ignore the rest. If you are maintaining a host adapter, read the whole thing.
 
@@ -8,12 +8,13 @@ If you are switching between hosts, read the first two sections (identity + samp
 
 | host plugin          | host           | invocation style                      | example                                      |
 |----------------------|----------------|---------------------------------------|----------------------------------------------|
-| `polycli`            | Claude Code    | 10 slash commands                     | `/polycli:health`                            |
+| `polycli`            | Claude Code    | 11 slash commands                     | `/polycli:health`                            |
 | `polycli-codex`      | Codex          | 1 installed skill with subcommands    | `Choose Polycli with @, then ask it to run: health` |
 | `polycli-copilot`    | GitHub Copilot CLI | skill with subcommands (top-level) | `polycli health`                             |
 | `polycli-opencode`   | OpenCode       | 2 tool functions                      | `polycli_run(["health", "--json"])`          |
+| `@bbingz/polycli`    | Terminal CLI   | PATH binary                           | `polycli health`                             |
 
-All four dispatch to the same `polycli-companion.bundle.mjs` underneath. Differences are at the surface only; behavior, output format, exit codes, and `--json` shape are identical.
+All five dispatch to the same `polycli-companion.bundle.mjs` underneath. Differences are at the surface only; behavior, output format, exit codes, and `--json` shape are identical.
 
 Codex-specific rule: when the installed `polycli` skill from `polycli-codex` is available, prefer the skill over direct official CLI shell calls for `claude`, `copilot`, `opencode`, `pi`, `cmd`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell. Use `health`, `status`, `result`, and `timing` as the observable control plane around prompt-bearing work.
 
@@ -21,18 +22,19 @@ Codex-specific rule: when the installed `polycli` skill from `polycli-codex` is 
 
 All commands take the same flags regardless of host (see `node polycli-companion.bundle.mjs --help` or the subsections below). The mapping only describes invocation syntax.
 
-| capability            | Claude Code (`polycli`)               | Codex (`polycli-codex`)                     | Copilot (`polycli-copilot`) | OpenCode (`polycli-opencode`)                                  |
-|-----------------------|---------------------------------------|---------------------------------------------|------------------------------|----------------------------------------------------------------|
-| setup                 | `/polycli:setup`                      | `Choose Polycli with @, then ask it to run: setup` | `polycli setup`              | `polycli_run(["setup"])`                                       |
-| health                | `/polycli:health`                     | `Choose Polycli with @, then ask it to run: health` | `polycli health`             | `polycli_run(["health"])`                                      |
-| ask                   | `/polycli:ask`                        | `Choose Polycli with @, then ask it to run: ask` | `polycli ask`                | `polycli_run(["ask", ...])`                                    |
-| rescue                | `/polycli:rescue`                     | `Choose Polycli with @, then ask it to run: rescue` | `polycli rescue`             | `polycli_run(["rescue", ...])`                                 |
-| review                | `/polycli:review`                     | `Choose Polycli with @, then ask it to run: review` | `polycli review`             | `polycli_run(["review", ...])`                                 |
-| adversarial-review    | `/polycli:adversarial-review`         | `Choose Polycli with @, then ask it to run: adversarial-review` | `polycli adversarial-review` | `polycli_run(["adversarial-review", ...])`                     |
-| status                | `/polycli:status`                     | `Choose Polycli with @, then ask it to run: status` | `polycli status`             | `polycli_run(["status", ...])`                                 |
-| result                | `/polycli:result`                     | `Choose Polycli with @, then ask it to run: result` | `polycli result`             | `polycli_run(["result", ...])`                                 |
-| cancel                | `/polycli:cancel`                     | `Choose Polycli with @, then ask it to run: cancel` | `polycli cancel`             | `polycli_run(["cancel", ...])`                                 |
-| timing                | `/polycli:timing`                     | `Choose Polycli with @, then ask it to run: timing` | `polycli timing`             | `polycli_timing({provider, history, json})` **or** `polycli_run(["timing", ...])` |
+| capability            | Claude Code (`polycli`)               | Codex (`polycli-codex`)                     | Copilot (`polycli-copilot`) | OpenCode (`polycli-opencode`)                                  | Terminal CLI (`@bbingz/polycli`)        |
+|-----------------------|---------------------------------------|---------------------------------------------|------------------------------|----------------------------------------------------------------|------------------------------------------|
+| setup                 | `/polycli:setup`                      | `Choose Polycli with @, then ask it to run: setup` | `polycli setup`              | `polycli_run(["setup"])`                                       | `polycli setup`                          |
+| health                | `/polycli:health`                     | `Choose Polycli with @, then ask it to run: health` | `polycli health`             | `polycli_run(["health"])`                                      | `polycli health`                         |
+| ask                   | `/polycli:ask`                        | `Choose Polycli with @, then ask it to run: ask` | `polycli ask`                | `polycli_run(["ask", ...])`                                    | `polycli ask ...`                        |
+| rescue                | `/polycli:rescue`                     | `Choose Polycli with @, then ask it to run: rescue` | `polycli rescue`             | `polycli_run(["rescue", ...])`                                 | `polycli rescue ...`                     |
+| review                | `/polycli:review`                     | `Choose Polycli with @, then ask it to run: review` | `polycli review`             | `polycli_run(["review", ...])`                                 | `polycli review ...`                     |
+| adversarial-review    | `/polycli:adversarial-review`         | `Choose Polycli with @, then ask it to run: adversarial-review` | `polycli adversarial-review` | `polycli_run(["adversarial-review", ...])`                     | `polycli adversarial-review ...`         |
+| status                | `/polycli:status`                     | `Choose Polycli with @, then ask it to run: status` | `polycli status`             | `polycli_run(["status", ...])`                                 | `polycli status ...`                     |
+| result                | `/polycli:result`                     | `Choose Polycli with @, then ask it to run: result` | `polycli result`             | `polycli_run(["result", ...])`                                 | `polycli result ...`                     |
+| cancel                | `/polycli:cancel`                     | `Choose Polycli with @, then ask it to run: cancel` | `polycli cancel`             | `polycli_run(["cancel", ...])`                                 | `polycli cancel ...`                     |
+| timing                | `/polycli:timing`                     | `Choose Polycli with @, then ask it to run: timing` | `polycli timing`             | `polycli_timing({provider, history, json})` **or** `polycli_run(["timing", ...])` | `polycli timing ...`                     |
+| debug                 | `/polycli:debug`                      | `Choose Polycli with @, then ask it to run: debug` | `polycli debug`              | `polycli_run(["debug", "runs"])`                              | `polycli debug runs`                     |
 
 Notes:
 

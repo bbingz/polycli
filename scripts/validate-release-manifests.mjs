@@ -29,6 +29,7 @@ const opencodeManifest = readJson("plugins/polycli-opencode/package.json");
 const utilsPackage = readJson("packages/polycli-utils/package.json");
 const timingPackage = readJson("packages/polycli-timing/package.json");
 const runtimePackage = readJson("packages/polycli-runtime/package.json");
+const terminalPackage = readJson("packages/polycli-terminal/package.json");
 
 assertPluginEntry(codexMarketplace, {
   name: codexManifest.name,
@@ -53,6 +54,10 @@ assert.match(timingPackage.version, /^1\.\d+\.\d+$/, `${timingPackage.name} must
 assert.equal(runtimePackage.dependencies?.["@bbingz/polycli-utils"], utilsPackage.version);
 assert.equal(runtimePackage.dependencies?.["@bbingz/polycli-timing"], timingPackage.version);
 assert.equal(runtimePackage.private, true, `${runtimePackage.name} must remain private`);
+assert.equal(terminalPackage.name, "@bbingz/polycli", "terminal package must be named @bbingz/polycli");
+assert.equal(terminalPackage.version, claudeManifest.version, `${terminalPackage.name} must match host plugin version`);
+assert.notEqual(terminalPackage.private, true, `${terminalPackage.name} must not be private`);
+assert.equal(typeof terminalPackage.bin?.polycli, "string", `${terminalPackage.name} must declare polycli bin`);
 assert.equal(Array.isArray(codexMarketplace.plugins), true);
 assert.equal(Array.isArray(claudeMarketplace.plugins), true);
 assert.equal(Array.isArray(copilotMarketplace.plugins), true);

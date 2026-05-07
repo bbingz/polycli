@@ -60,3 +60,4 @@ run("claude", ["plugin", "validate", "plugins/polycli/.claude-plugin/plugin.json
 checkPublishable("./plugins/polycli-opencode");
 checkPublishable("./packages/polycli-utils");
 checkPublishable("./packages/polycli-timing");
+checkPublishable("./packages/polycli-terminal");

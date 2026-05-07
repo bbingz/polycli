@@ -25,6 +25,7 @@ Supported subcommands:
 - `result [job-id] [--json]`
 - `cancel [job-id] [--json]`
 - `timing [--provider <provider>] [--history <count>] [--json]`
+- `debug <runs|show <run-id>|explain <run-id>> [--json]`
 
 Rules:
 

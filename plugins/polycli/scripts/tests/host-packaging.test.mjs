@@ -84,6 +84,8 @@ test("bundled companion entry files exist for all hosts", () => {
   assert.equal(fs.existsSync(path.join(REPO_ROOT, "plugins/polycli-codex/scripts/polycli-companion.bundle.mjs")), true);
   assert.equal(fs.existsSync(path.join(REPO_ROOT, "plugins/polycli-copilot/scripts/polycli-companion.bundle.mjs")), true);
   assert.equal(fs.existsSync(path.join(REPO_ROOT, "plugins/polycli-opencode/scripts/polycli-companion.bundle.mjs")), true);
+  assert.equal(fs.existsSync(path.join(REPO_ROOT, "packages/polycli-terminal/bin/polycli-companion.bundle.mjs")), true);
+  assert.equal(fs.existsSync(path.join(REPO_ROOT, "packages/polycli-terminal/bin/polycli.mjs")), true);
 });
 
 test("bundled companions execute with usage output", () => {
@@ -92,6 +94,7 @@ test("bundled companions execute with usage output", () => {
     "plugins/polycli-codex/scripts/polycli-companion.bundle.mjs",
     "plugins/polycli-copilot/scripts/polycli-companion.bundle.mjs",
     "plugins/polycli-opencode/scripts/polycli-companion.bundle.mjs",
+    "packages/polycli-terminal/bin/polycli-companion.bundle.mjs",
   ];
 
   for (const relativePath of bundles) {

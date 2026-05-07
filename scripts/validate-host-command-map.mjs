@@ -15,6 +15,7 @@ const EXPECTED_COMMANDS = [
   "result",
   "cancel",
   "timing",
+  "debug",
 ];
 
 function read(relativePath) {
@@ -72,6 +73,8 @@ function assertHostCommandMap() {
   assert.doesNotMatch(text, /\/polycli-codex:polycli\b/, "host-command-map must not document fake Codex slash invocation");
   assert.match(text, /polycli_run\(\["timing"/, "host-command-map missing OpenCode generic timing invocation");
   assert.match(text, /polycli_timing/, "host-command-map missing OpenCode timing wrapper");
+  assert.match(text, /Terminal CLI/, "host-command-map missing Terminal CLI column");
+  assert.match(text, /@bbingz\/polycli/, "host-command-map missing terminal package name");
 }
 
 function assertOpenCodeSurface() {
