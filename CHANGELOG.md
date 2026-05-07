@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Codex — v0.6.14 post-publish host update closeout
+
+- Confirmed npm `@bbingz/polycli-opencode@0.6.14` and `@bbingz/polycli@0.6.14` are observable on the registry, then updated the GitHub release notes and release docs from "pending npm auth" to published.
+- Verified Codex marketplace refresh behavior: `codex plugin marketplace add bbingz/polycli` is idempotent and does not refresh an existing local cache; use `codex plugin marketplace upgrade polycli-hosts` to pull the latest marketplace revision. Local Codex marketplace cache now points at `6e550b3` and `polycli-codex@0.6.14`.
+- Committed and pushed the post-publish docs closeout as `6e550b3 docs: mark v0.6.14 npm packages published`.
+
 ## 2026-05-07 — Codex — v0.6.14 provider path and stateless call hardening
 
 - Recorded the current best-provider path table in `docs/provider-paths.md`, including the corrected OpenCode finding: local auth/model discovery is the source of truth, so an empty `opencode.json` provider object does not mean OpenCode has no configured providers.
