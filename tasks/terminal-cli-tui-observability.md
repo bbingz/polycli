@@ -87,7 +87,7 @@ The target is not a daemon and not a provider framework. The target is a short-l
 - [x] Update `docs/roadmap.md`, README, host command map, and public-surface docs when each phase lands. (Spec 1 surface only; later spec phases will revisit.)
 - [x] Wire `runId` + `hostSurface` through job-config so background workers also append `job_started`/`attempt_started`/`attempt_result`/`provider_decision` events. Plan: `docs/superpowers/plans/2026-05-07-background-job-ledger-plumbing.md`.
 - [ ] Killed-worker perfect recovery: when a background worker is `kill -9`'d after `runProviderPromptStreaming` returns but before the job/ledger writes complete, the run ledger has no terminal `attempt_result`. Recovery requires a separate reaper or scan-on-read step; deferred to a later slice.
-- [ ] Keep the first TUI inspector blocked until background worker ledger events can explain adopted, failed, and unfinished background jobs from persisted state.
+- [ ] First TUI must render started/attempt_started-without-final-event as unfinished/unknown; recovery remains follow-up.
 
 ## Non-goals
 
