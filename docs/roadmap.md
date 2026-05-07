@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-07 (v0.6.12 published: standardize ask/rescue defaults to YOLO across all 9 providers; review/adversarial-review remain locked to conservative/plan mode).
+Snapshot: 2026-05-07 (v0.6.13 published: default GEMINI_CLI_TRUST_WORKSPACE=true so first gemini run in a fresh workspace no longer hangs on the trust prompt).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,7 +10,7 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.12** — see `docs/release-notes-v0.6.12.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.12` + `@bbingz/polycli@0.6.12` all on the registry. Behavior-change patch on top of v0.6.11 standardizing the permission default across all 9 providers — every provider that exposes a YOLO-equivalent flag now passes it by default for `ask`/`rescue` (claude `bypassPermissions`, gemini/qwen `--approval-mode yolo`, kimi/cmd `--yolo`; copilot/opencode unchanged because they were already YOLO; pi/mini-agent unchanged because they have no permission gate). `review`/`adversarial-review` remain forced to conservative/plan mode for every provider; `assertNoReviewConstraintOverride` extended to refuse re-introducing YOLO into review.
+- Latest public release: **v0.6.13** — see `docs/release-notes-v0.6.13.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.13` + `@bbingz/polycli@0.6.13` all on the registry. Patch on top of v0.6.12 closing the gemini workspace-trust gap: new `buildGeminiEnv` helper defaults `GEMINI_CLI_TRUST_WORKSPACE=true` for every gemini spawn so first runs in a fresh workspace no longer hang on the trust prompt. Caller-set env wins (`GEMINI_CLI_TRUST_WORKSPACE=false ./script.sh` restores the prompt).
 - 9 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.

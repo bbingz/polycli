@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — v0.6.13 released
+
+- Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.13, npm `@bbingz/polycli-opencode@0.6.13`, npm `@bbingz/polycli@0.6.13`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`); `@bbingz/polycli-runtime` remains internal.
+- Default `GEMINI_CLI_TRUST_WORKSPACE=true` for every gemini spawn. gemini-cli prompts on first run in a new workspace for trust; under polycli's non-interactive ask/rescue/review pipeline that prompt has nowhere to go and the call hangs/fails. New `buildGeminiEnv(parentEnv)` helper defaults the env var to `"true"` but preserves any caller-set value (`GEMINI_CLI_TRUST_WORKSPACE=false ./script.sh` still wins). Consistent with the v0.6.12 YOLO stance: workspace trust is one more interactive prompt that polycli auto-approves.
+- Verification: `release:check` exit 0 (366/366 tests; bundles 5; fixtures 16; manifests 0.6.13; host-map 11x4+terminal; codex-adapter 5; claude plugin validate ×2; 4 npm pack/publish dry-runs). Post-publish: tag, GitHub release (not draft, not prerelease), and both npm packages observable at 0.6.13.
+
 ## 2026-05-07 — Claude — v0.6.12 released
 
 - Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.12, npm `@bbingz/polycli-opencode@0.6.12`, npm `@bbingz/polycli@0.6.12`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`); `@bbingz/polycli-runtime` remains internal.
