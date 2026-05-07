@@ -137,6 +137,7 @@ async function interactive(options) {
 
   readline.emitKeypressEvents(process.stdin);
   process.stdin.setRawMode(true);
+  process.stdin.resume();
   let restored = false;
   let keypressHandler = null;
   const restoreRawMode = () => {
@@ -148,6 +149,7 @@ async function interactive(options) {
     if (process.stdin.isTTY) {
       try { process.stdin.setRawMode(false); } catch {}
     }
+    try { process.stdin.pause(); } catch {}
     process.stdout.write("\n");
   };
   process.once("SIGINT", restoreRawMode);

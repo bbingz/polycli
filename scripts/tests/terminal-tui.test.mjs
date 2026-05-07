@@ -310,6 +310,88 @@ test("polycli tui --script-keys down loads selected run's detail, not the initia
   }
 });
 
+function ptyWrapperAvailable() {
+  if (os.platform() === "win32") return false;
+  const probe = spawnSync("python3", ["-c", "import pty"], { encoding: "utf8" });
+  return probe.status === 0;
+}
+
+const PTY_PUMP = `
+import os, pty, sys, threading
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+def pump_out():
+    try:
+        while True:
+            data = os.read(fd, 4096)
+            if not data: break
+            os.write(1, data)
+    except OSError: pass
+def pump_in():
+    try:
+        while True:
+            data = os.read(0, 4096)
+            if not data: break
+            os.write(fd, data)
+    except OSError: pass
+t1 = threading.Thread(target=pump_out, daemon=True)
+t2 = threading.Thread(target=pump_in, daemon=True)
+t1.start(); t2.start()
+_, status = os.waitpid(pid, 0)
+sys.exit(os.waitstatus_to_exitcode(status))
+`;
+
+test("polycli tui exits cleanly when q is pressed under a real pty", { skip: !ptyWrapperAvailable() }, async () => {
+  const { spawn } = await import("node:child_process");
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-tui-pty-"));
+  try {
+    fs.writeFileSync(path.join(fixtureDir, "runs.json"), JSON.stringify({
+      ok: true,
+      runs: [{ runId: "run-pty", commands: ["ask"], startedAt: "2026-05-07T00:00:00Z" }],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "show-run-pty.json"), JSON.stringify({
+      ok: true, runId: "run-pty",
+      events: [{ runId: "run-pty", provider: "qwen", phase: "provider_decision", status: "adopted" }],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "explain-run-pty.json"), JSON.stringify({
+      ok: true, runId: "run-pty", found: true, text: "qwen adopted", events: [],
+    }));
+
+    const child = spawn("python3", ["-c", PTY_PUMP, process.execPath, tuiBin, "--fixture-dir", fixtureDir], {
+      cwd: repoRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+
+    const start = Date.now();
+    while (!stdout.includes("polycli tui inspector") && Date.now() - start < 5000) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(
+      stdout.includes("polycli tui inspector"),
+      `initial frame missing within 5s\nstdout=${stdout}\nstderr=${stderr}`,
+    );
+
+    child.stdin.write("q");
+
+    const exitCode = await Promise.race([
+      new Promise((resolve) => child.on("exit", (code) => resolve(code))),
+      new Promise((_, reject) => setTimeout(() => {
+        try { child.kill("SIGKILL"); } catch {}
+        reject(new Error(`polycli tui did not exit within 5s after q\nstdout=${stdout.slice(-400)}\nstderr=${stderr.slice(-400)}`));
+      }, 5000)),
+    ]);
+    assert.equal(exitCode, 0, `exit ${exitCode}\nstdout=${stdout.slice(-400)}\nstderr=${stderr.slice(-400)}`);
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 test("polycli tui --script-keys down,enter shows detail explanation for the new run", () => {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-tui-script-detail-"));
   try {
