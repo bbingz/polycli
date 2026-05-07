@@ -104,6 +104,26 @@ Read-only terminal inspector over run-ledger data. Supports `--run-id <id>` and 
 
 This keeps v1 small, testable, and publishable without pretending the provider model is a public framework.
 
+## Provider Permission Defaults
+
+`ask` and `rescue` default to YOLO/auto-approve for every provider that exposes a permission flag. The intent is to match common harnessed-agent practice (one-shot CLI calls in an automated wrapper, not interactive sessions where humans approve tool calls). `review` and `adversarial-review` are locked to conservative / read-only / plan mode for every provider regardless — see the override table below.
+
+| Provider | Default flag in `ask` / `rescue` | Effective stance |
+|---|---|---|
+| `claude` | `--permission-mode bypassPermissions` | YOLO |
+| `gemini` | `--approval-mode yolo` | YOLO |
+| `qwen` | `--approval-mode yolo` | YOLO |
+| `kimi` | `--yolo` | YOLO |
+| `cmd` | `--yolo` (alias for `--dangerously-skip-permissions`) | YOLO |
+| `copilot` | `--allow-all-tools --allow-all-paths --allow-all-urls --no-ask-user` | YOLO |
+| `opencode` | `--dangerously-skip-permissions` | YOLO |
+| `pi` | (no permission flag; tools are default-enabled upstream) | YOLO-equivalent |
+| `mini-agent` (MiniMax) | (config-driven via `~/.mini-agent/config/config.yaml`) | user-controlled |
+
+Callers that need a non-YOLO stance pass it explicitly through the runtime — for example `permissionMode: "plan"` for claude, `approvalMode: "plan"` for gemini/qwen, `yolo: false` for kimi/cmd, or `skipPermissions: false` for opencode.
+
+`review` / `adversarial-review` ignore the YOLO defaults above and instead force a conservative stance per provider (`--max-turns 1 --tools ""` for claude, `approvalMode: "plan"` for gemini and qwen, `--no-tools` for pi, `--permission-mode plan` for cmd, `--agent plan` + deny-permission config for opencode, `--excluded-tools <list>` for copilot, tools-disabled config for minimax). `assertNoReviewConstraintOverride` rejects any caller attempt to thread YOLO flags back into review.
+
 ## Run Ledger Debug Examples
 
 The redacted, append-only run ledger lets `polycli debug` answer "what happened in this run, and why was that provider not adopted?" without re-running the provider. The two narratives below come from the original Codex multi-provider failure case (Q6 source) and are reproducible from the persisted ledger alone.
