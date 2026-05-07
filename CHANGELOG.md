@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Codex — TUI inspector MVP spec/plan
+
+- Added `docs/superpowers/specs/2026-05-07-tui-inspector-mvp-design.md` for a read-only terminal TUI inspector over existing `debug runs/show/explain` and run-ledger data.
+- Added `docs/superpowers/plans/2026-05-07-tui-inspector-mvp.md` with a task-by-task implementation plan covering view-model tests, terminal runtime, wrapper routing, package files, docs, and release checks.
+- Updated the Q6 roadmap wording to name the read-only TUI inspector MVP as the next implementation slice; no source change, no rebuild, no version bump, no tag, no publish.
+
 ## 2026-05-07 — Claude — docs: run ledger failure examples
 
 - Added "Run ledger debug examples" section to `docs/polycli-v1-public-surface.md`, covering the original Q6 narrative: `cmd` health passed but two `ask` attempts failed (not adopted); `pi` health failed and was skipped before any prompt-bearing work. Examples use `polycli debug runs / show / explain` and reference event-schema slots, not invented live provider output.
