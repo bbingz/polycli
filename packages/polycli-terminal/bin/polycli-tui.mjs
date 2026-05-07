@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 
-import { renderTuiFrame } from "../lib/tui/view-model.mjs";
+import { applyKey, renderTuiFrame } from "../lib/tui/view-model.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const companionPath = path.join(__dirname, "polycli-companion.bundle.mjs");
@@ -72,6 +72,16 @@ function renderOnce(options) {
   });
 }
 
+function mapKey(str, key) {
+  if (key.name === "up" || key.name === "k") return "up";
+  if (key.name === "down" || key.name === "j") return "down";
+  if (key.name === "return" || key.name === "enter") return "enter";
+  if (key.name === "tab") return "tab";
+  if (key.name === "b") return "b";
+  if (str === "?") return "?";
+  return null;
+}
+
 async function interactive(options) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("polycli tui requires an interactive TTY. Use debug runs/show/explain for non-interactive output.");
@@ -80,23 +90,46 @@ async function interactive(options) {
   readline.emitKeypressEvents(process.stdin);
   process.stdin.setRawMode(true);
 
-  let frame = renderOnce(options);
-  process.stdout.write("\x1b[2J\x1b[H" + frame);
+  let state = {
+    ...loadData(options),
+    view: "list",
+    focusedPane: "runs",
+    showHelp: false,
+  };
+  const writeFrame = () => {
+    const frame = renderTuiFrame({
+      ...state,
+      width: process.stdout.columns || 100,
+      height: process.stdout.rows || 30,
+    });
+    process.stdout.write("\x1b[2J\x1b[H" + frame);
+  };
+  writeFrame();
 
   await new Promise((resolve) => {
-    process.stdin.on("keypress", (_str, key = {}) => {
+    process.stdin.on("keypress", (str, key = {}) => {
       if (key.name === "q" || (key.ctrl && key.name === "c")) {
         resolve();
         return;
       }
       if (key.name === "r") {
-        frame = renderOnce(options);
-        process.stdout.write("\x1b[2J\x1b[H" + frame);
+        try {
+          const data = loadData(options);
+          state = { ...state, ...data };
+          writeFrame();
+        } catch (error) {
+          process.stdout.write(`\x1b[2J\x1b[HError refreshing: ${error.message}\nPress q to quit.\n`);
+        }
+        return;
+      }
+      const keyId = mapKey(str, key);
+      if (keyId) {
+        state = applyKey(state, keyId);
+        writeFrame();
       }
     });
   });
 
-  process.stdin.setRawMode(false);
   process.stdout.write("\n");
 }
 

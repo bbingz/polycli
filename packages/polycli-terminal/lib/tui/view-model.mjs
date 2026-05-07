@@ -119,11 +119,40 @@ function eventLabel(event) {
   ].filter(Boolean).join(" ");
 }
 
+export const TUI_PANES = ["runs", "providers", "events", "repro"];
+
+export function applyKey(state = {}, key) {
+  const runs = Array.isArray(state.runs) ? state.runs : [];
+  if (key === "j" || key === "down") {
+    if (runs.length === 0) return state;
+    const idx = runs.findIndex((run) => run.runId === state.selectedRunId);
+    const next = idx < 0 ? 0 : Math.min(runs.length - 1, idx + 1);
+    return { ...state, selectedRunId: runs[next].runId };
+  }
+  if (key === "k" || key === "up") {
+    if (runs.length === 0) return state;
+    const idx = runs.findIndex((run) => run.runId === state.selectedRunId);
+    const next = idx < 0 ? 0 : Math.max(0, idx - 1);
+    return { ...state, selectedRunId: runs[next].runId };
+  }
+  if (key === "enter") return { ...state, view: "detail" };
+  if (key === "b") return { ...state, view: "list" };
+  if (key === "tab") {
+    const pos = TUI_PANES.indexOf(state.focusedPane);
+    return { ...state, focusedPane: TUI_PANES[((pos < 0 ? 0 : pos) + 1) % TUI_PANES.length] };
+  }
+  if (key === "?") return { ...state, showHelp: !state.showHelp };
+  return state;
+}
+
 export function buildTuiModel({
   runs = [],
   events = [],
   explanationText = "",
   selectedRunId = null,
+  view = "list",
+  focusedPane = "runs",
+  showHelp = false,
   width = 100,
   height = 30,
 } = {}) {
@@ -140,6 +169,9 @@ export function buildTuiModel({
     mode: layoutMode(width, height),
     width,
     height,
+    view: view === "detail" ? "detail" : "list",
+    focusedPane: TUI_PANES.includes(focusedPane) ? focusedPane : "runs",
+    showHelp: Boolean(showHelp),
     selectedRunId: selected,
     runs,
     events: selectedEvents,
@@ -149,24 +181,28 @@ export function buildTuiModel({
   };
 }
 
+const FOOTER = "q quit  up/down select  enter open  b back  r refresh  tab pane  ? help";
+const HELP_LINE = "Help: up/k previous  down/j next  enter detail  b list  tab pane  r refresh  q quit";
+
 export function renderTuiFrame(input = {}) {
   const model = buildTuiModel(input);
   const width = Math.max(40, model.width);
   const bodyHeight = Math.max(8, model.height - 3);
   const lines = [];
 
-  lines.push(fit("polycli tui inspector", width));
+  lines.push(fit(`polycli tui inspector  view:${model.view}  pane:${model.focusedPane}`, width));
   lines.push(line(width));
 
-  if (model.mode === "compact") {
-    lines.push(fit(`run ${model.selectedRunId || "none"}`, width));
-  } else {
-    lines.push(fit("runs", Math.floor(width / 3)) + fit("provider matrix", width - Math.floor(width / 3)));
-  }
-
-  for (const run of model.runs.slice(0, Math.max(2, Math.floor(bodyHeight / 4)))) {
-    const marker = run.runId === model.selectedRunId ? ">" : " ";
-    lines.push(fit(`${marker} ${run.runId} ${(run.commands || []).join(",")}`, width));
+  if (model.view === "list" || model.mode === "compact") {
+    if (model.mode === "compact") {
+      lines.push(fit(`run ${model.selectedRunId || "none"}`, width));
+    } else {
+      lines.push(fit("runs", Math.floor(width / 3)) + fit("provider matrix", width - Math.floor(width / 3)));
+    }
+    for (const run of model.runs.slice(0, Math.max(2, Math.floor(bodyHeight / 4)))) {
+      const marker = run.runId === model.selectedRunId ? ">" : " ";
+      lines.push(fit(`${marker} ${run.runId} ${(run.commands || []).join(",")}`, width));
+    }
   }
 
   lines.push(line(width));
@@ -174,17 +210,44 @@ export function renderTuiFrame(input = {}) {
     lines.push(fit(`${state.provider} ${state.status}${state.reason ? ` ${state.reason}` : ""}${state.jobId ? ` ${state.jobId}` : ""}`, width));
   }
 
-  lines.push(line(width));
-  for (const event of model.events.slice(0, Math.max(3, Math.floor(bodyHeight / 3)))) {
-    lines.push(fit(eventLabel(event), width));
+  if (model.view === "detail") {
+    lines.push(line(width));
+    lines.push(fit("events", width));
+    for (const event of model.events.slice(0, Math.max(4, Math.floor(bodyHeight / 2)))) {
+      lines.push(fit(eventLabel(event), width));
+    }
+    if (model.explanationText) {
+      lines.push(line(width));
+      lines.push(fit("explanation", width));
+      for (const explLine of String(model.explanationText).split("\n")) {
+        lines.push(fit(explLine, width));
+      }
+    }
+    if (model.reproductionCommands.length > 0) {
+      lines.push(line(width));
+      for (const cmd of model.reproductionCommands.slice(0, 3)) {
+        lines.push(fit(`repro: ${cmd}`, width));
+      }
+    }
+  } else {
+    if (model.events.length > 0) {
+      lines.push(line(width));
+      for (const event of model.events.slice(0, Math.max(3, Math.floor(bodyHeight / 3)))) {
+        lines.push(fit(eventLabel(event), width));
+      }
+    }
+    if (model.reproductionCommands.length > 0) {
+      lines.push(line(width));
+      lines.push(fit(`repro: ${model.reproductionCommands[0]}`, width));
+    }
   }
 
-  if (model.reproductionCommands.length > 0) {
+  if (model.showHelp) {
     lines.push(line(width));
-    lines.push(fit(`repro: ${model.reproductionCommands[0]}`, width));
+    lines.push(fit(HELP_LINE, width));
   }
 
   while (lines.length < model.height - 1) lines.push("");
-  lines.push(fit("q quit  up/down select  enter open  b back  r refresh  tab pane  ? help", width));
+  lines.push(fit(FOOTER, width));
   return lines.slice(0, model.height).join("\n");
 }

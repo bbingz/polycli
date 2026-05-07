@@ -93,6 +93,94 @@ test("renderTuiFrame includes unfinished state and footer controls", () => {
   assert.match(frame, /q quit/);
 });
 
+import { applyKey } from "../../packages/polycli-terminal/lib/tui/view-model.mjs";
+
+test("applyKey down/j moves selection to next run; up/k moves back", () => {
+  const state = {
+    runs: [{ runId: "a" }, { runId: "b" }, { runId: "c" }],
+    selectedRunId: "a",
+  };
+  assert.equal(applyKey(state, "down").selectedRunId, "b");
+  assert.equal(applyKey(state, "j").selectedRunId, "b");
+  assert.equal(applyKey({ ...state, selectedRunId: "c" }, "up").selectedRunId, "b");
+  assert.equal(applyKey({ ...state, selectedRunId: "c" }, "k").selectedRunId, "b");
+  assert.equal(applyKey({ ...state, selectedRunId: "a" }, "up").selectedRunId, "a");
+  assert.equal(applyKey({ ...state, selectedRunId: "c" }, "down").selectedRunId, "c");
+});
+
+test("applyKey enter opens detail view; b returns to list", () => {
+  assert.equal(applyKey({ view: "list" }, "enter").view, "detail");
+  assert.equal(applyKey({ view: "detail" }, "b").view, "list");
+});
+
+test("applyKey tab cycles focused pane runs->providers->events->repro->runs", () => {
+  let state = { focusedPane: "runs" };
+  state = applyKey(state, "tab");
+  assert.equal(state.focusedPane, "providers");
+  state = applyKey(state, "tab");
+  assert.equal(state.focusedPane, "events");
+  state = applyKey(state, "tab");
+  assert.equal(state.focusedPane, "repro");
+  state = applyKey(state, "tab");
+  assert.equal(state.focusedPane, "runs");
+});
+
+test("applyKey ? toggles showHelp", () => {
+  assert.equal(applyKey({ showHelp: false }, "?").showHelp, true);
+  assert.equal(applyKey({ showHelp: true }, "?").showHelp, false);
+});
+
+test("applyKey on empty runs leaves selection untouched", () => {
+  const state = { runs: [], selectedRunId: null };
+  assert.equal(applyKey(state, "down").selectedRunId, null);
+  assert.equal(applyKey(state, "up").selectedRunId, null);
+});
+
+test("after applyKey down, render frame shows the new selection's providers", () => {
+  const data = {
+    runs: [{ runId: "run-a", commands: ["ask"] }, { runId: "run-b", commands: ["health"] }],
+    events: [
+      { runId: "run-a", provider: "qwen", phase: "provider_decision", status: "adopted" },
+      { runId: "run-b", provider: "pi", phase: "provider_decision", status: "skipped", reason: "health_failed" },
+    ],
+    width: 96, height: 28,
+  };
+  const before = renderTuiFrame({ ...data, selectedRunId: "run-a" });
+  const next = applyKey({ ...data, selectedRunId: "run-a" }, "down");
+  const after = renderTuiFrame({ ...data, selectedRunId: next.selectedRunId });
+  assert.match(before, /qwen adopted/);
+  assert.equal(before.includes("pi skipped"), false);
+  assert.match(after, /pi skipped/);
+  assert.equal(after.includes("qwen adopted"), false);
+});
+
+test("after applyKey enter, detail view exposes explanation text not present in list view", () => {
+  const data = {
+    runs: [{ runId: "run-a", commands: ["ask"] }],
+    events: [{ runId: "run-a", provider: "qwen", phase: "provider_decision", status: "adopted" }],
+    explanationText: "EXPL_UNIQUE_TOKEN",
+    width: 96, height: 28,
+  };
+  const list = renderTuiFrame({ ...data, selectedRunId: "run-a", view: "list" });
+  const next = applyKey({ ...data, selectedRunId: "run-a", view: "list" }, "enter");
+  const detail = renderTuiFrame({ ...data, selectedRunId: "run-a", view: next.view });
+  assert.equal(next.view, "detail");
+  assert.equal(list.includes("EXPL_UNIQUE_TOKEN"), false);
+  assert.match(detail, /EXPL_UNIQUE_TOKEN/);
+});
+
+test("renderTuiFrame Help line appears only when showHelp=true", () => {
+  const data = {
+    runs: [{ runId: "run-a", commands: ["ask"] }],
+    events: [{ runId: "run-a", provider: "qwen", phase: "provider_decision", status: "adopted" }],
+    selectedRunId: "run-a", width: 96, height: 28,
+  };
+  const off = renderTuiFrame({ ...data, showHelp: false });
+  const on = renderTuiFrame({ ...data, showHelp: true });
+  assert.equal(off.includes("Help:"), false);
+  assert.match(on, /Help:/);
+});
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
