@@ -1,6 +1,6 @@
 {
   "name": "polycli",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "description": "Use multiple provider CLIs from one Claude Code plugin, including background job lifecycle.",
   "author": {
     "name": "bing"
