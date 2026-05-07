@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Polycli marketplace for GitHub Copilot CLI",
-    "version": "0.6.8"
+    "version": "0.6.9"
   },
   "plugins": [
     {
       "name": "polycli-copilot",
       "description": "Run the shared polycli companion from GitHub Copilot CLI",
-      "version": "0.6.8",
+      "version": "0.6.9",
       "source": "./plugins/polycli-copilot"
     }
   ]
