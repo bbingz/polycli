@@ -9,6 +9,7 @@ import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import { TRANSIENT_PROBE_ERROR_PATTERNS as GEMINI_TRANSIENT_PROBE_ERROR_PATTERNS } from "../src/gemini.js";
 import {
   applyGeminiEffort,
+  buildGeminiEnv,
   buildGeminiInvocation,
   extractGeminiText,
   getGeminiAuthStatus,
@@ -99,6 +100,18 @@ test("buildGeminiInvocation keeps byte-small CJK prompts inline", () => {
   assert.equal(invocation.useStdin, false);
   assert.equal(invocation.input, undefined);
   assert.deepEqual(invocation.args.slice(0, 2), ["-p", prompt]);
+});
+
+test("buildGeminiEnv defaults GEMINI_CLI_TRUST_WORKSPACE=true", () => {
+  const env = buildGeminiEnv({ PATH: "/bin", HOME: "/home/test" });
+  assert.equal(env.GEMINI_CLI_TRUST_WORKSPACE, "true");
+  assert.equal(env.PATH, "/bin");
+  assert.equal(env.HOME, "/home/test");
+});
+
+test("buildGeminiEnv preserves explicit GEMINI_CLI_TRUST_WORKSPACE override", () => {
+  const env = buildGeminiEnv({ GEMINI_CLI_TRUST_WORKSPACE: "false" });
+  assert.equal(env.GEMINI_CLI_TRUST_WORKSPACE, "false");
 });
 
 test("parseGeminiStreamText collects session id, stats, and assistant text", () => {

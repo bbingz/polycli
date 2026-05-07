@@ -1148,6 +1148,13 @@ var VALID_GEMINI_EFFORTS = /* @__PURE__ */ new Set(["low", "medium", "high"]);
 var TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
+function buildGeminiEnv(parentEnv = process.env) {
+  const trust = parentEnv.GEMINI_CLI_TRUST_WORKSPACE ?? "true";
+  return {
+    ...parentEnv,
+    GEMINI_CLI_TRUST_WORKSPACE: trust
+  };
+}
 function applyGeminiEffort(prompt, effort) {
   const promptText = String(prompt ?? "");
   if (!VALID_GEMINI_EFFORTS.has(effort)) return promptText;
@@ -1322,7 +1329,8 @@ function runGeminiPrompt({
   const result = runCommand(invocation.bin, invocation.args, {
     cwd,
     timeout,
-    input: invocation.input
+    input: invocation.input,
+    env: buildGeminiEnv()
   });
   if (result.error) {
     return {
@@ -1365,7 +1373,7 @@ function runGeminiPromptStreaming({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env: buildGeminiEnv(),
     input: invocation.input,
     timeout,
     spawnImpl,

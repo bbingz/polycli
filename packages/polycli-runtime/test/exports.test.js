@@ -11,6 +11,7 @@ test("runtime index exports expected surface", () => {
     "buildClaudeInvocation",
     "buildCmdInvocation",
     "buildCopilotInvocation",
+    "buildGeminiEnv",
     "buildGeminiInvocation",
     "buildKimiInvocation",
     "buildMiniMaxInvocation",
