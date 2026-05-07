@@ -72,11 +72,7 @@ export function buildQwenInvocation({
 } = {}) {
   let effectiveApprovalMode = approvalMode;
   if (!effectiveApprovalMode) {
-    effectiveApprovalMode = unsafeFlag ? "yolo" : "auto-edit";
-  }
-
-  if (background && !unsafeFlag && effectiveApprovalMode === "yolo") {
-    throw new Error("Background qwen runs with yolo approval require unsafeFlag=true");
+    effectiveApprovalMode = "yolo";
   }
   if (sessionId && !UUID_RE.test(sessionId)) {
     throw new Error("--session-id must be a UUID");

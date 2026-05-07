@@ -43,7 +43,7 @@ test("buildClaudeInvocation uses stdin for large prompts and preserves session o
     "--output-format",
     "json",
     "--permission-mode",
-    "acceptEdits",
+    "bypassPermissions",
     "--max-turns",
     "4",
     "--model",
@@ -66,7 +66,7 @@ test("buildClaudeInvocation enables verbose output for stream-json mode", () => 
     "stream-json",
     "--verbose",
     "--permission-mode",
-    "acceptEdits",
+    "bypassPermissions",
     "--max-turns",
     "10",
   ]);

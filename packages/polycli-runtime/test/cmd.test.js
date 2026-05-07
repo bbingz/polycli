@@ -26,9 +26,10 @@ function withFakeCmdBin(source, fn) {
   }
 }
 
-test("buildCmdInvocation targets documented Command Code headless print mode", () => {
+test("buildCmdInvocation targets documented Command Code headless print mode with yolo by default", () => {
   const invocation = buildCmdInvocation({
     prompt: "ping",
+    yolo: false,
     extraArgs: ["--permission-mode", "plan"],
   });
 
@@ -41,9 +42,23 @@ test("buildCmdInvocation targets documented Command Code headless print mode", (
   ]);
 });
 
+test("buildCmdInvocation pushes --yolo by default", () => {
+  const invocation = buildCmdInvocation({
+    prompt: "ping",
+  });
+
+  assert.deepEqual(invocation.args, [
+    "--skip-onboarding",
+    "--yolo",
+    "-p",
+    "ping",
+  ]);
+});
+
 test("buildCmdInvocation ignores resume flags because Command Code headless runs are standalone", () => {
   const invocation = buildCmdInvocation({
     prompt: "ping",
+    yolo: false,
     resumeSessionId: "cmd-session",
     continueLast: true,
   });

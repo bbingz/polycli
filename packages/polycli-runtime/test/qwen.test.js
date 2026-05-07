@@ -34,7 +34,7 @@ function withFakeQwenBin(source, fn) {
   }
 }
 
-test("buildQwenInvocation defaults to auto-edit and validates uuid session ids", () => {
+test("buildQwenInvocation defaults to yolo and validates uuid session ids", () => {
   const invocation = buildQwenInvocation({
     prompt: "review this diff",
     sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -46,7 +46,7 @@ test("buildQwenInvocation defaults to auto-edit and validates uuid session ids",
     "--output-format",
     "stream-json",
     "--approval-mode",
-    "auto-edit",
+    "yolo",
     "--max-session-turns",
     "20",
     "review this diff",
@@ -58,7 +58,7 @@ test("buildQwenInvocation defaults to auto-edit and validates uuid session ids",
   );
 });
 
-test("buildQwenInvocation supports resume-last and rejects background yolo without unsafe mode", () => {
+test("buildQwenInvocation supports resume-last and lets callers override approval mode to plan", () => {
   const invocation = buildQwenInvocation({
     prompt: "continue",
     resumeLast: true,
@@ -70,16 +70,18 @@ test("buildQwenInvocation supports resume-last and rejects background yolo witho
     "--output-format",
     "stream-json",
     "--approval-mode",
-    "auto-edit",
+    "yolo",
     "--max-session-turns",
     "5",
     "continue",
   ]);
 
-  assert.throws(
-    () => buildQwenInvocation({ prompt: "x", approvalMode: "yolo", background: true }),
-    /unsafeFlag/
-  );
+  const planInvocation = buildQwenInvocation({
+    prompt: "x",
+    approvalMode: "plan",
+  });
+  assert.equal(planInvocation.args.includes("plan"), true);
+  assert.equal(planInvocation.args.includes("yolo"), false);
 });
 
 test("buildQwenEnv injects proxy settings without overwriting explicit env", () => {

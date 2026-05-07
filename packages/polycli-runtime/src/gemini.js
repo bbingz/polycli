@@ -30,7 +30,7 @@ export function applyGeminiEffort(prompt, effort) {
 export function buildGeminiInvocation({
   prompt,
   model = null,
-  approvalMode = "plan",
+  approvalMode = "yolo",
   write = false,
   effort = null,
   outputFormat = "json",
@@ -175,7 +175,7 @@ export function getGeminiAuthStatus(cwd, { promptRunner = runGeminiPrompt } = {}
 export function runGeminiPrompt({
   prompt,
   model = null,
-  approvalMode = "plan",
+  approvalMode = "yolo",
   write = false,
   effort = null,
   cwd,
@@ -220,7 +220,7 @@ export function runGeminiPrompt({
 export function runGeminiPromptStreaming({
   prompt,
   model = null,
-  approvalMode = "plan",
+  approvalMode = "yolo",
   write = false,
   effort = null,
   cwd,

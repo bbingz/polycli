@@ -16,11 +16,13 @@ export const TRANSIENT_PROBE_ERROR_PATTERNS = [
 export function buildCmdInvocation({
   prompt,
   skipOnboarding = true,
+  yolo = true,
   extraArgs = [],
   bin = CMD_BIN,
 } = {}) {
   const args = [];
   if (skipOnboarding) args.push("--skip-onboarding");
+  if (yolo) args.push("--yolo");
   if (extraArgs.length > 0) args.push(...extraArgs);
   args.push("-p", String(prompt ?? ""));
   return { bin, args };
@@ -98,11 +100,13 @@ export function runCmdPrompt({
   timeout = DEFAULT_TIMEOUT_MS,
   env = process.env,
   extraArgs = [],
+  yolo = true,
   defaultModel = null,
   bin = CMD_BIN,
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
+    yolo,
     extraArgs,
     bin,
   });
@@ -145,6 +149,7 @@ export function runCmdPromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS,
   env = process.env,
   extraArgs = [],
+  yolo = true,
   defaultModel = null,
   onEvent = () => {},
   bin = CMD_BIN,
@@ -152,6 +157,7 @@ export function runCmdPromptStreaming({
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
+    yolo,
     extraArgs,
     bin,
   });

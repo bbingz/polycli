@@ -181,7 +181,17 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   if (provider === "opencode" && runtimeOptions.skipPermissions !== undefined && runtimeOptions.skipPermissions !== false) {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
+  if (provider === "qwen" && runtimeOptions.approvalMode && runtimeOptions.approvalMode !== "plan") {
+    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
   if (provider === "qwen" && runtimeOptions.maxSteps !== undefined && runtimeOptions.maxSteps !== 1) {
+    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
+  if (provider === "claude" && runtimeOptions.permissionMode && runtimeOptions.permissionMode !== "plan") {
+    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
+  if ((provider === "kimi" || provider === "cmd")
+      && runtimeOptions.yolo !== undefined && runtimeOptions.yolo !== false) {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
 }
@@ -218,16 +228,17 @@ function buildMiniMaxReviewEnv(parentEnv = process.env) {
 
 const REVIEW_HARD_CONSTRAINTS = {
   kimi() {
-    return { extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] };
+    return { yolo: false, extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] };
   },
   qwen() {
     return {
+      approvalMode: "plan",
       maxSteps: 1,
       appendSystem: REVIEW_APPEND_SYSTEM,
     };
   },
   claude() {
-    return { extraArgs: ["--max-turns", "1", "--tools", ""] };
+    return { permissionMode: "plan", extraArgs: ["--max-turns", "1", "--tools", ""] };
   },
   gemini() {
     const cwd = makeReviewTempDir("gemini-cwd");
@@ -259,7 +270,7 @@ const REVIEW_HARD_CONSTRAINTS = {
     return { extraArgs: ["--no-tools"] };
   },
   cmd() {
-    return { extraArgs: ["--permission-mode", "plan"] };
+    return { yolo: false, extraArgs: ["--permission-mode", "plan"] };
   },
   minimax({ env } = {}) {
     return { env: buildMiniMaxReviewEnv(env) };

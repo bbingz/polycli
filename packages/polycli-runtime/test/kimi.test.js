@@ -29,7 +29,7 @@ function withFakeKimiBin(source, fn) {
   }
 }
 
-test("buildKimiInvocation omits -p in stdin mode and enables input-format text", () => {
+test("buildKimiInvocation omits -p in stdin mode, defaults to yolo, and enables input-format text", () => {
   const invocation = buildKimiInvocation({
     prompt: "x".repeat(100_000),
     model: "kimi-k2",
@@ -44,11 +44,21 @@ test("buildKimiInvocation omits -p in stdin mode and enables input-format text",
     "stream-json",
     "--input-format",
     "text",
+    "--yolo",
     "-m",
     "kimi-k2",
     "-r",
     "123e4567-e89b-12d3-a456-426614174000",
   ]);
+});
+
+test("buildKimiInvocation omits --yolo when caller opts out", () => {
+  const invocation = buildKimiInvocation({
+    prompt: "ping",
+    yolo: false,
+  });
+
+  assert.equal(invocation.args.includes("--yolo"), false);
 });
 
 test("resolveKimiResumeSession resolves and validates the last cwd session before spawn", () => {

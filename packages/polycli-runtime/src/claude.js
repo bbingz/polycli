@@ -49,7 +49,7 @@ export function buildClaudeInvocation({
   prompt,
   model = null,
   outputFormat = "json",
-  permissionMode = "acceptEdits",
+  permissionMode = "bypassPermissions",
   maxTurns = 10,
   resumeSessionId = null,
   extraArgs = [],
@@ -234,7 +234,7 @@ export function getClaudeAuthStatus(cwd) {
 export function runClaudePrompt({
   prompt,
   model = null,
-  permissionMode = "acceptEdits",
+  permissionMode = "bypassPermissions",
   maxTurns = 10,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
@@ -277,7 +277,7 @@ export function runClaudePrompt({
 export function runClaudePromptStreaming({
   prompt,
   model = null,
-  permissionMode = "acceptEdits",
+  permissionMode = "bypassPermissions",
   maxTurns = 10,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,

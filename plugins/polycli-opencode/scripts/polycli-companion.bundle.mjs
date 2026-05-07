@@ -616,7 +616,7 @@ function buildClaudeInvocation({
   prompt,
   model = null,
   outputFormat = "json",
-  permissionMode = "acceptEdits",
+  permissionMode = "bypassPermissions",
   maxTurns = 10,
   resumeSessionId = null,
   extraArgs = [],
@@ -772,7 +772,7 @@ function getClaudeAuthStatus(cwd) {
 function runClaudePrompt({
   prompt,
   model = null,
-  permissionMode = "acceptEdits",
+  permissionMode = "bypassPermissions",
   maxTurns = 10,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
@@ -809,7 +809,7 @@ function runClaudePrompt({
 function runClaudePromptStreaming({
   prompt,
   model = null,
-  permissionMode = "acceptEdits",
+  permissionMode = "bypassPermissions",
   maxTurns = 10,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
@@ -1166,7 +1166,7 @@ ${promptText}`;
 function buildGeminiInvocation({
   prompt,
   model = null,
-  approvalMode = "plan",
+  approvalMode = "yolo",
   write = false,
   effort = null,
   outputFormat = "json",
@@ -1298,7 +1298,7 @@ function getGeminiAuthStatus(cwd, { promptRunner = runGeminiPrompt } = {}) {
 function runGeminiPrompt({
   prompt,
   model = null,
-  approvalMode = "plan",
+  approvalMode = "yolo",
   write = false,
   effort = null,
   cwd,
@@ -1337,7 +1337,7 @@ function runGeminiPrompt({
 function runGeminiPromptStreaming({
   prompt,
   model = null,
-  approvalMode = "plan",
+  approvalMode = "yolo",
   write = false,
   effort = null,
   cwd,
@@ -1562,6 +1562,7 @@ function buildKimiInvocation({
   prompt,
   model = null,
   resumeSessionId = null,
+  yolo = true,
   extraArgs = [],
   bin = KIMI_BIN
 } = {}) {
@@ -1573,6 +1574,7 @@ function buildKimiInvocation({
   } else {
     args.unshift("-p", promptText);
   }
+  if (yolo) args.push("--yolo");
   if (model) args.push("-m", model);
   if (resumeSessionId) args.push("-r", resumeSessionId);
   if (extraArgs.length > 0) args.push(...extraArgs);
@@ -1659,6 +1661,7 @@ function runKimiPrompt({
   resumeSessionId = null,
   resumeLast = false,
   fresh = false,
+  yolo = true,
   defaultModel = null,
   bin = KIMI_BIN
 } = {}) {
@@ -1670,6 +1673,7 @@ function runKimiPrompt({
     prompt,
     model,
     resumeSessionId: resume.sessionId,
+    yolo,
     extraArgs,
     bin
   });
@@ -1713,6 +1717,7 @@ function runKimiPromptStreaming({
   resumeSessionId = null,
   resumeLast = false,
   fresh = false,
+  yolo = true,
   defaultModel = null,
   onEvent = () => {
   },
@@ -1727,6 +1732,7 @@ function runKimiPromptStreaming({
     prompt,
     model,
     resumeSessionId: resume.sessionId,
+    yolo,
     extraArgs,
     bin
   });
@@ -1857,10 +1863,7 @@ function buildQwenInvocation({
 } = {}) {
   let effectiveApprovalMode = approvalMode;
   if (!effectiveApprovalMode) {
-    effectiveApprovalMode = unsafeFlag ? "yolo" : "auto-edit";
-  }
-  if (background && !unsafeFlag && effectiveApprovalMode === "yolo") {
-    throw new Error("Background qwen runs with yolo approval require unsafeFlag=true");
+    effectiveApprovalMode = "yolo";
   }
   if (sessionId && !UUID_RE.test(sessionId)) {
     throw new Error("--session-id must be a UUID");
@@ -3035,11 +3038,13 @@ var TRANSIENT_PROBE_ERROR_PATTERNS6 = [
 function buildCmdInvocation({
   prompt,
   skipOnboarding = true,
+  yolo = true,
   extraArgs = [],
   bin = CMD_BIN
 } = {}) {
   const args = [];
   if (skipOnboarding) args.push("--skip-onboarding");
+  if (yolo) args.push("--yolo");
   if (extraArgs.length > 0) args.push(...extraArgs);
   args.push("-p", String(prompt ?? ""));
   return { bin, args };
@@ -3104,11 +3109,13 @@ function runCmdPrompt({
   timeout = DEFAULT_TIMEOUT_MS9,
   env = process.env,
   extraArgs = [],
+  yolo = true,
   defaultModel = null,
   bin = CMD_BIN
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
+    yolo,
     extraArgs,
     bin
   });
@@ -3143,6 +3150,7 @@ function runCmdPromptStreaming({
   timeout = DEFAULT_TIMEOUT_MS9,
   env = process.env,
   extraArgs = [],
+  yolo = true,
   defaultModel = null,
   onEvent = () => {
   },
@@ -3151,6 +3159,7 @@ function runCmdPromptStreaming({
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
+    yolo,
     extraArgs,
     bin
   });
@@ -4970,7 +4979,16 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   if (provider === "opencode" && runtimeOptions.skipPermissions !== void 0 && runtimeOptions.skipPermissions !== false) {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
+  if (provider === "qwen" && runtimeOptions.approvalMode && runtimeOptions.approvalMode !== "plan") {
+    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
   if (provider === "qwen" && runtimeOptions.maxSteps !== void 0 && runtimeOptions.maxSteps !== 1) {
+    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
+  if (provider === "claude" && runtimeOptions.permissionMode && runtimeOptions.permissionMode !== "plan") {
+    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
+  }
+  if ((provider === "kimi" || provider === "cmd") && runtimeOptions.yolo !== void 0 && runtimeOptions.yolo !== false) {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
 }
@@ -5003,16 +5021,17 @@ function buildMiniMaxReviewEnv(parentEnv = process.env) {
 }
 var REVIEW_HARD_CONSTRAINTS = {
   kimi() {
-    return { extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] };
+    return { yolo: false, extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] };
   },
   qwen() {
     return {
+      approvalMode: "plan",
       maxSteps: 1,
       appendSystem: REVIEW_APPEND_SYSTEM
     };
   },
   claude() {
-    return { extraArgs: ["--max-turns", "1", "--tools", ""] };
+    return { permissionMode: "plan", extraArgs: ["--max-turns", "1", "--tools", ""] };
   },
   gemini() {
     const cwd = makeReviewTempDir("gemini-cwd");
@@ -5044,7 +5063,7 @@ var REVIEW_HARD_CONSTRAINTS = {
     return { extraArgs: ["--no-tools"] };
   },
   cmd() {
-    return { extraArgs: ["--permission-mode", "plan"] };
+    return { yolo: false, extraArgs: ["--permission-mode", "plan"] };
   },
   minimax({ env } = {}) {
     return { env: buildMiniMaxReviewEnv(env) };

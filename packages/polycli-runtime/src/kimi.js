@@ -185,6 +185,7 @@ export function buildKimiInvocation({
   prompt,
   model = null,
   resumeSessionId = null,
+  yolo = true,
   extraArgs = [],
   bin = KIMI_BIN,
 } = {}) {
@@ -198,6 +199,7 @@ export function buildKimiInvocation({
     args.unshift("-p", promptText);
   }
 
+  if (yolo) args.push("--yolo");
   if (model) args.push("-m", model);
   if (resumeSessionId) args.push("-r", resumeSessionId);
   if (extraArgs.length > 0) args.push(...extraArgs);
@@ -299,6 +301,7 @@ export function runKimiPrompt({
   resumeSessionId = null,
   resumeLast = false,
   fresh = false,
+  yolo = true,
   defaultModel = null,
   bin = KIMI_BIN,
 } = {}) {
@@ -310,6 +313,7 @@ export function runKimiPrompt({
     prompt,
     model,
     resumeSessionId: resume.sessionId,
+    yolo,
     extraArgs,
     bin,
   });
@@ -358,6 +362,7 @@ export function runKimiPromptStreaming({
   resumeSessionId = null,
   resumeLast = false,
   fresh = false,
+  yolo = true,
   defaultModel = null,
   onEvent = () => {},
   bin = KIMI_BIN,
@@ -371,6 +376,7 @@ export function runKimiPromptStreaming({
     prompt,
     model,
     resumeSessionId: resume.sessionId,
+    yolo,
     extraArgs,
     bin,
   });
