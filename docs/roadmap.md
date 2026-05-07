@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-07 (v0.6.7 terminal CLI + run ledger; prepared, not yet published).
+Snapshot: 2026-05-07 (v0.6.7 terminal CLI + run ledger; published).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,8 +10,7 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.6** — see `docs/release-notes-v0.6.6.md`.
-- v0.6.7 prepared in-tree (terminal CLI + run ledger + shared `debug` commands); see `docs/release-notes-v0.6.7.md`. Not yet tagged or published.
+- Latest public release: **v0.6.7** — see `docs/release-notes-v0.6.7.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.7` + `@bbingz/polycli@0.6.7` (new terminal CLI) all on the registry.
 - 9 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
@@ -63,7 +62,7 @@ Source: real Codex multi-provider review after the v0.6.x host-adapter hardening
 
 Goal: add a real terminal entry point plus a persistent run ledger so users and host agents can run, inspect, compare, and debug provider calls outside host-specific plugin UX without depending on private companion bundle paths.
 
-Status: proposed active track. This is a product/operability track, not a provider rewrite. Full follow-up, roadmap, and implementation todo are tracked in `tasks/terminal-cli-tui-observability.md`.
+Status: Spec 1 released in v0.6.7; remainder is an active track. Full follow-up, roadmap, and implementation todo are tracked in `tasks/terminal-cli-tui-observability.md`.
 
 Phase plan:
 
@@ -75,7 +74,7 @@ Phase plan:
 
 Sequencing rule: do not start TUI implementation until the headless CLI and run ledger can answer why a provider was adopted, skipped, or failed.
 
-Spec 1 landed: terminal package wrapper (`@bbingz/polycli`), shared `debug` companion vocabulary (`debug runs/show/explain`), and redacted run ledger foundation (per-workspace NDJSON with `--run-id` / `POLYCLI_RUN_ID`). Phases 1–3 above are now in code; phase 4 (TUI) and remaining phase 5 polish stay open.
+Spec 1 released in v0.6.7 (2026-05-07): terminal package wrapper (`@bbingz/polycli` on npm), shared `debug` companion vocabulary (`debug runs/show/explain`), and redacted run ledger foundation (per-workspace NDJSON with `--run-id` / `POLYCLI_RUN_ID`). Phases 1–3 are shipped. Open follow-ups: phase 4 (TUI inspector) and the background-worker ledger plumbing (running `attempt_started` / `attempt_result` / `provider_decision` from `_job-worker` against the originating `runId`).
 
 ---
 

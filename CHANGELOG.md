@@ -6,6 +6,15 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — v0.6.7 released (terminal CLI + run ledger)
+
+- Shipped standalone terminal CLI `@bbingz/polycli` (PATH-callable wrapper around the bundled companion); first-time npm publish.
+- Added shared `debug` companion vocabulary (`debug runs / show <run-id> / explain <run-id>`) surfaced through Claude / Codex / Copilot / OpenCode / terminal.
+- Added redacted append-only run ledger (NDJSON per workspace) with stable `runId` / `workspaceSlug` / `hostSurface`; foreground `health`, `ask`, `rescue`, `review`, `adversarial-review` write `health_result` / `attempt_started` / `attempt_result` / `provider_decision` / `run_summary` events. Background-worker ledger plumbing is the next follow-up.
+- Added global `--run-id <id>` (or `POLYCLI_RUN_ID`) to join multi-command flows under one ledger run; stripped before provider/positional parsing.
+- Bundle / release guards now cover a fifth byte-identical companion bundle (`packages/polycli-terminal/bin/polycli-companion.bundle.mjs`) and assert the terminal tarball ships `LICENSE`.
+- Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.7, npm `@bbingz/polycli-opencode@0.6.7`, npm `@bbingz/polycli@0.6.7`. Utility packages remain on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`).
+
 ## 2026-05-06 — Codex — prepare v0.6.4 Codex install-surface correction
 
 - Corrected the Codex adapter docs and manifest after real Codex TUI verification showed `/polycli-codex:polycli ...` is not a registered slash command.
