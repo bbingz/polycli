@@ -12,7 +12,7 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 - Hardened prompt/review defaults away from broad YOLO for stateless calls: qwen ask is now bounded at 20 turns with plan mode and tool exclusion instead of the failing one-turn cap; Claude uses no-tools plus empty strict MCP config; Gemini/OpenCode/Pi/Kimi/Cmd/Copilot get conservative provider-specific ask constraints.
 - Kept Copilot as a fallback provider but removed allow-all tool/path/url defaults for ask/review.
 - Replaced MiniMax `mini-agent` log scraping with official `mmx-cli` text-chat JSON non-interactive invocation and updated tests/docs/skills around the new path.
-- Verification: `npm run check:provider-paths` exit 0 with local `mmx` 1.0.12 included in the drift probe; live `polycli ask --provider minimax` smoke returned `ok: true`; `release:check` exit 0 (367/367 tests; bundles 5; fixtures 16; manifests 0.6.14; host-map 11x4+terminal; codex-adapter 5; claude plugin validate ×2; npm dry-runs/pack checks passed). npm publish is pending local npm auth.
+- Verification: `npm run check:provider-paths` exit 0 with local `mmx` 1.0.12 included in the drift probe; live `polycli ask --provider minimax` smoke returned `ok: true`; `release:check` exit 0 (367/367 tests; bundles 5; fixtures 16; manifests 0.6.14; host-map 11x4+terminal; codex-adapter 5; claude plugin validate ×2; npm dry-runs/pack checks passed). Post-publish: tag, GitHub release (not draft, not prerelease), and both npm packages observable at 0.6.14.
 
 ## 2026-05-07 — Claude — v0.6.13 released
 

@@ -25,7 +25,7 @@ Patch on top of `v0.6.13` that hardens provider routing and stateless provider c
 ## Release artifacts
 
 - GitHub release `v0.6.14`
-- npm `@bbingz/polycli-opencode@0.6.14` is ready to publish after npm auth is available.
-- npm `@bbingz/polycli@0.6.14` is ready to publish after npm auth is available.
+- npm `@bbingz/polycli-opencode@0.6.14`
+- npm `@bbingz/polycli@0.6.14`
 
 Utility packages stay on the independent v1.x cadence and are unchanged.
