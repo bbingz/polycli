@@ -24,7 +24,7 @@
 
 `polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, **`cmd`** (Command Code), and **`mini-agent`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing` — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
 
-> **polycli is an in-host plugin, not a standalone shell binary.** There is no `polycli` executable on your `PATH`. Each host adapter exposes the same `health / ask / review / rescue / timing` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, an installed `polycli` skill in Codex). See [Outside a supported host](#outside-a-supported-host) if you are not running one of the four hosts.
+> **polycli is primarily an in-host plugin.** Each host adapter exposes the same `health / ask / review / rescue / timing / debug` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, an installed `polycli` skill in Codex). For environments without a supported host, the optional `@bbingz/polycli` terminal package adds a PATH-callable wrapper around the same companion. See [Outside a supported host](#outside-a-supported-host).
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
@@ -100,6 +100,18 @@ copilot plugin install polycli-copilot@polycli-hosts
 opencode plugin @bbingz/polycli-opencode
 ```
 
+### Terminal CLI
+
+Install `@bbingz/polycli` when you need a PATH-callable terminal surface outside Claude Code, Codex, Copilot CLI, or OpenCode (e.g. CI runners, ad-hoc shells, agents that cannot host plugins).
+
+```bash
+npm install -g @bbingz/polycli
+polycli health --json
+POLYCLI_RUN_ID=review-20260507 polycli debug explain review-20260507
+```
+
+The terminal CLI uses the same companion command behavior as the host adapters. Provider runtime internals remain bundled implementation details.
+
 ## Quick start
 
 After installing, verify the integration in your host:
@@ -132,22 +144,15 @@ For longer tasks, append `--background` and use `status <jobId>` / `result <jobI
 
 ## Outside a supported host
 
-If your agent / harness is **not** Claude Code, Codex, Copilot CLI, or OpenCode (e.g. Aider, Cursor, a bare shell script, a CI runner, or a Codex session that did not install the polycli-codex marketplace), there is no first-class polycli entry point. You have three honest options, in order of preference:
+If your agent / harness is **not** Claude Code, Codex, Copilot CLI, or OpenCode (e.g. Aider, Cursor, a bare shell script, a CI runner, or a Codex session that did not install the polycli-codex marketplace), you have three honest options, in order of preference:
 
-1. **Install the host adapter for your environment.** Codex users: run `codex plugin marketplace add bbingz/polycli`, install `Polycli` from `/plugins`, then start a new thread and ask Codex to use Polycli for the desired subcommand. The same host-native pattern applies to Copilot CLI and OpenCode (see [Installation](#installation)). This is the only supported public surface.
+1. **Install the host adapter for your environment.** Codex users: run `codex plugin marketplace add bbingz/polycli`, install `Polycli` from `/plugins`, then start a new thread and ask Codex to use Polycli for the desired subcommand. The same host-native pattern applies to Copilot CLI and OpenCode (see [Installation](#installation)).
 
-2. **Call the underlying provider CLI directly.** polycli is a thin wrapper over `gemini` / `qwen` / `kimi` / etc. — if you only need a one-shot prompt, `qwen -p "..."` works without polycli. You lose: probing-cost amortization, four-state timing, background job control, multi-host consistency. You keep: simplicity.
+2. **Install the terminal CLI.** `npm install -g @bbingz/polycli` exposes a PATH-callable `polycli` binary that wraps the same companion behavior as the host adapters. It is the supported entry point when no host plugin can be installed.
 
-3. **Escape hatch (unstable, internal).** You can invoke the bundled companion directly:
+3. **Call the underlying provider CLI directly.** polycli is a thin wrapper over `gemini` / `qwen` / `kimi` / etc. — if you only need a one-shot prompt, `qwen -p "..."` works without polycli. You lose: probing-cost amortization, four-state timing, background job control, multi-host consistency. You keep: simplicity.
 
-   ```bash
-   PLUGIN_ROOT=/path/to/plugins/polycli \
-     node /path/to/plugins/polycli/scripts/polycli-companion.bundle.mjs <subcommand> --provider <name> ...
-   ```
-
-   `PLUGIN_ROOT` (or `CLAUDE_PLUGIN_ROOT` as a fallback) must point at the directory containing `scripts/polycli-companion.bundle.mjs`. This is the same script every host adapter shells out to. It is **not a stable API** — flag names, JSON shapes, and the env contract may change without notice. Do not script against it for anything load-bearing; if you need a programmatic surface, open an issue describing the use case so a real public API can be designed.
-
-The npm packages (`@bbingz/polycli-utils`, `@bbingz/polycli-timing`) are libraries, not routing entry points. `@bbingz/polycli-runtime` exposes the registry but is documented as internal — see [`docs/polycli-v1-public-surface.md`](./docs/polycli-v1-public-surface.md) for the v1 contract.
+The other npm packages (`@bbingz/polycli-utils`, `@bbingz/polycli-timing`) are libraries, not routing entry points. `@bbingz/polycli-runtime` exposes the registry but is documented as internal — see [`docs/polycli-v1-public-surface.md`](./docs/polycli-v1-public-surface.md) for the v1 contract.
 
 ## Core commands
 

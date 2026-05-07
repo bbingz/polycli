@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-06 (v0.6.5 Command Code provider).
+Snapshot: 2026-05-07 (v0.6.6 review and host-adapter hardening).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,9 +10,9 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.5** — see `docs/release-notes-v0.6.5.md`.
-- Current release commit is the `v0.6.5` tag target.
-- Tests at release check: **298/298** pass.
+- Latest public release: **v0.6.6** — see `docs/release-notes-v0.6.6.md`.
+- Current release commit is the `v0.6.6` tag target.
+- Release verification targets are documented in `docs/release-notes-v0.6.6.md`.
 - 9 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode), each with an independent marketplace manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
@@ -57,6 +57,26 @@ Watch items:
 
 - env/config-based review constraints remain partially manual; document any newly automatable check in `docs/archive/review-cli-flags.md` before adding it to `check:review-drift`
 - after each publish, confirm GitHub latest release and npm registry versions match the repo release notes
+
+### Q6 — Real terminal CLI/TUI and run ledger observability
+
+Source: real Codex multi-provider review after the v0.6.x host-adapter hardening. Codex could call the plugin, but still tended to reason about Polycli as a shell CLI and the failure path was not debuggable enough from current `health` / `status` / `result` / `timing` output alone. In that run, 7 providers produced adoptable output (`gemini`, `copilot`, `kimi`, `qwen`, `minimax`, `claude`, `opencode`), `cmd` passed health but failed two ask attempts, and `pi` failed health and was skipped.
+
+Goal: add a real terminal entry point plus a persistent run ledger so users and host agents can run, inspect, compare, and debug provider calls outside host-specific plugin UX without depending on private companion bundle paths.
+
+Status: proposed active track. This is a product/operability track, not a provider rewrite. Full follow-up, roadmap, and implementation todo are tracked in `tasks/terminal-cli-tui-observability.md`.
+
+Phase plan:
+
+1. **Contract boundary** — decide the terminal package/bin shape while keeping `@bbingz/polycli-utils` and `@bbingz/polycli-timing` stable and `@bbingz/polycli-runtime` internal unless a future public-surface document explicitly promotes it.
+2. **Headless CLI first** — ship a PATH-callable `polycli` command with parity for existing companion commands before building the TUI.
+3. **Run ledger and diagnostics** — persist per-run and per-attempt facts for health, ask/review/rescue attempts, skip/adopt decisions, timing, raw log pointers, sanitized argv, and failure reasons.
+4. **TUI inspector** — build a short-lived terminal UI that consumes the same CLI/ledger control plane; it must inspect and operate existing commands, not invent new provider semantics.
+5. **Docs and release guards** — update README, host command map, public-surface docs, and release validation once the terminal surface exists.
+
+Sequencing rule: do not start TUI implementation until the headless CLI and run ledger can answer why a provider was adopted, skipped, or failed.
+
+Spec 1 landed: terminal package wrapper (`@bbingz/polycli`), shared `debug` companion vocabulary (`debug runs/show/explain`), and redacted run ledger foundation (per-workspace NDJSON with `--run-id` / `POLYCLI_RUN_ID`). Phases 1–3 above are now in code; phase 4 (TUI) and remaining phase 5 polish stay open.
 
 ---
 

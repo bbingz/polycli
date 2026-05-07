@@ -2,9 +2,9 @@
 
 ## Status
 
-`@bbingz/polycli-utils` and `@bbingz/polycli-timing` are the v1 public surface, published to npm from v0.5.0 onward. `@bbingz/polycli-runtime` and provider adapters live in this repo but remain internal (`private: true`): they are bundled into host plugins and are not part of the v1 npm contract.
+`@bbingz/polycli-utils` and `@bbingz/polycli-timing` are the v1 public library surface, published to npm from v0.5.0 onward. `@bbingz/polycli` is the v1 public terminal/operator surface (a PATH-callable wrapper around the bundled companion). `@bbingz/polycli-runtime` and provider adapters live in this repo but remain internal (`private: true`): they are bundled into host plugins and the terminal CLI, and are not part of the v1 npm contract.
 
-The repo now contains provider runtime code for host plugin builds, but that code is outside the v1 public package surface. The public contract is intentionally limited to utility helpers and timing semantics.
+The repo now contains provider runtime code for host plugin builds, but that code is outside the v1 public package surface. The public contract is intentionally limited to utility helpers, timing semantics, and the terminal CLI's command vocabulary.
 
 ## v1 Package Surface
 
@@ -77,8 +77,24 @@ Stable semantics in v1:
 - Aggregation is capability-aware and must preserve state distinctions.
 - Aggregation also reports per-provider `runtimePersistenceCounts` and `measurementScopeCounts` so mixed request/session/daemon or request/turn/job data is visible instead of silently blended.
 
-## Runtime And Provider Split
+### `@bbingz/polycli` (terminal CLI)
+
+`@bbingz/polycli` is the v1 terminal/operator entry point. The stable contract is:
+
+- A `polycli` bin that forwards `argv` to the bundled companion.
+- The companion subcommand vocabulary: `setup`, `health`, `ask`, `rescue`, `review`, `adversarial-review`, `status`, `result`, `cancel`, `timing`, `debug`.
+- Global `--run-id <id>` (or `POLYCLI_RUN_ID` env var) for joining a sequence of commands into one ledger run.
+
+Non-goals for this package:
+
+- exposing provider runtime classes or registry as importable JS API
+- a programmatic Node API distinct from the CLI subcommands
+- guaranteeing exact text-mode output across versions (use `--json` for machine consumers)
+
+### `@bbingz/polycli-runtime`
 
 `@bbingz/polycli-runtime` is an internal bundler input, not a public npm contract. Provider adapters may change as host plugin needs evolve; do not import them as stable API unless they are explicitly promoted in a future major-version surface document.
+
+## Runtime And Provider Split
 
 This keeps v1 small, testable, and publishable without pretending the provider model is a public framework.
