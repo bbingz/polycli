@@ -156,8 +156,8 @@ function printUsage() {
       "  polycli-companion.mjs health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
       "  polycli-companion.mjs rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>",
-      "  polycli-companion.mjs review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--json] [focus ...]",
-      "  polycli-companion.mjs adversarial-review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--json] [focus ...]",
+      "  polycli-companion.mjs review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--max-diff-bytes <n>] [--json] [focus ...]",
+      "  polycli-companion.mjs adversarial-review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--max-diff-bytes <n>] [--json] [focus ...]",
       "  polycli-companion.mjs status [job-id] [--all] [--wait] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs result [job-id] [--json]",
       "  polycli-companion.mjs cancel [job-id] [--json]",
@@ -187,6 +187,7 @@ function classifyErrorCode(message = "") {
   if (message === "No completed job found.") return "no_completed_job";
   if (message === "No active job found.") return "no_active_job";
   if (message === "--history must be a non-negative integer.") return "invalid_history";
+  if (message === "--max-diff-bytes must be a non-negative integer.") return "invalid_max_diff_bytes";
   return "error";
 }
 
@@ -951,7 +952,7 @@ async function runRescue(rawArgs) {
 function buildReviewExecution(rawArgs, { adversarial }) {
   const { options, positionals } = parseArgs(rawArgs, {
     booleanOptions: ["json", "background", "wait"],
-    valueOptions: ["provider", "model", "base", "scope"],
+    valueOptions: ["provider", "model", "base", "scope", "max-diff-bytes"],
     aliasMap: { m: "model" },
   });
   const { provider, remainingPositionals } = resolveProvider({
@@ -960,10 +961,12 @@ function buildReviewExecution(rawArgs, { adversarial }) {
   });
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
   const focus = remainingPositionals.join(" ").trim();
+  const maxDiffBytes = parseMaxDiffBytes(options["max-diff-bytes"]);
   const reviewContext = collectReviewContext({
     cwd: process.cwd(),
     scope: options.scope,
     baseRef: options.base || null,
+    maxDiffBytes,
   });
 
   if (!reviewContext.ok) {
@@ -1203,6 +1206,15 @@ function parseHistoryLimit(value) {
     throw new Error("--history must be a non-negative integer.");
   }
   return Number.parseInt(value, 10);
+}
+
+function parseMaxDiffBytes(value) {
+  if (value == null) return null;
+  if (!/^\d+$/.test(String(value))) {
+    throw new Error("--max-diff-bytes must be a non-negative integer.");
+  }
+  const parsed = Number.parseInt(value, 10);
+  return parsed > 0 ? parsed : null;
 }
 
 async function runTiming(rawArgs) {

@@ -286,6 +286,64 @@ test("collectReviewContext auto scope returns warnings when branch fallback fail
   assert.match(context.warnings.join("\n"), /branch diff failed/i);
 });
 
+test("collectReviewContext does not truncate by default for any diff size", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-git-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Test User"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+  fs.writeFileSync(path.join(root, "seed.txt"), "seed\n", "utf8");
+  execFileSync("git", ["add", "seed.txt"], { cwd: root });
+  execFileSync("git", ["commit", "-m", "seed"], { cwd: root });
+  const big = "x".repeat(250_000);
+  fs.writeFileSync(path.join(root, "big.txt"), big, "utf8");
+  execFileSync("git", ["add", "big.txt"], { cwd: root });
+
+  const context = collectReviewContext({ cwd: root, scope: "staged" });
+
+  assert.equal(context.ok, true);
+  assert.equal(context.truncated, false);
+  assert.equal(context.truncationNotice, null);
+  assert.ok(Buffer.byteLength(context.diff, "utf8") > 200_000);
+});
+
+test("collectReviewContext truncates when caller passes a positive maxDiffBytes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-git-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Test User"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+  fs.writeFileSync(path.join(root, "seed.txt"), "seed\n", "utf8");
+  execFileSync("git", ["add", "seed.txt"], { cwd: root });
+  execFileSync("git", ["commit", "-m", "seed"], { cwd: root });
+  const big = "x".repeat(50_000);
+  fs.writeFileSync(path.join(root, "big.txt"), big, "utf8");
+  execFileSync("git", ["add", "big.txt"], { cwd: root });
+
+  const context = collectReviewContext({ cwd: root, scope: "staged", maxDiffBytes: 1024 });
+
+  assert.equal(context.ok, true);
+  assert.equal(context.truncated, true);
+  assert.match(context.truncationNotice, /Diff truncated to 1024 bytes/);
+  assert.equal(Buffer.byteLength(context.diff, "utf8"), 1024);
+});
+
+test("collectReviewContext treats zero or negative maxDiffBytes as no cap", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-git-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Test User"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+  fs.writeFileSync(path.join(root, "seed.txt"), "seed\n", "utf8");
+  execFileSync("git", ["add", "seed.txt"], { cwd: root });
+  execFileSync("git", ["commit", "-m", "seed"], { cwd: root });
+  fs.writeFileSync(path.join(root, "big.txt"), "x".repeat(50_000), "utf8");
+  execFileSync("git", ["add", "big.txt"], { cwd: root });
+
+  for (const maxDiffBytes of [0, -1]) {
+    const context = collectReviewContext({ cwd: root, scope: "staged", maxDiffBytes });
+    assert.equal(context.truncated, false, `cap=${maxDiffBytes} should be treated as no cap`);
+    assert.equal(context.truncationNotice, null);
+  }
+});
+
 test("collectReviewContext auto scope stays warning-free for a clean repo when branch diff succeeds", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-git-"));
   execFileSync("git", ["init", "-b", "main"], { cwd: root });

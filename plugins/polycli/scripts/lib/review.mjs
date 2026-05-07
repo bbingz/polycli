@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 
 import { runCommand } from "@bbingz/polycli-utils/process";
 
-const DEFAULT_MAX_DIFF_BYTES = 200_000;
+const DEFAULT_MAX_DIFF_BYTES = null;
 const REVIEW_SCOPES = new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
 const REVIEW_APPEND_SYSTEM =
   "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
@@ -375,7 +375,8 @@ export function collectReviewContext({ cwd, scope = "auto", baseRef = null, maxD
   }
 
   const diffText = selected.diff || "";
-  const truncated = Buffer.byteLength(diffText, "utf8") > maxDiffBytes;
+  const capActive = typeof maxDiffBytes === "number" && Number.isFinite(maxDiffBytes) && maxDiffBytes > 0;
+  const truncated = capActive && Buffer.byteLength(diffText, "utf8") > maxDiffBytes;
   const truncatedDiff = truncated
     ? Buffer.from(diffText, "utf8").subarray(0, maxDiffBytes).toString("utf8")
     : diffText;
