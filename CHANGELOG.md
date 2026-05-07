@@ -6,6 +6,13 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — v0.6.11 released
+
+- Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.11, npm `@bbingz/polycli-opencode@0.6.11`, npm `@bbingz/polycli@0.6.11`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`); `@bbingz/polycli-runtime` remains internal.
+- Drop the unilateral 200 KB diff cap on `review`/`adversarial-review`: `DEFAULT_MAX_DIFF_BYTES` flipped from `200_000` to `null`. With provider context windows now routinely 1M-2M tokens, the hardcoded cap was an artificial cost ceiling that contradicted the Path B "no fake unification" stance. By default the full git diff goes to the provider; callers can still opt into truncation by passing a positive numeric `maxDiffBytes` to `collectReviewContext` or `--max-diff-bytes <n>` on the wrapper.
+- Add `--max-diff-bytes <n>` CLI flag on `review` and `adversarial-review` (validated like `--history`; `invalid_max_diff_bytes` structured error code on bad input). Help text, public-surface doc, host-plugin command files (`commands/review.md`, `commands/adversarial-review.md`), and codex/copilot SKILL grammar updated to surface the flag.
+- Verification: `release:check` exit 0 (362/362 tests; bundles 5; fixtures 16; manifests 0.6.11; host-map 11x4+terminal; codex-adapter 5; claude plugin validate ×2; 4 npm pack/publish dry-runs). Post-publish: tag, GitHub release (not draft, not prerelease), and both npm packages observable at 0.6.11.
+
 ## 2026-05-07 — Claude — v0.6.10 released
 
 - Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.10, npm `@bbingz/polycli-opencode@0.6.10`, npm `@bbingz/polycli@0.6.10`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`); `@bbingz/polycli-runtime` remains internal.

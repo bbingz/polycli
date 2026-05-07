@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-07 (v0.6.10 published: pi probe fixes — drop forced --model default + surface real pi provider errors + extract message.model).
+Snapshot: 2026-05-07 (v0.6.11 published: drop default 200 KB diff cap on review/adversarial-review; expose --max-diff-bytes opt-in flag).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,7 +10,7 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.10** — see `docs/release-notes-v0.6.10.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.10` + `@bbingz/polycli@0.6.10` all on the registry. Patch on top of v0.6.9 fixing pi probe regressions: `DEFAULT_PI_MODEL` no longer forces `openai-codex/gpt-5.4` onto every probe (pi auto-routes to its configured backend), `parsePiStreamText` surfaces `message.errorMessage`/`stopReason="error"` as a real provider error instead of `"pi produced no visible text"`, and `event.message.model` is now extracted so reporting reflects the model pi actually used.
+- Latest public release: **v0.6.11** — see `docs/release-notes-v0.6.11.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.11` + `@bbingz/polycli@0.6.11` all on the registry. Patch on top of v0.6.10 dropping the unilateral 200 KB diff cap on `review`/`adversarial-review`. `DEFAULT_MAX_DIFF_BYTES` is now `null` (no truncation by default) and a new `--max-diff-bytes <n>` flag lets AI assistants opt into a byte cap when their own context budget is tight. The `truncated`/`truncationNotice` fields stay in the result shape for backward compatibility.
 - 9 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
