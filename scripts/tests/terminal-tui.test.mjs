@@ -137,3 +137,38 @@ test("polycli tui smoke mode renders one frame from fixture debug json", () => {
     fs.rmSync(fixtureDir, { recursive: true, force: true });
   }
 });
+
+const terminalBin = path.join(repoRoot, "packages/polycli-terminal/bin/polycli.mjs");
+
+test("terminal wrapper routes tui to tui runtime smoke mode", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-tui-wrapper-"));
+  try {
+    fs.writeFileSync(path.join(fixtureDir, "runs.json"), JSON.stringify({
+      ok: true,
+      runs: [{ runId: "run-wrapper", commands: ["health"], startedAt: "now", adoptedCount: 0, skippedCount: 1, failedCount: 0 }],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "show-run-wrapper.json"), JSON.stringify({
+      ok: true,
+      runId: "run-wrapper",
+      events: [{ runId: "run-wrapper", provider: "pi", phase: "provider_decision", status: "skipped", reason: "health_failed" }],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "explain-run-wrapper.json"), JSON.stringify({
+      ok: true,
+      runId: "run-wrapper",
+      found: true,
+      text: "pi skipped (health_failed)",
+      events: [],
+    }));
+
+    const result = spawnSync(process.execPath, [terminalBin, "tui", "--smoke", "--fixture-dir", fixtureDir, "--run-id", "run-wrapper"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /run-wrapper/);
+    assert.match(result.stdout, /pi skipped/);
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});

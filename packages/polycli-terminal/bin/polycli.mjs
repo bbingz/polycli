@@ -5,8 +5,14 @@ import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const companion = path.join(here, 'polycli-companion.bundle.mjs');
+const tui = path.join(here, 'polycli-tui.mjs');
 
-const child = spawn(process.execPath, [companion, ...process.argv.slice(2)], {
+const args = process.argv.slice(2);
+const command = args[0];
+const target = command === 'tui' ? tui : companion;
+const forwardedArgs = command === 'tui' ? args.slice(1) : args;
+
+const child = spawn(process.execPath, [target, ...forwardedArgs], {
   stdio: 'inherit',
   env: {
     ...process.env,
