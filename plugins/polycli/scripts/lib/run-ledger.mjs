@@ -176,6 +176,8 @@ export function createRunLedgerEvent(event = {}) {
     preview: event.preview ?? null,
     stdoutBytes: event.stdoutBytes ?? null,
     stderrBytes: event.stderrBytes ?? null,
+    durationMs: event.durationMs ?? null,
+    pid: event.pid ?? null,
     logFile: event.logFile ?? null,
     argv: event.argv || [],
     command,

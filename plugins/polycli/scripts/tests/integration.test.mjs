@@ -2128,3 +2128,134 @@ test("integration: debug explain returns provider decisions", async (t) => {
   assert.equal(json.found, true);
   assert.match(json.text, /qwen adopted/);
 });
+
+function createBackgroundLedgerContext(t, extraEnv = {}) {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "polycli-bg-ledger-cwd-")));
+  const previousPluginData = process.env.CLAUDE_PLUGIN_DATA;
+  process.env.CLAUDE_PLUGIN_DATA = pluginData;
+  t.after(() => {
+    if (previousPluginData == null) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = previousPluginData;
+    fs.rmSync(pluginData, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+  return {
+    cwd,
+    pluginData,
+    env: cleanEnv({ CLAUDE_PLUGIN_DATA: pluginData, ...extraEnv }),
+  };
+}
+
+async function waitForLedgerPhase(workspaceRoot, runId, phase, { timeoutMs = 10_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastEvents = [];
+  while (Date.now() < deadline) {
+    lastEvents = await readRunLedgerEvents(workspaceRoot);
+    if (lastEvents.some((event) => event.runId === runId && event.phase === phase)) {
+      return lastEvents;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `ledger did not record phase=${phase} for runId=${runId} within ${timeoutMs}ms; events=${JSON.stringify(lastEvents)}`,
+  );
+}
+
+test("integration: background rescue with --run-id writes job_started + attempt_started + attempt_result + provider_decision adopted", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const context = createBackgroundLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    QWEN_FIXED_REPLY: "BG_RUN_OK",
+  });
+  const start = await runCompanion(
+    ["rescue", "--provider", "qwen", "--background", "--json", "--run-id", "run-bg-success", "__reply=BG_RUN_OK"],
+    context,
+  );
+  assert.equal(start.code, 0, start.stderr);
+  const started = JSON.parse(start.stdout);
+  const finalStatus = await waitForTerminalJob(started.job.jobId, context);
+  assert.equal(finalStatus.job.status, "completed");
+
+  const events = (await waitForLedgerPhase(context.cwd, "run-bg-success", "provider_decision"))
+    .filter((event) => event.runId === "run-bg-success");
+  const phaseCounts = events.reduce((acc, event) => {
+    acc[event.phase] = (acc[event.phase] || 0) + 1;
+    return acc;
+  }, {});
+  assert.equal(phaseCounts.job_started, 1, `expected one job_started; got ${JSON.stringify(phaseCounts)}\nevents=${JSON.stringify(events, null, 2)}`);
+  assert.equal(phaseCounts.attempt_started, 1, `expected one worker attempt_started; got ${JSON.stringify(phaseCounts)}`);
+  assert.equal(phaseCounts.attempt_result, 1, `expected one worker attempt_result; got ${JSON.stringify(phaseCounts)}`);
+  const decisions = events.filter((event) => event.phase === "provider_decision");
+  assert.equal(decisions.length, 1, `expected one provider_decision; got ${decisions.length}`);
+  assert.equal(decisions[0].status, "adopted");
+
+  const runStarted = events.find((event) => event.phase === "run_started");
+  const parentHostSurface = runStarted?.hostSurface;
+  const workerEvents = events.filter((event) =>
+    ["job_started", "attempt_started", "attempt_result", "provider_decision"].includes(event.phase),
+  );
+  for (const event of workerEvents) {
+    assert.equal(event.jobId, started.job.jobId, `event ${event.phase} jobId mismatch`);
+    assert.equal(event.hostSurface, parentHostSurface, `event ${event.phase} should match parent hostSurface`);
+  }
+});
+
+test("integration: background ask failure writes attempt_result failed + provider_decision failed without full prompt", async (t) => {
+  const context = createBackgroundLedgerContext(t, {
+    CMD_CLI_BIN: createFakeCmdBin(t),
+  });
+  const userPrompt = "Return exactly POLYCLI_FIXTURE_OK_with_unique_marker_123";
+  const start = await runCompanion(
+    ["ask", "--provider", "cmd", "--background", "--json", "--run-id", "run-bg-failed", userPrompt],
+    context,
+  );
+  assert.equal(start.code, 0, start.stderr);
+  const started = JSON.parse(start.stdout);
+  const finalStatus = await waitForTerminalJob(started.job.jobId, context);
+  assert.equal(finalStatus.job.status, "failed");
+
+  const events = (await waitForLedgerPhase(context.cwd, "run-bg-failed", "provider_decision"))
+    .filter((event) => event.runId === "run-bg-failed");
+  const attemptResult = events.find((event) => event.phase === "attempt_result");
+  assert.ok(attemptResult, `expected attempt_result; got ${JSON.stringify(events, null, 2)}`);
+  assert.equal(attemptResult.status, "failed");
+  const decision = events.find((event) => event.phase === "provider_decision");
+  assert.ok(decision, "expected provider_decision");
+  assert.equal(decision.status, "failed");
+  assert.equal(decision.reason, "ask_failed");
+
+  const serialized = JSON.stringify(events);
+  assert.equal(
+    serialized.includes(userPrompt),
+    false,
+    "ledger events must not contain the full user prompt",
+  );
+});
+
+test("integration: background worker preserves explicit POLYCLI_HOST_SURFACE", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const context = createBackgroundLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    QWEN_FIXED_REPLY: "HOST_SURFACE_OK",
+    POLYCLI_HOST_SURFACE: "codex-skill",
+  });
+  const start = await runCompanion(
+    ["ask", "--provider", "qwen", "--background", "--json", "--run-id", "run-bg-host", "__reply=HOST_SURFACE_OK"],
+    context,
+  );
+  assert.equal(start.code, 0, start.stderr);
+  const started = JSON.parse(start.stdout);
+  const finalStatus = await waitForTerminalJob(started.job.jobId, context);
+  assert.equal(finalStatus.job.status, "completed");
+
+  const workerPhases = ["job_started", "attempt_started", "attempt_result", "provider_decision"];
+  const events = (await waitForLedgerPhase(context.cwd, "run-bg-host", "provider_decision"))
+    .filter((event) => event.runId === "run-bg-host" && workerPhases.includes(event.phase));
+  assert.ok(events.length >= 4, `expected at least 4 worker events; got ${events.length}`);
+  for (const event of events) {
+    assert.equal(event.hostSurface, "codex-skill", `event ${event.phase} hostSurface should be codex-skill`);
+  }
+});

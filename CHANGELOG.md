@@ -6,6 +6,17 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — background-job ledger plumbing (Q6 Spec 2)
+
+- Parent process now persists a top-level `runContext` (runId / command / hostSurface / argv / jobId / provider / kind / model / defaultModel / logFile) into the per-job config when `--run-id` (or `POLYCLI_RUN_ID`) is in scope.
+- After spawning the worker, the parent writes a `job_started` ledger event; no `provider_decision` from the parent.
+- `_job-worker` reads `runContext`, writes `attempt_started` before the streaming call, and on completion writes `attempt_result` (status `completed` / `failed`) plus `provider_decision` (`adopted` on success, `failed reason=<kind>_failed` on not-ok). Worker-observed cancellation produces `attempt_result status=cancelled` + `provider_decision status=cancelled reason=job_cancelled`.
+- Added shared `recordRunEventForContext(workspaceRoot, runContext, base)` writer; existing `recordRunEvent` delegates via `buildCurrentRunContext()`. Worker code never mutates the parent-side `RUN_CONTEXT` global.
+- `createRunLedgerEvent` schema gains nullable `pid` / `durationMs` slots; foreground events round-trip with the existing fields and add `null` defaults for the new ones.
+- Tests: 3 new background integration tests (success with `--run-id`, failed `cmd ask` without full prompt leakage, explicit `POLYCLI_HOST_SURFACE=codex-skill` propagation). All 61 plugin-level tests pass; full `npm test` and `npm run release:check` green.
+- Killed-worker (`kill -9` after provider returns but before the ledger write) perfect recovery is documented as the open follow-up; it needs a reaper or scan-on-read step and is not in this slice.
+- No version bump, no tag, no publish — main only. Roadmap Q6 status updated; `tasks/terminal-cli-tui-observability.md` background-worker checkbox flipped.
+
 ## 2026-05-07 — Claude — v0.6.7 released (terminal CLI + run ledger)
 
 - Shipped standalone terminal CLI `@bbingz/polycli` (PATH-callable wrapper around the bundled companion); first-time npm publish.

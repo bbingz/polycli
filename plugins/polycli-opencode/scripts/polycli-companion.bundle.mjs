@@ -5175,6 +5175,8 @@ function createRunLedgerEvent(event = {}) {
     preview: event.preview ?? null,
     stdoutBytes: event.stdoutBytes ?? null,
     stderrBytes: event.stderrBytes ?? null,
+    durationMs: event.durationMs ?? null,
+    pid: event.pid ?? null,
     logFile: event.logFile ?? null,
     argv: event.argv || [],
     command,
@@ -5294,17 +5296,36 @@ var RUN_CONTEXT = {
   hostSurface: "unknown",
   rawArgs: []
 };
-async function recordRunEvent(workspaceRoot, base = {}) {
+function buildCurrentRunContext(overrides = {}) {
   if (!RUN_CONTEXT.runId) return null;
-  const command = base.command || RUN_CONTEXT.command;
-  return appendRunLedgerEvent(workspaceRoot, {
+  const command = overrides.command || RUN_CONTEXT.command;
+  return {
+    version: 1,
     runId: RUN_CONTEXT.runId,
+    command,
+    commands: [command].filter(Boolean),
     hostSurface: RUN_CONTEXT.hostSurface,
     argv: redactArgv(RUN_CONTEXT.rawArgs, { command: RUN_CONTEXT.command }),
+    ...overrides
+  };
+}
+async function recordRunEventForContext(workspaceRoot, runContext, base = {}) {
+  if (!runContext?.runId) return null;
+  const command = base.command || runContext.command;
+  const commands = Array.from(
+    new Set([...runContext.commands || [], command, ...base.commands || []].filter(Boolean))
+  ).sort();
+  return appendRunLedgerEvent(workspaceRoot, {
+    runId: runContext.runId,
+    hostSurface: runContext.hostSurface,
+    argv: runContext.argv || [],
     ...base,
     command,
-    commands: base.commands || (command ? [command] : [])
+    commands
   });
+}
+async function recordRunEvent(workspaceRoot, base = {}) {
+  return recordRunEventForContext(workspaceRoot, buildCurrentRunContext(), base);
 }
 function printUsage() {
   console.log(
@@ -5731,6 +5752,15 @@ async function startBackgroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
   const job = buildQueuedJob(execution, workspaceRoot);
   upsertJob(workspaceRoot, job);
+  const runContext = buildCurrentRunContext({
+    command: execution.kind,
+    jobId: job.jobId,
+    provider: execution.provider,
+    kind: execution.kind,
+    model: execution.model || null,
+    defaultModel: execution.defaultModel || null,
+    logFile: job.logFile
+  });
   writeJobConfigFile(workspaceRoot, job.jobId, {
     workspaceRoot,
     execution: {
@@ -5742,7 +5772,8 @@ async function startBackgroundExecution(execution, asJson) {
         jobId: job.jobId
       }
     },
-    jobId: job.jobId
+    jobId: job.jobId,
+    runContext
   });
   fs9.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
 `, "utf8");
@@ -5760,6 +5791,20 @@ async function startBackgroundExecution(execution, asJson) {
     status: "running",
     pid: child.pid ?? null
   });
+  if (runContext) {
+    await recordRunEventForContext(workspaceRoot, runContext, {
+      command: execution.kind,
+      kind: execution.kind,
+      provider: execution.provider,
+      phase: "job_started",
+      status: "started",
+      jobId: job.jobId,
+      model: execution.model || null,
+      defaultModel: execution.defaultModel || null,
+      logFile: job.logFile,
+      pid: runningJob.pid ?? null
+    });
+  }
   if (asJson) {
     output({ ok: true, job: runningJob }, true);
     return;
@@ -6278,11 +6323,26 @@ async function runJobWorker(rawArgs) {
   if (!payload) {
     throw new Error(`Unable to read job config ${configFile}`);
   }
-  const { workspaceRoot, execution, jobId } = payload;
+  const { workspaceRoot, execution, jobId, runContext } = payload;
   const current = getJob(workspaceRoot, jobId);
   if (!current) {
     throw new Error(`Unknown job ${jobId}`);
   }
+  if (runContext?.runId) {
+    await recordRunEventForContext(workspaceRoot, runContext, {
+      command: runContext.command || execution.kind,
+      kind: execution.kind,
+      provider: execution.provider,
+      phase: "attempt_started",
+      status: "started",
+      attempt: { ordinal: 1 },
+      jobId,
+      model: execution.model || null,
+      defaultModel: execution.defaultModel || null,
+      logFile: current.logFile || null
+    });
+  }
+  const startedAt = Date.now();
   try {
     const result = await runProviderPromptStreaming({
       provider: execution.provider,
@@ -6321,6 +6381,28 @@ async function runJobWorker(rawArgs) {
       };
     });
     if (!write.written) {
+      const latest = getJob(workspaceRoot, jobId);
+      if (runContext?.runId && latest && latest.status === "cancelled") {
+        await recordRunEventForContext(workspaceRoot, runContext, {
+          command: runContext.command || execution.kind,
+          kind: execution.kind,
+          provider: execution.provider,
+          phase: "attempt_result",
+          status: "cancelled",
+          attempt: { ordinal: 1 },
+          jobId,
+          durationMs: Date.now() - startedAt
+        });
+        await recordRunEventForContext(workspaceRoot, runContext, {
+          command: runContext.command || execution.kind,
+          kind: execution.kind,
+          provider: execution.provider,
+          phase: "provider_decision",
+          status: "cancelled",
+          reason: "job_cancelled",
+          jobId
+        });
+      }
       removeJobConfigFile(workspaceRoot, jobId);
       return;
     }
@@ -6328,6 +6410,40 @@ async function runJobWorker(rawArgs) {
       appendTimingRecord(workspaceRoot, result.timing);
     }
     cacheProviderModel(workspaceRoot, execution.provider, result.model);
+    if (runContext?.runId) {
+      const compactResult = compactProviderResult(result);
+      await recordRunEventForContext(workspaceRoot, runContext, {
+        command: runContext.command || execution.kind,
+        kind: execution.kind,
+        provider: execution.provider,
+        phase: "attempt_result",
+        status: result.ok ? "completed" : "failed",
+        attempt: { ordinal: 1 },
+        jobId,
+        model: result.model || null,
+        defaultModel: result.defaultModel || null,
+        preview: result.response ? String(result.response).slice(0, 180) : null,
+        stdoutBytes: compactResult.stdoutBytes ?? null,
+        stderrBytes: compactResult.stderrBytes ?? null,
+        durationMs: Date.now() - startedAt,
+        timingRef: result.timing ? {
+          provider: result.timing.provider,
+          kind: result.timing.kind,
+          completedAt: result.timing.completedAt
+        } : null,
+        error: result.ok || !result.error ? null : { message: String(result.error).slice(0, 300) },
+        logFile: current.logFile || null
+      });
+      await recordRunEventForContext(workspaceRoot, runContext, {
+        command: runContext.command || execution.kind,
+        kind: execution.kind,
+        provider: execution.provider,
+        phase: "provider_decision",
+        status: result.ok ? "adopted" : "failed",
+        reason: result.ok ? null : `${execution.kind}_failed`,
+        jobId
+      });
+    }
     removeJobConfigFile(workspaceRoot, jobId);
   } catch (error) {
     const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {
@@ -6351,8 +6467,53 @@ async function runJobWorker(rawArgs) {
       };
     });
     if (!write.written) {
+      const latest = getJob(workspaceRoot, jobId);
+      if (runContext?.runId && latest && latest.status === "cancelled") {
+        await recordRunEventForContext(workspaceRoot, runContext, {
+          command: runContext.command || execution.kind,
+          kind: execution.kind,
+          provider: execution.provider,
+          phase: "attempt_result",
+          status: "cancelled",
+          attempt: { ordinal: 1 },
+          jobId,
+          durationMs: Date.now() - startedAt
+        });
+        await recordRunEventForContext(workspaceRoot, runContext, {
+          command: runContext.command || execution.kind,
+          kind: execution.kind,
+          provider: execution.provider,
+          phase: "provider_decision",
+          status: "cancelled",
+          reason: "job_cancelled",
+          jobId
+        });
+      }
       removeJobConfigFile(workspaceRoot, jobId);
       return;
+    }
+    if (runContext?.runId) {
+      await recordRunEventForContext(workspaceRoot, runContext, {
+        command: runContext.command || execution.kind,
+        kind: execution.kind,
+        provider: execution.provider,
+        phase: "attempt_result",
+        status: "failed",
+        attempt: { ordinal: 1 },
+        jobId,
+        durationMs: Date.now() - startedAt,
+        error: { message: String(error?.message || error).slice(0, 300) },
+        logFile: current.logFile || null
+      });
+      await recordRunEventForContext(workspaceRoot, runContext, {
+        command: runContext.command || execution.kind,
+        kind: execution.kind,
+        provider: execution.provider,
+        phase: "provider_decision",
+        status: "failed",
+        reason: `${execution.kind}_failed`,
+        jobId
+      });
     }
     removeJobConfigFile(workspaceRoot, jobId);
     throw error;

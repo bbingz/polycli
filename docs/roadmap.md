@@ -74,7 +74,7 @@ Phase plan:
 
 Sequencing rule: do not start TUI implementation until the headless CLI and run ledger can answer why a provider was adopted, skipped, or failed.
 
-Spec 1 released in v0.6.7 (2026-05-07): terminal package wrapper (`@bbingz/polycli` on npm), shared `debug` companion vocabulary (`debug runs/show/explain`), and redacted run ledger foundation (per-workspace NDJSON with `--run-id` / `POLYCLI_RUN_ID`). Phases 1–3 are shipped. Open follow-ups: phase 4 (TUI inspector) and the background-worker ledger plumbing (running `attempt_started` / `attempt_result` / `provider_decision` from `_job-worker` against the originating `runId`).
+Spec 1 released in v0.6.7 (2026-05-07): terminal package wrapper (`@bbingz/polycli` on npm), shared `debug` companion vocabulary (`debug runs/show/explain`), and redacted run ledger foundation (per-workspace NDJSON with `--run-id` / `POLYCLI_RUN_ID`). Phases 1–3 are shipped. Background-worker ledger plumbing landed on main after v0.6.7 (Spec 2): the parent process persists `runContext` into the per-job config, then writes `job_started` after spawn, and `_job-worker` writes `attempt_started` / `attempt_result` / `provider_decision` against the originating `runId`. TUI inspector remains blocked until persisted state covers the killed-worker recovery case (out of scope for the current slice).
 
 ---
 

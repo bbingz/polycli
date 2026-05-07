@@ -4,6 +4,7 @@ Status: proposed active track.
 Source: real Codex multi-provider review after v0.6.x host-adapter hardening.
 Roadmap anchor: `docs/roadmap.md` Q6.
 First spec: `docs/superpowers/specs/2026-05-07-terminal-cli-ledger-foundation-design.md`.
+Second spec: `docs/superpowers/specs/2026-05-07-background-job-ledger-plumbing-design.md`.
 
 ## Context
 
@@ -84,7 +85,9 @@ The target is not a daemon and not a provider framework. The target is a short-l
 - [x] Add `debug runs`, `debug show`, and `debug explain` before building the TUI; keep `debug logs` for a later log-viewer slice.
 - [ ] Add docs examples for the concrete failure case: `cmd health passed but ask failed twice`; `pi health failed and skipped`.
 - [x] Update `docs/roadmap.md`, README, host command map, and public-surface docs when each phase lands. (Spec 1 surface only; later spec phases will revisit.)
-- [ ] Wire `runId` + `hostSurface` through job-config so background workers also append `attempt_started`/`attempt_result`/`provider_decision` events. (Spec 1 covers foreground only.)
+- [x] Wire `runId` + `hostSurface` through job-config so background workers also append `job_started`/`attempt_started`/`attempt_result`/`provider_decision` events. Plan: `docs/superpowers/plans/2026-05-07-background-job-ledger-plumbing.md`.
+- [ ] Killed-worker perfect recovery: when a background worker is `kill -9`'d after `runProviderPromptStreaming` returns but before the job/ledger writes complete, the run ledger has no terminal `attempt_result`. Recovery requires a separate reaper or scan-on-read step; deferred to a later slice.
+- [ ] Keep the first TUI inspector blocked until background worker ledger events can explain adopted, failed, and unfinished background jobs from persisted state.
 
 ## Non-goals
 
