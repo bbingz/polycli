@@ -91,6 +91,10 @@ Non-goals for this package:
 - a programmatic Node API distinct from the CLI subcommands
 - guaranteeing exact text-mode output across versions (use `--json` for machine consumers)
 
+### `polycli tui`
+
+Read-only terminal inspector over run-ledger data. Supports `--run-id <id>` and `--history <count>`. It does not run, cancel, retry, or mutate provider jobs.
+
 ### `@bbingz/polycli-runtime`
 
 `@bbingz/polycli-runtime` is an internal bundler input, not a public npm contract. Provider adapters may change as host plugin needs evolve; do not import them as stable API unless they are explicitly promoted in a future major-version surface document.

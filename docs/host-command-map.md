@@ -40,6 +40,7 @@ Notes:
 
 - Anywhere a cell shows `...`, pass the same flags you would to the raw CLI: `--provider <p>`, `--json`, `--background`, `<prompt>`, etc. The argument grammar does not change between hosts.
 - OpenCode has two tool functions. `polycli_run` is the generic one accepting `argv: string[]`. `polycli_timing` is a convenience wrapper that takes `{provider?, history?, json?}` for the single most-used read-only command. Everything else must go through `polycli_run`.
+- `polycli tui` is terminal-only. Host plugins continue to use `debug runs/show/explain`; no Claude/Codex/Copilot/OpenCode command is added for the TUI.
 
 ## Side-by-side examples
 

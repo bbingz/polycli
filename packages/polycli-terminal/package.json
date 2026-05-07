@@ -8,7 +8,9 @@
   },
   "files": [
     "bin/polycli.mjs",
+    "bin/polycli-tui.mjs",
     "bin/polycli-companion.bundle.mjs",
+    "lib/**/*.mjs",
     "README.md",
     "LICENSE"
   ],

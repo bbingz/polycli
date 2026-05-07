@@ -6,6 +6,17 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — TUI inspector MVP
+
+- Added terminal-only `polycli tui` as a read-only inspector over existing debug/run-ledger data.
+- Renders run list, provider states, event timeline, detail/reproduction command panel, and explicit `unfinished` / `unknown` states for non-terminal background jobs.
+- New view-model layer (`packages/polycli-terminal/lib/tui/view-model.mjs`): pure `classifyProviderStates` / `formatReproductionCommand` / `truncateMiddle` / `buildTuiModel` / `renderTuiFrame` so behavior is testable without a real TTY.
+- New runtime (`packages/polycli-terminal/bin/polycli-tui.mjs`): interactive `q` / `r` keypress loop over `process.stdin` raw mode plus a `--smoke --fixture-dir <dir>` mode for one-frame snapshots used by tests.
+- Terminal wrapper now routes `polycli tui` to the TUI runtime; all other commands still delegate to the bundled companion. `POLYCLI_HOST_SURFACE` defaults to `terminal` for both targets.
+- Packaging: `packages/polycli-terminal/package.json` now ships `bin/polycli-tui.mjs` and `lib/**/*.mjs`; new packaging test asserts `bin/polycli-tui.mjs` and `lib/tui/view-model.mjs` are in the published tarball.
+- Docs: terminal README adds a TUI section, host command map adds a terminal-only `polycli tui` note (no host plugin slash command), public-surface doc adds a `polycli tui` entry.
+- No provider execution, retry, cancel, daemon, watch mode, full log viewer, version bump, tag, or publish in this slice.
+
 ## 2026-05-07 — Codex — TUI inspector MVP spec/plan
 
 - Added `docs/superpowers/specs/2026-05-07-tui-inspector-mvp-design.md` for a read-only terminal TUI inspector over existing `debug runs/show/explain` and run-ledger data.

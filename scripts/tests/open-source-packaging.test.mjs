@@ -141,3 +141,14 @@ test("public bin packages publish every declared bin target in the tarball", () 
     }
   }
 });
+
+test("terminal package ships tui runtime and view-model files", () => {
+  const packedFiles = packFileList("packages/polycli-terminal");
+  for (const required of ["bin/polycli-tui.mjs", "lib/tui/view-model.mjs"]) {
+    assert.equal(
+      packedFiles.has(required),
+      true,
+      `terminal package tarball must ship ${required}`,
+    );
+  }
+});

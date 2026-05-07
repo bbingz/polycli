@@ -89,7 +89,7 @@ The target is not a daemon and not a provider framework. The target is a short-l
 - [x] Wire `runId` + `hostSurface` through job-config so background workers also append `job_started`/`attempt_started`/`attempt_result`/`provider_decision` events. Plan: `docs/superpowers/plans/2026-05-07-background-job-ledger-plumbing.md`.
 - [ ] Killed-worker perfect recovery: when a background worker is `kill -9`'d after `runProviderPromptStreaming` returns but before the job/ledger writes complete, the run ledger has no terminal `attempt_result`. Recovery requires a separate reaper or scan-on-read step; deferred to a later slice.
 - [ ] Build first read-only terminal TUI inspector. Plan: `docs/superpowers/plans/2026-05-07-tui-inspector-mvp.md`.
-- [ ] First TUI must render started/attempt_started-without-final-event as unfinished/unknown; recovery remains follow-up.
+- [x] First TUI must render started/attempt_started-without-final-event as unfinished/unknown; recovery remains follow-up.
 
 ## Non-goals
 
