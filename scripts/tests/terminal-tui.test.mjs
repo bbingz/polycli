@@ -92,3 +92,48 @@ test("renderTuiFrame includes unfinished state and footer controls", () => {
   assert.match(frame, /unfinished/);
   assert.match(frame, /q quit/);
 });
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const tuiBin = path.join(repoRoot, "packages/polycli-terminal/bin/polycli-tui.mjs");
+
+test("polycli tui smoke mode renders one frame from fixture debug json", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-tui-fixture-"));
+  try {
+    fs.writeFileSync(path.join(fixtureDir, "runs.json"), JSON.stringify({
+      ok: true,
+      runs: [{ runId: "run-smoke", commands: ["ask"], startedAt: "now", adoptedCount: 1, skippedCount: 0, failedCount: 0 }],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "show-run-smoke.json"), JSON.stringify({
+      ok: true,
+      runId: "run-smoke",
+      events: [
+        { runId: "run-smoke", provider: "qwen", phase: "provider_decision", status: "adopted", argv: ["ask", "--provider", "qwen", "<prompt:redacted>"] },
+      ],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "explain-run-smoke.json"), JSON.stringify({
+      ok: true,
+      runId: "run-smoke",
+      found: true,
+      text: "qwen adopted",
+      events: [],
+    }));
+
+    const result = spawnSync(process.execPath, [tuiBin, "--smoke", "--fixture-dir", fixtureDir, "--run-id", "run-smoke"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /polycli tui inspector/);
+    assert.match(result.stdout, /run-smoke/);
+    assert.match(result.stdout, /qwen adopted/);
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
