@@ -44,7 +44,7 @@ Notes:
 
 ## Side-by-side examples
 
-The same four operations, across all four hosts.
+The same four operations, across all four host adapters plus the Terminal CLI.
 
 ### Health check
 
@@ -54,6 +54,7 @@ The same four operations, across all four hosts.
 | Codex         | `Choose Polycli with @, then ask it to run: health`                |
 | Copilot       | `polycli health`                                             |
 | OpenCode      | `polycli_run(["health"])`                                    |
+| Terminal CLI  | `polycli health`                                             |
 
 ### Ask one provider a question
 
@@ -63,6 +64,7 @@ The same four operations, across all four hosts.
 | Codex         | `Choose Polycli with @, then ask it to run: ask --provider qwen Reply with only: OK` |
 | Copilot       | `polycli ask --provider qwen "Reply with only: OK"`                        |
 | OpenCode      | `polycli_run(["ask", "--provider", "qwen", "Reply with only: OK"])`        |
+| Terminal CLI  | `polycli ask --provider qwen "Reply with only: OK"`                        |
 
 ### Launch a background review and poll
 
@@ -72,6 +74,7 @@ The same four operations, across all four hosts.
 | Codex         | same with `Choose Polycli with @, then ask it to run: review ...`                                    |
 | Copilot       | same with `polycli review …`                                                                    |
 | OpenCode      | `polycli_run(["review","--provider","claude","--scope","staged","--background"])` → `polycli_run(["status",jobId,"--wait"])` → `polycli_run(["result",jobId])` |
+| Terminal CLI  | `polycli review --provider claude --scope staged --background` → `polycli status <jobId> --wait` → `polycli result <jobId>` |
 
 ### Read timing history for one provider (structured)
 
@@ -81,10 +84,11 @@ The same four operations, across all four hosts.
 | Codex         | `Choose Polycli with @, then ask it to run: timing --provider qwen --history 20 --json` |
 | Copilot       | `polycli timing --provider qwen --history 20 --json`                     |
 | OpenCode      | `polycli_timing({"provider":"qwen","history":20,"json":true})`           |
+| Terminal CLI  | `polycli timing --provider qwen --history 20 --json`                     |
 
 ## Why the surfaces differ
 
-Claude Code first-classes user-visible slash-commands, so ten separate command files produce better autocomplete and discoverability. Codex and Copilot express the same capabilities as a skill with an `$ARGUMENTS`-style dispatcher — the subcommand is data, not a separate registered handler. Codex does not register a user slash command for `polycli-codex`; install it from `/plugins` and invoke it as a skill. OpenCode is a tool-calling host, so the natural surface is JSON-schema'd tool functions. See `docs/roadmap.md` Q3 for the deeper question of whether to converge these surfaces; the current answer is "no, document the asymmetry instead."
+Claude Code first-classes user-visible slash-commands, so eleven separate command files produce better autocomplete and discoverability. Codex and Copilot express the same capabilities as a skill with an `$ARGUMENTS`-style dispatcher — the subcommand is data, not a separate registered handler. Codex does not register a user slash command for `polycli-codex`; install it from `/plugins` and invoke it as a skill. OpenCode is a tool-calling host, so the natural surface is JSON-schema'd tool functions. See `docs/roadmap.md` Q3 for the deeper question of whether to converge these surfaces; the current answer is "no, document the asymmetry instead."
 
 ## When this doc goes stale
 

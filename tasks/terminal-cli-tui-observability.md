@@ -1,6 +1,6 @@
 # Terminal CLI/TUI and run ledger observability
 
-Status: proposed active track.
+Status: Spec 1 released in v0.6.7; Spec 2 and Spec 3 released in v0.6.8; Phase 5/6/7 follow-up hardening landed after v0.6.8.
 Source: real Codex multi-provider review after v0.6.x host-adapter hardening.
 Roadmap anchor: `docs/roadmap.md` Q6.
 First spec: `docs/superpowers/specs/2026-05-07-terminal-cli-ledger-foundation-design.md`.
@@ -9,10 +9,10 @@ Third spec: `docs/superpowers/specs/2026-05-07-tui-inspector-mvp-design.md`.
 
 ## Context
 
-Polycli currently ships as host plugins plus a shared companion bundle. That works when the host adapter is loaded correctly, but it leaves two operational gaps:
+Polycli now ships as host plugins, a PATH-callable terminal CLI, and a shared companion bundle. The original track addressed two operational gaps:
 
-- Agents can still misclassify Polycli as a missing shell tool because there is no stable PATH-callable `polycli` binary.
-- Failed multi-provider runs are hard to debug because current state is split across `state.json`, `jobs/<id>.json`, `jobs/<id>.log`, and `timings.ndjson`, with no durable run-level explanation of health, attempts, retries, skip/adopt decisions, and raw log pointers.
+- Agents could misclassify Polycli as a missing shell tool when no stable PATH-callable `polycli` binary existed.
+- Failed multi-provider runs were hard to debug because state was split across `state.json`, `jobs/<id>.json`, `jobs/<id>.log`, and `timings.ndjson`, with no durable run-level explanation of health, attempts, retries, skip/adopt decisions, and raw log pointers.
 
 The concrete failure case that triggered this track:
 
@@ -24,12 +24,12 @@ The target is not a daemon and not a provider framework. The target is a short-l
 
 ## Follow-up
 
-- Replace the README's "no standalone shell binary" stance once a real terminal package exists; until then, keep the current warning honest.
+- README now points unsupported hosts at the real `@bbingz/polycli` terminal CLI while keeping host-plugin invocation rules explicit.
 - Keep the host plugins. The terminal CLI/TUI is a fifth surface, not a replacement for Claude Code, Codex, Copilot CLI, or OpenCode adapters.
 - Preserve the current `setup` vs `health` distinction: `setup` is cheap install/auth inspection; `health` is a real model probe and should not become a routine preflight.
 - Do not promote `@bbingz/polycli-runtime` into a public provider framework as part of this work. The CLI should wrap existing companion semantics while provider modules remain flat and explicit.
 - Do not add daemon, monitor, or server mode. Every command and TUI session should be short-lived and compatible with the current timing contract.
-- Capture one real failing `cmd` ask and one real failing `pi` health sample before implementing ledger writers, so stored fields match actual stdout/stderr/status shapes.
+- Preserve the captured `cmd` ask failure and `pi` health failure examples as schema-shaped docs/fixtures; live provider repro remains environment-gated.
 - Treat debug retention as local and redacted by default. Persist enough to reproduce and explain failures, but do not store secrets or full prompts in the first slice.
 
 ## Roadmap
@@ -85,11 +85,12 @@ The target is not a daemon and not a provider framework. The target is a short-l
 - [x] Add ledger rotation and corrupt-file recovery behavior parallel to existing state-file recovery.
 - [x] Add `debug runs`, `debug show`, and `debug explain` before building the TUI; keep `debug logs` for a later log-viewer slice.
 - [x] Add docs examples for the concrete failure case: `cmd health passed but ask failed twice`; `pi health failed and skipped`. Documented in `docs/polycli-v1-public-surface.md` under "Run ledger debug examples".
-- [x] Update `docs/roadmap.md`, README, host command map, and public-surface docs when each phase lands. (Spec 1 surface only; later spec phases will revisit.)
+- [x] Update `docs/roadmap.md`, README, host command map, and public-surface docs when each phase lands.
 - [x] Wire `runId` + `hostSurface` through job-config so background workers also append `job_started`/`attempt_started`/`attempt_result`/`provider_decision` events. Plan: `docs/superpowers/plans/2026-05-07-background-job-ledger-plumbing.md`.
-- [ ] Killed-worker perfect recovery: when a background worker is `kill -9`'d after `runProviderPromptStreaming` returns but before the job/ledger writes complete, the run ledger has no terminal `attempt_result`. Recovery requires a separate reaper or scan-on-read step; deferred to a later slice.
-- [ ] Build first read-only terminal TUI inspector. Plan: `docs/superpowers/plans/2026-05-07-tui-inspector-mvp.md`.
-- [x] First TUI must render started/attempt_started-without-final-event as unfinished/unknown; recovery remains follow-up.
+- [x] Killed-worker terminal-event recovery: debug scan-on-read now refreshes dead jobs with residual run context and appends missing terminal ledger events idempotently. It classifies no-envelope deaths as `worker_exited` rather than inventing provider output.
+- [x] Build first read-only terminal TUI inspector. Plan: `docs/superpowers/plans/2026-05-07-tui-inspector-mvp.md`.
+- [x] Show local job log file pointers in the TUI without reading or printing log contents.
+- [x] First TUI renders started/attempt_started-without-final-event as unfinished/unknown; scan-on-read recovery covers dead workers with residual run context.
 
 ## Non-goals
 

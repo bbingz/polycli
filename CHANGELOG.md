@@ -6,6 +6,13 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Codex — Q6 phase 5-7 hardening closeout
+
+- Added scan-on-read dead-worker recovery for background runs with residual `runContext`; `debug runs/show/explain` refresh job state before reading the ledger and append missing terminal `attempt_result` / `provider_decision` events idempotently.
+- Added TUI rendering for local job `logFile` pointers without reading or printing log contents.
+- Tightened host-map validation so Terminal CLI command cells, side-by-side examples, and terminal-only `polycli tui` documentation stay in sync.
+- Updated README variants, roadmap, release docs, v0.6.8 notes, and Q6 task state to reflect the shipped `@bbingz/polycli` terminal package, TUI inspector, and completed post-v0.6.8 hardening.
+
 ## 2026-05-07 — Claude — v0.6.8 released
 
 - Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.8, npm `@bbingz/polycli-opencode@0.6.8`, npm `@bbingz/polycli@0.6.8`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`).

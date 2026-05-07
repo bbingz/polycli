@@ -77,7 +77,7 @@ opencode plugin @bbingz/polycli-opencode
 
 装完之后在 host 里验证：
 
-> **polycli 是 in-host plugin，不是独立的 shell 二进制。** `PATH` 里没有 `polycli` 可执行文件——每个 host 适配器在该 host 自己的命令体系里暴露同一套 `health / ask / review / rescue / timing` 词汇。如果你不在这 4 个 host 内（如 Aider / Cursor / 裸脚本），见英文 README 的 [Outside a supported host](./README.md#outside-a-supported-host) 段。
+> **polycli 优先是 in-host plugin，也提供可选终端 CLI。** 每个 host 适配器在该 host 自己的命令体系里暴露同一套 `health / ask / review / rescue / timing / debug` 词汇；不在这 4 个 host 内时，可以安装 `@bbingz/polycli` 获得 PATH 可调用的 `polycli` wrapper。见英文 README 的 [Outside a supported host](./README.md#outside-a-supported-host) 段。
 
 ```text
 # Claude Code（slash command）
@@ -86,10 +86,13 @@ opencode plugin @bbingz/polycli-opencode
 # Codex（已安装 skill，不是 slash command）
 Choose Polycli with @, then ask it to run: health
 
-# GitHub Copilot CLI（在 copilot prompt 里的 skill 词，**不是** PATH 二进制）
+# GitHub Copilot CLI（在 copilot prompt 里的 skill 词）
 polycli health
 
 # OpenCode（tool 调用 — 调 polycli_run 传 ["health","--json"]）
+
+# Terminal CLI（可选 PATH 二进制）
+polycli health
 ```
 
 `health` 会对所有已认证的 provider 跑一次端到端探针，并把存活的列在 `healthyProviders` 里。之后日常使用就直接调：
@@ -115,6 +118,8 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 | `rescue` | 较长的排障 / 分析任务 |
 | `adversarial-review` | 偏攻击面的审查 |
 | `timing` | 查看 timing 历史和聚合 |
+| `debug` | 查看 redacted run ledger：`runs` / `show` / `explain` |
+| `tui` | 只读终端 inspector，渲染 run ledger / debug 数据 |
 | `status` / `result` / `cancel` | 后台 job 控制 |
 
 只在以下情况跑 `health`：(a) 第一次接入某个 provider，(b) 认证状态变了，(c) 某个 provider 命令失败。日常使用不需要每次先跑。
@@ -163,6 +168,7 @@ polycli 的 timing 契约统一的是**状态表达**，不是数值。每个指
 
 | Package | 用途 |
 |---|---|
+| [`@bbingz/polycli`](./packages/polycli-terminal) | PATH 可调用的终端 CLI wrapper，包含只读 `polycli tui` inspector |
 | [`@bbingz/polycli-utils`](./packages/polycli-utils) | 参数解析、进程执行、stream 解码、NDJSON、原子保存、session id、stream JSON 解析 |
 | [`@bbingz/polycli-timing`](./packages/polycli-timing) | timing schema、运行时校验、百分位、capability-aware 聚合 |
 | [`@bbingz/polycli-runtime`](./packages/polycli-runtime) | provider registry、可用性 / 认证探针、命令构造器、前台 / streaming 执行、stream / log 解析 |

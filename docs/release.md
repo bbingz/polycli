@@ -82,7 +82,7 @@ npm run release:check
 - `npm run validate:host-map`
 - `npm run validate:codex-adapter`
 - `claude plugin validate` for the marketplace and Claude host plugin manifests
-- dry-run or pack checks for OpenCode, utils, and timing npm packages
+- dry-run or pack checks for OpenCode, terminal CLI, utils, and timing npm packages
 
 Run the review hard-constraint drift watcher before release candidates that touch review flow:
 

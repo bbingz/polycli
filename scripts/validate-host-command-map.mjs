@@ -69,12 +69,21 @@ function assertHostCommandMap() {
       `host-command-map missing Codex skill invocation for ${command}`
     );
     assert.match(text, new RegExp(`polycli ${command}\\b`), `host-command-map missing Copilot invocation for ${command}`);
+    const row = text.split("\n").find((line) => line.startsWith(`| ${command}`));
+    assert.ok(row, `host-command-map missing row for ${command}`);
+    const cells = row.split("|").map((cell) => cell.trim()).filter(Boolean);
+    assert.match(cells.at(-1) ?? "", new RegExp(`^\`polycli ${command}(?:\\b|\\s|\\.\\.\\.)`), `host-command-map missing Terminal CLI invocation for ${command}`);
   }
   assert.doesNotMatch(text, /\/polycli-codex:polycli\b/, "host-command-map must not document fake Codex slash invocation");
   assert.match(text, /polycli_run\(\["timing"/, "host-command-map missing OpenCode generic timing invocation");
   assert.match(text, /polycli_timing/, "host-command-map missing OpenCode timing wrapper");
   assert.match(text, /Terminal CLI/, "host-command-map missing Terminal CLI column");
   assert.match(text, /@bbingz\/polycli/, "host-command-map missing terminal package name");
+  assert.match(text, /\| Terminal CLI\s+\| `polycli health`\s+\|/, "host-command-map side-by-side examples missing Terminal CLI health row");
+  assert.match(text, /\| Terminal CLI\s+\| `polycli ask --provider qwen "Reply with only: OK"`\s+\|/, "host-command-map side-by-side examples missing Terminal CLI ask row");
+  assert.match(text, /\| Terminal CLI\s+\| `polycli review --provider claude --scope staged --background`/, "host-command-map side-by-side examples missing Terminal CLI background row");
+  assert.match(text, /\| Terminal CLI\s+\| `polycli timing --provider qwen --history 20 --json`\s+\|/, "host-command-map side-by-side examples missing Terminal CLI timing row");
+  assert.match(text, /`polycli tui` is terminal-only/, "host-command-map must document terminal-only tui command");
 }
 
 function assertOpenCodeSurface() {
@@ -93,4 +102,4 @@ assertSetEqual(parseSkillCommands("plugins/polycli-copilot/skills/polycli/SKILL.
 assertOpenCodeSurface();
 assertHostCommandMap();
 
-console.log(`host command map ok: ${EXPECTED_COMMANDS.length} capabilities across 4 hosts`);
+console.log(`host command map ok: ${EXPECTED_COMMANDS.length} capabilities across 4 host adapters + Terminal CLI`);

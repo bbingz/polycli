@@ -167,6 +167,8 @@ All commands work identically across hosts:
 | `rescue` | Longer triage / analysis task |
 | `adversarial-review` | Attack-surface-oriented review |
 | `timing` | Inspect timing history and aggregates |
+| `debug` | Inspect redacted run-ledger history with `runs`, `show`, and `explain` |
+| `tui` | Terminal-only read-only inspector for run-ledger/debug data |
 | `status` / `result` / `cancel` | Background-job control |
 
 Run `health` only when (a) integrating a provider for the first time, (b) auth state changes, or (c) a provider command fails. Daily use does not need it as a preamble.
@@ -215,6 +217,7 @@ Each timing record also carries:
 
 | Package | Purpose |
 |---|---|
+| [`@bbingz/polycli`](./packages/polycli-terminal) | PATH-callable terminal CLI wrapper, including the read-only `polycli tui` inspector |
 | [`@bbingz/polycli-utils`](./packages/polycli-utils) | Args parsing, process exec, stream decoding, NDJSON, atomic save, session-id, stream JSON parsing |
 | [`@bbingz/polycli-timing`](./packages/polycli-timing) | Timing schema, runtime validation, percentiles, capability-aware aggregation |
 | [`@bbingz/polycli-runtime`](./packages/polycli-runtime) | Provider registry, availability/auth probes, invocation builders, foreground/streaming execution, stream/log parsing |

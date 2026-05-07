@@ -22,7 +22,7 @@ Adds background-worker run-ledger plumbing and a read-only terminal TUI inspecto
 - Raw-mode safety: `interactive()` enters raw mode under a `try / finally` guard with an idempotent `restoreRawMode` (also hooked into `SIGINT` and `exit`). Initial-load failure and refresh-load failure both restore raw mode before exiting; refresh failures show an error frame and stay in the loop until `q`.
 - `--history <count>` validates a non-negative integer and slices the runs index in the TUI (companion `debug runs` contract unchanged). `--run-id <id>` selects an explicit run.
 - TUI files ship in the `@bbingz/polycli` tarball: `bin/polycli-tui.mjs`, `lib/tui/view-model.mjs`. New packaging assertion in `scripts/tests/open-source-packaging.test.mjs`.
-- Jobs with `started` or `attempt_started` but no terminal `attempt_result` / `provider_decision` render as `unfinished` / `unknown`. Killed-worker perfect recovery is the open ledger-side follow-up; it is not a TUI gate.
+- Jobs with `started` or `attempt_started` but no terminal `attempt_result` / `provider_decision` render as `unfinished` / `unknown`. Post-v0.6.8 hardening adds scan-on-read recovery for dead workers with residual run context; no-envelope deaths are classified as `worker_exited`.
 - Smoke-only `--script-keys "<k1,k2,...>"` test hook drives the runtime through key sequences (`down`, `down,enter`, etc.) so selection-change-reloads-detail and other key transitions are testable without a real TTY.
 
 ### Run-ledger debug examples docs
@@ -32,7 +32,7 @@ Adds background-worker run-ledger plumbing and a read-only terminal TUI inspecto
   - `pi` health failed → skipped before any prompt-bearing work.
 - Examples reference event-schema slots (`provider_decision`, `health_result`, `reason: ask_failed` / `health_failed`) and `polycli debug runs / show / explain`, not invented live provider output.
 
-## Manual smoke (v0.6.8 prep)
+## Manual smoke (v0.6.8 release)
 
 Automated smoke against the real `node packages/polycli-terminal/bin/polycli.mjs tui ...` binary (via `--smoke` and `--script-keys`) on 2026-05-07:
 
@@ -45,9 +45,10 @@ Automated smoke against the real `node packages/polycli-terminal/bin/polycli.mjs
 - ✅ `--history=1` renders only one run.
 - ✅ Non-TTY interactive entry exits 1 with the `requires an interactive TTY` error and never enters raw mode.
 
-User-side TTY verification still required before tagging / publishing v0.6.8 (these paths are interactive-only and cannot be exercised from a non-TTY harness):
+Interactive TTY coverage for v0.6.8:
 
 - `polycli tui` opens in a real terminal and `q` quits without leaving the terminal in raw mode.
+- A real-PTY regression test now covers the `q` exit path by sending `q` through a pseudo-terminal and requiring exit 0 within 5 seconds.
 - `r` refresh in interactive mode re-reads the ledger and re-renders without crashing.
 - Visible cursor / colour state restored after `q`.
 

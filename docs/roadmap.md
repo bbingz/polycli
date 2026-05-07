@@ -41,7 +41,7 @@ Status: closed as an active guardrail. CI, release publication, npm registry sta
 
 Current guardrails:
 
-- `npm run validate:bundles` checks that all four generated companion bundles are byte-identical after `npm test` rebuilds them.
+- `npm run validate:bundles` checks that all five generated companion bundles are byte-identical after `npm test` rebuilds them.
 - `npm run validate:fixtures` checks real runtime fixture metadata has provider/name/capturedAt/version/argv/expected response fields.
 - `npm run validate:manifests` keeps host plugin versions and marketplace entries aligned.
 - `npm run validate:host-map` keeps host command docs and registered command surfaces aligned.
@@ -62,7 +62,7 @@ Source: real Codex multi-provider review after the v0.6.x host-adapter hardening
 
 Goal: add a real terminal entry point plus a persistent run ledger so users and host agents can run, inspect, compare, and debug provider calls outside host-specific plugin UX without depending on private companion bundle paths.
 
-Status: Spec 1 released in v0.6.7; Spec 2 (background-job ledger plumbing) and Spec 3 (read-only TUI inspector MVP) released in v0.6.8. Killed-worker perfect recovery is the remaining open ledger-side hardening item; full follow-up and implementation todo are tracked in `tasks/terminal-cli-tui-observability.md`.
+Status: Spec 1 released in v0.6.7; Spec 2 (background-job ledger plumbing) and Spec 3 (read-only TUI inspector MVP) released in v0.6.8. Post-v0.6.8 hardening added scan-on-read recovery for dead workers with residual run context and TUI log-file pointers; full history is tracked in `tasks/terminal-cli-tui-observability.md`.
 
 Phase plan:
 
@@ -74,7 +74,7 @@ Phase plan:
 
 Sequencing rule: do not start TUI implementation until the headless CLI and run ledger can answer why a provider was adopted, skipped, or failed.
 
-Spec 1 released in v0.6.7 (2026-05-07): terminal package wrapper (`@bbingz/polycli` on npm), shared `debug` companion vocabulary (`debug runs/show/explain`), and redacted run ledger foundation (per-workspace NDJSON with `--run-id` / `POLYCLI_RUN_ID`). Spec 2 + Spec 3 released in v0.6.8 (2026-05-07): background-worker ledger plumbing (parent persists `runContext` into the per-job config and writes `job_started` after spawn; `_job-worker` writes `attempt_started` / `attempt_result` / `provider_decision` against the originating `runId`) and the read-only `polycli tui` inspector (run list, provider matrix, event timeline, detail / explanation / repro panes; renders `started` / `attempt_started` without a terminal `attempt_result` / `provider_decision` as `unfinished` / `unknown` rather than inventing a result; real-pty `q` exit fixed by explicit stdin resume). Killed-worker (`kill -9` between provider return and ledger write) perfect recovery remains open hardening on the ledger side.
+Spec 1 released in v0.6.7 (2026-05-07): terminal package wrapper (`@bbingz/polycli` on npm), shared `debug` companion vocabulary (`debug runs/show/explain`), and redacted run ledger foundation (per-workspace NDJSON with `--run-id` / `POLYCLI_RUN_ID`). Spec 2 + Spec 3 released in v0.6.8 (2026-05-07): background-worker ledger plumbing (parent persists `runContext` into the per-job config and writes `job_started` after spawn; `_job-worker` writes `attempt_started` / `attempt_result` / `provider_decision` against the originating `runId`) and the read-only `polycli tui` inspector (run list, provider matrix, event timeline, detail / explanation / repro panes; renders `started` / `attempt_started` without a terminal `attempt_result` / `provider_decision` as `unfinished` / `unknown` rather than inventing a result; real-pty `q` exit fixed by explicit stdin resume). Post-v0.6.8 hardening adds scan-on-read dead-worker recovery for missing terminal ledger events and TUI rendering of local log-file pointers without reading log contents.
 
 ---
 

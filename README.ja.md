@@ -77,7 +77,7 @@ opencode plugin @bbingz/polycli-opencode
 
 インストール後、ホスト内で動作確認します:
 
-> **polycli は in-host plugin であり、スタンドアロンの shell バイナリではありません。** `PATH` 上に `polycli` 実行ファイルは存在しません。各ホストアダプタが、そのホスト固有の呼び出し方法で同じ `health / ask / review / rescue / timing` ボキャブラリを公開します。サポート対象の 4 ホスト外（Aider / Cursor / 素のスクリプトなど）から使う場合は英語版 README の [Outside a supported host](./README.md#outside-a-supported-host) を参照してください。
+> **polycli は主に in-host plugin であり、任意の Terminal CLI も提供します。** 各ホストアダプタは、そのホスト固有の呼び出し方法で同じ `health / ask / review / rescue / timing / debug` ボキャブラリを公開します。4 つの対応ホスト外では、`@bbingz/polycli` をインストールすると PATH から呼べる `polycli` wrapper を使えます。英語版 README の [Outside a supported host](./README.md#outside-a-supported-host) も参照してください。
 
 ```text
 # Claude Code (slash command)
@@ -86,10 +86,13 @@ opencode plugin @bbingz/polycli-opencode
 # Codex (installed skill, not a slash command)
 Choose Polycli with @, then ask it to run: health
 
-# GitHub Copilot CLI (copilot prompt 内の skill ワード — **PATH バイナリではありません**)
+# GitHub Copilot CLI (copilot prompt 内の skill ワード)
 polycli health
 
 # OpenCode (tool 呼び出し — polycli_run を ["health","--json"] で呼び出す)
+
+# Terminal CLI (任意の PATH バイナリ)
+polycli health
 ```
 
 `health` は認証済みのすべてのプロバイダに対してエンドツーエンドのプローブを実行し、生きているものを `healthyProviders` に報告します。その後の日常利用は直接呼び出すだけです:
@@ -115,6 +118,8 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 | `rescue` | 長めのトリアージ / 解析タスク |
 | `adversarial-review` | 攻撃面寄りのレビュー |
 | `timing` | timing の履歴と集計を確認 |
+| `debug` | redacted run ledger を `runs` / `show` / `explain` で確認 |
+| `tui` | run ledger / debug データの読み取り専用 Terminal inspector |
 | `status` / `result` / `cancel` | バックグラウンドジョブの制御 |
 
 `health` を実行するのは次の場合だけで構いません: (a) 初めてプロバイダを接続したとき、(b) 認証状態が変わったとき、(c) プロバイダコマンドが失敗したとき。日常利用では毎回前置きで実行する必要はありません。
@@ -163,6 +168,7 @@ polycli の timing 契約が統一するのは**状態の表現**であって、
 
 | パッケージ | 役割 |
 |---|---|
+| [`@bbingz/polycli`](./packages/polycli-terminal) | PATH から呼べる Terminal CLI wrapper。読み取り専用 `polycli tui` inspector を含む |
 | [`@bbingz/polycli-utils`](./packages/polycli-utils) | 引数パース、プロセス実行、stream デコード、NDJSON、原子的保存、session-id、stream JSON パース |
 | [`@bbingz/polycli-timing`](./packages/polycli-timing) | timing スキーマ、ランタイム検証、パーセンタイル、capability-aware 集計 |
 | [`@bbingz/polycli-runtime`](./packages/polycli-runtime) | プロバイダレジストリ、可用性 / 認証プローブ、起動引数ビルダ、フォアグラウンド / streaming 実行、stream / log パース |
