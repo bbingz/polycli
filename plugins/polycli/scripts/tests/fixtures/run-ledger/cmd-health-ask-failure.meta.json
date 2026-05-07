@@ -1,0 +1,17 @@
+{
+  "provider": "cmd",
+  "capturedAt": "2026-05-07T00:44:38.306Z",
+  "scenario": "health-passed-ask-failed",
+  "health": {
+    "ok": true,
+    "status": 0,
+    "responsePreview": "POLYCLI_HEALTH_OK"
+  },
+  "ask": {
+    "ok": false,
+    "status": 6,
+    "errorPreview": "Error: Unable to connect to the API. Please check your network connection.",
+    "stdoutBytes": 0,
+    "stderrBytes": 75
+  }
+}

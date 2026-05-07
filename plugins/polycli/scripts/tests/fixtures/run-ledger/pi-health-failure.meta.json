@@ -1,0 +1,13 @@
+{
+  "provider": "pi",
+  "capturedAt": "2026-05-07T00:44:54.871Z",
+  "scenario": "health-failed",
+  "health": {
+    "ok": false,
+    "status": 2,
+    "available": true,
+    "errorPreview": "pi produced no visible text",
+    "stdoutBytes": null,
+    "stderrBytes": null
+  }
+}
