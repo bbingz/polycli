@@ -6,6 +6,13 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — v0.6.10 released
+
+- Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.10, npm `@bbingz/polycli-opencode@0.6.10`, npm `@bbingz/polycli@0.6.10`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`); `@bbingz/polycli-runtime` remains internal.
+- Pi probe fixes: `DEFAULT_PI_MODEL` was a hardcoded `"openai-codex/gpt-5.4"` always injected into the pi command line via `buildPiInvocation`, breaking probes for any user whose pi was authenticated against a different backend (Xiaomi etc.) — set to `null` so pi auto-routes to its configured backend. `parsePiStreamText` now extracts `event.message.errorMessage` and `event.message.stopReason==="error"` into a new `providerError` field; `runPiPrompt`/`runPiPromptStreaming` surface that as `result.error` instead of the generic `"pi produced no visible text"`. `event.message.model` added to the model extraction paths so reporting reflects the model pi actually used (e.g. `mimo-v2.5-pro`).
+- Live verification before publish: `node packages/polycli-terminal/bin/polycli.mjs health --provider pi --json` against a Xiaomi-backed pi flips from `ok=false, model="openai-codex/gpt-5.4", error="pi produced no visible text"` to `ok=true, model="mimo-v2.5-pro", error=null`.
+- Verification: `release:check` exit 0 (359/359 tests; bundles 5; fixtures 16; manifests 0.6.10; host-map 11x4+terminal; codex-adapter 5; claude plugin validate ×2; 4 npm pack/publish dry-runs). Post-publish: tag, GitHub release (not draft, not prerelease), and both npm packages observable at 0.6.10; `@bbingz/polycli` bin still maps `bin/polycli.mjs`.
+
 ## 2026-05-07 — Claude — v0.6.9 released
 
 - Published artifacts: GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.9, npm `@bbingz/polycli-opencode@0.6.9`, npm `@bbingz/polycli@0.6.9`. Utility packages stay on independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`); `@bbingz/polycli-runtime` remains internal.
