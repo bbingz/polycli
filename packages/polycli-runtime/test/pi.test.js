@@ -47,7 +47,7 @@ test("buildPiInvocation targets print json mode with model and session support",
   ]);
 });
 
-test("buildPiInvocation defaults pi to openai-codex/gpt-5.4", () => {
+test("buildPiInvocation does not inject --model when no model is passed", () => {
   const invocation = buildPiInvocation({
     prompt: "ping",
   });
@@ -56,13 +56,11 @@ test("buildPiInvocation defaults pi to openai-codex/gpt-5.4", () => {
     "--print",
     "--mode",
     "json",
-    "--model",
-    "openai-codex/gpt-5.4",
     "ping",
   ]);
 });
 
-test("buildPiInvocation defaults pi when model is explicitly null", () => {
+test("buildPiInvocation does not inject --model when model is explicitly null", () => {
   const invocation = buildPiInvocation({
     prompt: "ping",
     model: null,
@@ -72,8 +70,6 @@ test("buildPiInvocation defaults pi when model is explicitly null", () => {
     "--print",
     "--mode",
     "json",
-    "--model",
-    "openai-codex/gpt-5.4",
     "ping",
   ]);
 });
@@ -219,7 +215,7 @@ process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: "hello 
   );
 });
 
-test("runPiPrompt reports the default pi model when events omit model metadata", () => {
+test("runPiPrompt leaves model null when neither caller nor pi reports a model", () => {
   withFakePiBin(
     `#!/usr/bin/env node
 process.stdout.write(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello world" } }) + "\\n");
@@ -233,7 +229,7 @@ process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: "hello 
       });
 
       assert.equal(result.ok, true);
-      assert.equal(result.model, "openai-codex/gpt-5.4");
+      assert.equal(result.model, null);
     }
   );
 });
@@ -313,6 +309,77 @@ test("runPiPromptStreaming returns a structured failure on spawn error", async (
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+});
+
+test("parsePiStreamText extracts model from event.message.model when pi auto-routes", () => {
+  const parsed = parsePiStreamText(
+    [
+      '{"type":"session","id":"pi-route-1","version":3}',
+      '{"type":"message_start","message":{"role":"assistant","content":[],"provider":"xiaomi","model":"mimo-v2.5-pro"}}',
+      '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"OK"}}',
+      '{"type":"agent_end","result":{"text":"OK"}}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.model, "mimo-v2.5-pro");
+  assert.equal(parsed.providerError, null);
+  assert.equal(parsed.response, "OK");
+});
+
+test("parsePiStreamText surfaces assistant errorMessage as providerError", () => {
+  const parsed = parsePiStreamText(
+    [
+      '{"type":"session","id":"pi-err-1","version":3}',
+      '{"type":"message_start","message":{"role":"assistant","content":[],"model":"gpt-5.4","stopReason":"error","errorMessage":"Your authentication token has been invalidated. Please try signing in again."}}',
+      '{"type":"message_end","message":{"role":"assistant","content":[],"model":"gpt-5.4","stopReason":"error","errorMessage":"Your authentication token has been invalidated. Please try signing in again."}}',
+      '{"type":"agent_end","messages":[]}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "");
+  assert.match(parsed.providerError, /authentication token has been invalidated/);
+});
+
+test("parsePiStreamText falls back to stopReason=error when no errorMessage is set", () => {
+  const parsed = parsePiStreamText(
+    [
+      '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error"}}',
+      '{"type":"agent_end","messages":[]}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.providerError, "pi reported stopReason=error with no errorMessage");
+});
+
+test("parsePiStreamText does not flag providerError on a normal stop", () => {
+  const parsed = parsePiStreamText(
+    [
+      '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"stopReason":"stop"}}',
+      '{"type":"agent_end","result":{"text":"hi"}}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.providerError, null);
+});
+
+test("runPiPrompt reports providerError instead of 'no visible text' when pi returns an auth failure", () => {
+  withFakePiBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "Your authentication token has been invalidated. Please try signing in again." } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "agent_end", messages: [] }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runPiPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+      });
+
+      assert.equal(result.ok, false);
+      assert.match(result.error, /authentication token has been invalidated/);
+      assert.doesNotMatch(result.error, /no visible text/);
+    }
+  );
 });
 
 test("parsePiStreamText replays a captured real cli fixture", () => {

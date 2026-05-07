@@ -2756,7 +2756,7 @@ function runOpenCodePromptStreaming({
 
 // packages/polycli-runtime/src/pi.js
 var PI_BIN = process.env.PI_CLI_BIN || "pi";
-var DEFAULT_PI_MODEL = "openai-codex/gpt-5.4";
+var DEFAULT_PI_MODEL = null;
 var DEFAULT_TIMEOUT_MS8 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS8 = 3e4;
 var PI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
@@ -2837,6 +2837,7 @@ function parsePiStreamText(text) {
   let sessionId = null;
   let model = null;
   let resultEvent = null;
+  let providerError = null;
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line.startsWith("{")) continue;
@@ -2853,8 +2854,17 @@ function parsePiStreamText(text) {
     if (!model && typeof event.model === "string") model = event.model;
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (!model && typeof event.result?.model === "string") model = event.result.model;
+    if (!model && typeof event.message?.model === "string") model = event.message.model;
     if (event.type === "agent_end") {
       resultEvent = event;
+    }
+    if (!providerError && event.message?.role === "assistant") {
+      const errMsg = typeof event.message.errorMessage === "string" ? event.message.errorMessage.trim() : "";
+      if (errMsg) {
+        providerError = errMsg;
+      } else if (event.message.stopReason === "error") {
+        providerError = "pi reported stopReason=error with no errorMessage";
+      }
     }
     const streamDelta = extractPiStreamDelta(event);
     if (streamDelta) {
@@ -2872,7 +2882,8 @@ function parsePiStreamText(text) {
     response,
     sessionId,
     model,
-    resultEvent
+    resultEvent,
+    providerError
   };
 }
 function getPiAvailability(cwd) {
@@ -2939,14 +2950,15 @@ function runPiPrompt({
     priority: ["stdout", "stderr", "file"]
   });
   const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
+  const providerError = parsed.providerError ?? null;
   const hasVisibleText = Boolean(parsed.response.trim());
   return {
-    ok: result.status === 0 && !resultError && hasVisibleText,
+    ok: result.status === 0 && !resultError && !providerError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
-    error: result.status === 0 ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.stderr.trim() || formatProviderExitError("pi", result.status),
+    error: result.status === 0 ? resultError || providerError || (hasVisibleText ? null : "pi produced no visible text") : result.stderr.trim() || formatProviderExitError("pi", result.status),
     status: result.status
   };
 }
@@ -2998,14 +3010,15 @@ function runPiPromptStreaming({
       priority: ["stdout", "stderr", "file"]
     });
     const resultError = parsed.resultEvent?.error ? String(parsed.resultEvent.error) : null;
+    const providerError = parsed.providerError ?? null;
     const hasVisibleText = Boolean(parsed.response.trim());
     return {
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
-      ok: result.ok && !resultError && hasVisibleText,
-      error: result.ok ? resultError || (hasVisibleText ? null : "pi produced no visible text") : result.error
+      ok: result.ok && !resultError && !providerError && hasVisibleText,
+      error: result.ok ? resultError || providerError || (hasVisibleText ? null : "pi produced no visible text") : result.error
     };
   });
 }
