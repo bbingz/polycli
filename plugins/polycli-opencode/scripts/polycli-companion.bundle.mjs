@@ -2,9 +2,9 @@
 
 // plugins/polycli/scripts/polycli-companion.mjs
 import fs9 from "node:fs";
-import path7 from "node:path";
+import path8 from "node:path";
 import process5 from "node:process";
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import { spawn as spawn2 } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -5010,6 +5010,149 @@ function appendPreview(logFile, provider, event, { fsImpl = fs8, tailCache = PRE
   tailCache.set(logFile, [...currentTail, ...lines].slice(-PREVIEW_MAX_LINES));
 }
 
+// plugins/polycli/scripts/lib/run-ledger.mjs
+import { randomUUID as randomUUID2 } from "node:crypto";
+import path7 from "node:path";
+var MAX_LEDGER_BYTES = 2e6;
+var KEEP_RATIO = 0.5;
+var RUN_ID_RE = /^[A-Za-z0-9_.-]{1,96}$/;
+var SECRET_LONG_OPT_RE = /(token|secret|password|api-?key|access-?key|credential)/i;
+var SECRET_ENV_KEY_RE = /(TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_KEY|CREDENTIAL)/i;
+var PROMPT_COMMANDS = /* @__PURE__ */ new Set(["ask", "rescue", "review", "adversarial-review"]);
+var VALID_HOST_SURFACES = /* @__PURE__ */ new Set([
+  "terminal",
+  "claude-plugin",
+  "codex-skill",
+  "copilot-skill",
+  "opencode-plugin",
+  "unknown"
+]);
+function resolveRunLedgerFile(workspaceRoot) {
+  return path7.join(resolveStateDir(workspaceRoot), "run-ledger.ndjson");
+}
+function createRunId() {
+  return `run_${randomUUID2().replaceAll("-", "").slice(0, 20)}`;
+}
+function resolveRunId(options = {}, env = process.env) {
+  const runId = options.runId || env.POLYCLI_RUN_ID || createRunId();
+  if (!RUN_ID_RE.test(runId)) {
+    throw new Error(`Invalid run id: ${runId}`);
+  }
+  return runId;
+}
+function resolveHostSurface(env = process.env, companionUrl = import.meta.url) {
+  if (VALID_HOST_SURFACES.has(env.POLYCLI_HOST_SURFACE)) return env.POLYCLI_HOST_SURFACE;
+  if (env.CLAUDE_PLUGIN_ROOT) return "claude-plugin";
+  if (companionUrl.includes("polycli-codex")) return "codex-skill";
+  if (companionUrl.includes("polycli-copilot")) return "copilot-skill";
+  if (companionUrl.includes("polycli-opencode")) return "opencode-plugin";
+  return "unknown";
+}
+function stripRunIdArgs(argv) {
+  const next = [];
+  let runId = null;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--run-id") {
+      runId = argv[i + 1] || "";
+      i += 1;
+      continue;
+    }
+    if (typeof arg === "string" && arg.startsWith("--run-id=")) {
+      runId = arg.slice("--run-id=".length);
+      continue;
+    }
+    next.push(arg);
+  }
+  return { argv: next, runId };
+}
+function redactInlineValue(arg) {
+  const eq = arg.indexOf("=");
+  if (eq === -1) return arg;
+  const key = arg.slice(0, eq);
+  if (key.startsWith("--") && SECRET_LONG_OPT_RE.test(key)) {
+    return `${key}=<secret:redacted>`;
+  }
+  if (!key.startsWith("--") && SECRET_ENV_KEY_RE.test(key)) {
+    return `${key}=<secret:redacted>`;
+  }
+  return arg;
+}
+function redactArgv(argv, { command } = {}) {
+  const redacted = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (typeof arg !== "string") {
+      redacted.push(arg);
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      if (arg.includes("=")) {
+        redacted.push(redactInlineValue(arg));
+        continue;
+      }
+      const isSecretFlag = SECRET_LONG_OPT_RE.test(arg);
+      const isReviewFocus = command === "review" && arg === "--focus";
+      redacted.push(arg);
+      if ((isSecretFlag || isReviewFocus) && i + 1 < argv.length) {
+        redacted.push(isSecretFlag ? "<secret:redacted>" : "<prompt:redacted>");
+        i += 1;
+      }
+      continue;
+    }
+    redacted.push(redactInlineValue(arg));
+  }
+  if (PROMPT_COMMANDS.has(command) && redacted.length > 0) {
+    const last = redacted.length - 1;
+    const tail = redacted[last];
+    if (typeof tail === "string" && !tail.startsWith("-") && !tail.includes("=")) {
+      const wasPlaceholder = tail === "<prompt:redacted>" || tail === "<secret:redacted>";
+      if (!wasPlaceholder && tail !== command) {
+        redacted[last] = "<prompt:redacted>";
+      }
+    }
+  }
+  return redacted;
+}
+function createRunLedgerEvent(event = {}) {
+  const at = event.at || (/* @__PURE__ */ new Date()).toISOString();
+  const command = event.command || null;
+  const commands = [...new Set(event.commands || (command ? [command] : []))].filter(Boolean).sort();
+  return {
+    version: 1,
+    eventId: event.eventId || `evt_${randomUUID2().replaceAll("-", "").slice(0, 20)}`,
+    at,
+    runId: event.runId || null,
+    workspaceRoot: event.workspaceRoot || null,
+    workspaceSlug: event.workspaceSlug || null,
+    kind: event.kind || event.command || null,
+    provider: event.provider ?? null,
+    reason: event.reason ?? null,
+    attempt: event.attempt ?? null,
+    jobId: event.jobId ?? null,
+    model: event.model ?? null,
+    defaultModel: event.defaultModel ?? null,
+    timingRef: event.timingRef ?? null,
+    error: event.error ?? null,
+    preview: event.preview ?? null,
+    stdoutBytes: event.stdoutBytes ?? null,
+    stderrBytes: event.stderrBytes ?? null,
+    logFile: event.logFile ?? null,
+    argv: event.argv || [],
+    command,
+    commands,
+    status: event.status,
+    phase: event.phase,
+    hostSurface: event.hostSurface || "unknown"
+  };
+}
+async function appendRunLedgerEvent(workspaceRoot, event) {
+  const file = resolveRunLedgerFile(workspaceRoot);
+  const full = createRunLedgerEvent({ ...event, workspaceRoot });
+  appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO });
+  return full;
+}
+
 // plugins/polycli/scripts/polycli-companion.mjs
 var COMPANION_PATH = fileURLToPath(import.meta.url);
 var JOB_PREFIXES = {
@@ -5047,6 +5190,31 @@ function resolveTimeoutMs(provider, kind, { model = null, defaultModel = null } 
 }
 var HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
 var SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
+var RUN_TRACKED_COMMANDS = /* @__PURE__ */ new Set([
+  "health",
+  "ask",
+  "rescue",
+  "review",
+  "adversarial-review"
+]);
+var RUN_CONTEXT = {
+  runId: null,
+  command: null,
+  hostSurface: "unknown",
+  rawArgs: []
+};
+async function recordRunEvent(workspaceRoot, base = {}) {
+  if (!RUN_CONTEXT.runId) return null;
+  const command = base.command || RUN_CONTEXT.command;
+  return appendRunLedgerEvent(workspaceRoot, {
+    runId: RUN_CONTEXT.runId,
+    hostSurface: RUN_CONTEXT.hostSurface,
+    argv: redactArgv(RUN_CONTEXT.rawArgs, { command: RUN_CONTEXT.command }),
+    ...base,
+    command,
+    commands: base.commands || (command ? [command] : [])
+  });
+}
 function printUsage() {
   console.log(
     [
@@ -5104,7 +5272,7 @@ function output(value, asJson) {
 `);
 }
 function resolveProviderModelCacheFile(workspaceRoot) {
-  return path7.join(resolveStateDir(workspaceRoot), "provider-models.json");
+  return path8.join(resolveStateDir(workspaceRoot), "provider-models.json");
 }
 function readProviderModelCache(workspaceRoot) {
   try {
@@ -5121,7 +5289,7 @@ function readCachedProviderModel(workspaceRoot, provider) {
 function cacheProviderModel(workspaceRoot, provider, model) {
   if (typeof model !== "string" || !model.trim()) return;
   const cacheFile = resolveProviderModelCacheFile(workspaceRoot);
-  fs9.mkdirSync(path7.dirname(cacheFile), { recursive: true });
+  fs9.mkdirSync(path8.dirname(cacheFile), { recursive: true });
   fs9.writeFileSync(
     cacheFile,
     `${JSON.stringify({ ...readProviderModelCache(workspaceRoot), [provider]: model }, null, 2)}
@@ -5160,7 +5328,7 @@ async function inspectProviderAvailability(provider) {
 }
 function createJobId(kind) {
   const prefix = JOB_PREFIXES[kind] || "pj";
-  return `${prefix}-${randomUUID2().slice(0, 8)}`;
+  return `${prefix}-${randomUUID3().slice(0, 8)}`;
 }
 function parseExecutionMode(options) {
   if (options.background && options.wait) {
@@ -5279,6 +5447,14 @@ function hydrateRuntimeOptions(runtimeOptions = {}) {
 }
 async function runForegroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
+  await recordRunEvent(workspaceRoot, {
+    command: execution.kind,
+    kind: execution.kind,
+    provider: execution.provider,
+    phase: "attempt_started",
+    status: "started",
+    attempt: { ordinal: 1 }
+  });
   let result;
   try {
     result = await runProviderPromptStreaming({
@@ -5303,6 +5479,33 @@ async function runForegroundExecution(execution, asJson) {
     appendTimingRecord(workspaceRoot, result.timing);
   }
   cacheProviderModel(workspaceRoot, execution.provider, result.model);
+  await recordRunEvent(workspaceRoot, {
+    command: execution.kind,
+    kind: execution.kind,
+    provider: execution.provider,
+    phase: "attempt_result",
+    status: result.ok ? "completed" : "failed",
+    attempt: { ordinal: 1 },
+    model: result.model || null,
+    defaultModel: result.defaultModel || null,
+    preview: result.response ? String(result.response).slice(0, 180) : null,
+    stdoutBytes: result.stdoutBytes ?? null,
+    stderrBytes: result.stderrBytes ?? null,
+    timingRef: result.timing ? {
+      provider: result.timing.provider,
+      kind: result.timing.kind,
+      completedAt: result.timing.completedAt
+    } : null,
+    error: result.ok || !result.error ? null : { message: String(result.error).slice(0, 300) }
+  });
+  await recordRunEvent(workspaceRoot, {
+    command: execution.kind,
+    kind: execution.kind,
+    provider: execution.provider,
+    phase: "provider_decision",
+    status: result.ok ? "adopted" : "failed",
+    reason: result.ok ? null : `${execution.kind}_failed`
+  });
   const envelope = buildExecutionEnvelope(execution, result);
   if (asJson) {
     output(envelope, true);
@@ -5628,6 +5831,27 @@ async function runHealth(rawArgs) {
     timeout,
     workspaceRoot
   })));
+  for (const report of results) {
+    await recordRunEvent(workspaceRoot, {
+      command: "health",
+      kind: "health",
+      provider: report.provider,
+      phase: "health_result",
+      status: report.ok ? "passed" : "failed",
+      reason: report.ok ? "health_passed" : "health_failed",
+      model: report.model || null,
+      preview: report.probe?.responsePreview || null,
+      error: report.probe?.error ? { message: String(report.probe.error).slice(0, 300) } : null
+    });
+    await recordRunEvent(workspaceRoot, {
+      command: "health",
+      kind: "health",
+      provider: report.provider,
+      phase: "provider_decision",
+      status: report.ok ? "passed" : "skipped",
+      reason: report.ok ? "health_passed" : "health_failed"
+    });
+  }
   const payload = buildHealthPayload(results);
   if (!payload.anyHealthy) {
     process5.exitCode = 2;
@@ -5773,6 +5997,15 @@ async function runReviewCommand(rawArgs, { adversarial }) {
   const { options, provider, reviewContext, execution } = buildReviewExecution(rawArgs, { adversarial });
   if (!reviewContext.diff.trim()) {
     const warnings = Array.isArray(reviewContext.warnings) && reviewContext.warnings.length > 0 ? reviewContext.warnings : void 0;
+    const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
+    await recordRunEvent(workspaceRoot, {
+      command: execution.kind,
+      kind: execution.kind,
+      provider: null,
+      phase: "provider_decision",
+      status: "skipped",
+      reason: "no_changes"
+    });
     output(
       options.json ? { ok: true, provider, verdict: "no_changes", scope: reviewContext.scope, warnings } : [
         ...warnings ? [`Note: ${warnings.join(" | ")}`] : [],
@@ -6033,8 +6266,24 @@ async function runJobWorker(rawArgs) {
     cleanupRuntimeOptions(execution.runtimeOptions);
   }
 }
+async function dispatchCommand(command, rawArgs) {
+  if (command === "setup") return runSetup(rawArgs);
+  if (command === "health") return runHealth(rawArgs);
+  if (command === "ask") return runAsk(rawArgs);
+  if (command === "rescue") return runRescue(rawArgs);
+  if (command === "review") return runReviewCommand(rawArgs, { adversarial: false });
+  if (command === "adversarial-review") return runReviewCommand(rawArgs, { adversarial: true });
+  if (command === "status") return runStatus(rawArgs);
+  if (command === "result") return runResult(rawArgs);
+  if (command === "cancel") return runCancel(rawArgs);
+  if (command === "timing") return runTiming(rawArgs);
+  if (command === "_job-worker") return runJobWorker(rawArgs);
+  throw new Error(`Unknown subcommand '${command}'.`);
+}
 async function main() {
-  const [command, ...rawArgs] = process5.argv.slice(2);
+  const fullArgs = process5.argv.slice(2);
+  const { argv: normalizedArgs, runId: explicitRunId } = stripRunIdArgs(fullArgs);
+  const [command, ...rawArgs] = normalizedArgs;
   if (!command || command === "--help" || command === "-h") {
     printUsage();
     return;
@@ -6043,51 +6292,31 @@ async function main() {
     printUsage();
     return;
   }
-  if (command === "setup") {
-    await runSetup(rawArgs);
-    return;
+  RUN_CONTEXT.command = command;
+  RUN_CONTEXT.hostSurface = resolveHostSurface(process5.env, import.meta.url);
+  RUN_CONTEXT.rawArgs = fullArgs;
+  RUN_CONTEXT.runId = RUN_TRACKED_COMMANDS.has(command) ? resolveRunId({ runId: explicitRunId }, process5.env) : null;
+  if (!RUN_CONTEXT.runId) {
+    return dispatchCommand(command, rawArgs);
   }
-  if (command === "health") {
-    await runHealth(rawArgs);
-    return;
+  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  await recordRunEvent(workspaceRoot, { phase: "run_started", status: "started" });
+  try {
+    const result = await dispatchCommand(command, rawArgs);
+    const failed = process5.exitCode != null && process5.exitCode !== 0;
+    await recordRunEvent(workspaceRoot, {
+      phase: "run_summary",
+      status: failed ? "failed" : "completed"
+    });
+    return result;
+  } catch (error) {
+    await recordRunEvent(workspaceRoot, {
+      phase: "run_summary",
+      status: "failed",
+      error: { message: String(error?.message || error).slice(0, 300) }
+    });
+    throw error;
   }
-  if (command === "ask") {
-    await runAsk(rawArgs);
-    return;
-  }
-  if (command === "rescue") {
-    await runRescue(rawArgs);
-    return;
-  }
-  if (command === "review") {
-    await runReviewCommand(rawArgs, { adversarial: false });
-    return;
-  }
-  if (command === "adversarial-review") {
-    await runReviewCommand(rawArgs, { adversarial: true });
-    return;
-  }
-  if (command === "status") {
-    await runStatus(rawArgs);
-    return;
-  }
-  if (command === "result") {
-    await runResult(rawArgs);
-    return;
-  }
-  if (command === "cancel") {
-    await runCancel(rawArgs);
-    return;
-  }
-  if (command === "timing") {
-    await runTiming(rawArgs);
-    return;
-  }
-  if (command === "_job-worker") {
-    await runJobWorker(rawArgs);
-    return;
-  }
-  throw new Error(`Unknown subcommand '${command}'.`);
 }
 main().catch((error) => {
   exitWithError({

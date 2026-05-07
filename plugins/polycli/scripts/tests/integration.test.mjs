@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { createClaudeFixtureReplay } from "./helpers/fixture-replay.mjs";
 import { readLastUsedProvider, resolveWorkspaceRoot } from "../lib/state.mjs";
+import { readRunLedgerEvents } from "../lib/run-ledger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const companionPath = path.resolve(__dirname, "..", "polycli-companion.bundle.mjs");
@@ -1940,4 +1941,123 @@ test("integration: timing command returns history and aggregate after a foregrou
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
+});
+
+function createFakeCmdBin(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-fake-cmd-"));
+  const bin = path.join(root, "cmd");
+  fs.writeFileSync(
+    bin,
+    `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes("--version")) {
+  process.stdout.write("cmd 0.0.0-test\\n");
+  process.exit(0);
+}
+if (args[0] === "status") {
+  process.stdout.write("authenticated\\n");
+  process.exit(0);
+}
+const promptIdx = args.indexOf("-p");
+const prompt = promptIdx >= 0 ? String(args[promptIdx + 1] || "") : "";
+if (prompt.includes("POLYCLI_HEALTH_OK")) {
+  process.stdout.write("POLYCLI_HEALTH_OK\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  return bin;
+}
+
+function createLedgerContext(t, extraEnv = {}) {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "polycli-ledger-cwd-")));
+  const previousPluginData = process.env.CLAUDE_PLUGIN_DATA;
+  process.env.CLAUDE_PLUGIN_DATA = pluginData;
+  t.after(() => {
+    if (previousPluginData == null) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = previousPluginData;
+    fs.rmSync(pluginData, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+  return {
+    cwd,
+    pluginData,
+    env: cleanEnv({ CLAUDE_PLUGIN_DATA: pluginData, CMD_CLI_BIN: createFakeCmdBin(t), ...extraEnv }),
+  };
+}
+
+function gitInitSync(cwd) {
+  for (const args of [
+    ["init", "-b", "scratch"],
+    ["config", "user.name", "Test User"],
+    ["config", "user.email", "test@example.com"],
+  ]) {
+    const result = spawnSync("git", args, { cwd });
+    if (result.status !== 0) {
+      throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
+    }
+  }
+}
+
+test("integration: health strips run-id before provider resolution and writes ledger events", async (t) => {
+  const context = createLedgerContext(t);
+  const result = await runCompanion(
+    ["health", "--provider", "cmd", "--json", "--run-id=run-test"],
+    context,
+  );
+  assert.equal(result.code, 0, result.stderr);
+  const events = await readRunLedgerEvents(context.cwd);
+  assert.ok(
+    events.some((event) => event.runId === "run-test" && event.phase === "health_result"),
+    `expected health_result event for run-test; got ${JSON.stringify(events)}`,
+  );
+  assert.ok(
+    events.every((event) => event.provider !== "--run-id=run-test"),
+    "run-id must be stripped before provider resolution",
+  );
+});
+
+test("integration: ask writes failed provider decisions for unusable provider output", async (t) => {
+  const context = createLedgerContext(t);
+  await runCompanion(
+    ["ask", "--provider", "cmd", "--json", "Return exactly POLYCLI_FIXTURE_OK", "--run-id", "run-cmd"],
+    context,
+  );
+  await runCompanion(
+    ["ask", "--provider", "cmd", "--json", "Return exactly POLYCLI_FIXTURE_OK", "--run-id", "run-cmd"],
+    context,
+  );
+  const events = await readRunLedgerEvents(context.cwd);
+  const failures = events.filter(
+    (event) =>
+      event.runId === "run-cmd" &&
+      event.phase === "provider_decision" &&
+      event.status === "failed",
+  );
+  assert.equal(failures.length, 2, `expected 2 failed provider decisions; got ${failures.length}`);
+});
+
+test("integration: review with no changes writes no_changes skipped decision", async (t) => {
+  const context = createLedgerContext(t);
+  gitInitSync(context.cwd);
+  const result = await runCompanion(
+    ["review", "--provider", "cmd", "--json", "--run-id", "run-clean"],
+    context,
+  );
+  assert.equal(result.code, 0, result.stderr);
+  const events = await readRunLedgerEvents(context.cwd);
+  assert.ok(
+    events.some(
+      (event) =>
+        event.runId === "run-clean" &&
+        event.phase === "provider_decision" &&
+        event.status === "skipped" &&
+        event.reason === "no_changes",
+    ),
+    `expected no_changes skipped decision for run-clean; got ${JSON.stringify(events)}`,
+  );
 });

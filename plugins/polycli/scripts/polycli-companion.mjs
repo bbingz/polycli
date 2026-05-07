@@ -46,6 +46,13 @@ import {
   summarizeTimingRecords,
 } from "./lib/timing.mjs";
 import { appendPreview, previewText } from "./lib/preview.mjs";
+import {
+  appendRunLedgerEvent,
+  redactArgv,
+  resolveHostSurface,
+  resolveRunId,
+  stripRunIdArgs,
+} from "./lib/run-ledger.mjs";
 
 const COMPANION_PATH = fileURLToPath(import.meta.url);
 const JOB_PREFIXES = {
@@ -87,6 +94,33 @@ function resolveTimeoutMs(provider, kind, { model = null, defaultModel = null } 
 }
 const HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
 const SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
+const RUN_TRACKED_COMMANDS = new Set([
+  "health",
+  "ask",
+  "rescue",
+  "review",
+  "adversarial-review",
+]);
+
+const RUN_CONTEXT = {
+  runId: null,
+  command: null,
+  hostSurface: "unknown",
+  rawArgs: [],
+};
+
+async function recordRunEvent(workspaceRoot, base = {}) {
+  if (!RUN_CONTEXT.runId) return null;
+  const command = base.command || RUN_CONTEXT.command;
+  return appendRunLedgerEvent(workspaceRoot, {
+    runId: RUN_CONTEXT.runId,
+    hostSurface: RUN_CONTEXT.hostSurface,
+    argv: redactArgv(RUN_CONTEXT.rawArgs, { command: RUN_CONTEXT.command }),
+    ...base,
+    command,
+    commands: base.commands || (command ? [command] : []),
+  });
+}
 
 function printUsage() {
   console.log(
@@ -338,6 +372,14 @@ function hydrateRuntimeOptions(runtimeOptions = {}) {
 
 async function runForegroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
+  await recordRunEvent(workspaceRoot, {
+    command: execution.kind,
+    kind: execution.kind,
+    provider: execution.provider,
+    phase: "attempt_started",
+    status: "started",
+    attempt: { ordinal: 1 },
+  });
   let result;
   try {
     result = await runProviderPromptStreaming({
@@ -361,6 +403,38 @@ async function runForegroundExecution(execution, asJson) {
     appendTimingRecord(workspaceRoot, result.timing);
   }
   cacheProviderModel(workspaceRoot, execution.provider, result.model);
+
+  await recordRunEvent(workspaceRoot, {
+    command: execution.kind,
+    kind: execution.kind,
+    provider: execution.provider,
+    phase: "attempt_result",
+    status: result.ok ? "completed" : "failed",
+    attempt: { ordinal: 1 },
+    model: result.model || null,
+    defaultModel: result.defaultModel || null,
+    preview: result.response ? String(result.response).slice(0, 180) : null,
+    stdoutBytes: result.stdoutBytes ?? null,
+    stderrBytes: result.stderrBytes ?? null,
+    timingRef: result.timing
+      ? {
+        provider: result.timing.provider,
+        kind: result.timing.kind,
+        completedAt: result.timing.completedAt,
+      }
+      : null,
+    error: result.ok || !result.error
+      ? null
+      : { message: String(result.error).slice(0, 300) },
+  });
+  await recordRunEvent(workspaceRoot, {
+    command: execution.kind,
+    kind: execution.kind,
+    provider: execution.provider,
+    phase: "provider_decision",
+    status: result.ok ? "adopted" : "failed",
+    reason: result.ok ? null : `${execution.kind}_failed`,
+  });
 
   const envelope = buildExecutionEnvelope(execution, result);
   if (asJson) {
@@ -714,6 +788,30 @@ async function runHealth(rawArgs) {
       workspaceRoot,
     })));
 
+  for (const report of results) {
+    await recordRunEvent(workspaceRoot, {
+      command: "health",
+      kind: "health",
+      provider: report.provider,
+      phase: "health_result",
+      status: report.ok ? "passed" : "failed",
+      reason: report.ok ? "health_passed" : "health_failed",
+      model: report.model || null,
+      preview: report.probe?.responsePreview || null,
+      error: report.probe?.error
+        ? { message: String(report.probe.error).slice(0, 300) }
+        : null,
+    });
+    await recordRunEvent(workspaceRoot, {
+      command: "health",
+      kind: "health",
+      provider: report.provider,
+      phase: "provider_decision",
+      status: report.ok ? "passed" : "skipped",
+      reason: report.ok ? "health_passed" : "health_failed",
+    });
+  }
+
   const payload = buildHealthPayload(results);
   if (!payload.anyHealthy) {
     process.exitCode = 2;
@@ -870,6 +968,15 @@ async function runReviewCommand(rawArgs, { adversarial }) {
     const warnings = Array.isArray(reviewContext.warnings) && reviewContext.warnings.length > 0
       ? reviewContext.warnings
       : undefined;
+    const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
+    await recordRunEvent(workspaceRoot, {
+      command: execution.kind,
+      kind: execution.kind,
+      provider: null,
+      phase: "provider_decision",
+      status: "skipped",
+      reason: "no_changes",
+    });
     output(
       options.json
         ? { ok: true, provider, verdict: "no_changes", scope: reviewContext.scope, warnings }
@@ -1164,8 +1271,25 @@ async function runJobWorker(rawArgs) {
   }
 }
 
+async function dispatchCommand(command, rawArgs) {
+  if (command === "setup") return runSetup(rawArgs);
+  if (command === "health") return runHealth(rawArgs);
+  if (command === "ask") return runAsk(rawArgs);
+  if (command === "rescue") return runRescue(rawArgs);
+  if (command === "review") return runReviewCommand(rawArgs, { adversarial: false });
+  if (command === "adversarial-review") return runReviewCommand(rawArgs, { adversarial: true });
+  if (command === "status") return runStatus(rawArgs);
+  if (command === "result") return runResult(rawArgs);
+  if (command === "cancel") return runCancel(rawArgs);
+  if (command === "timing") return runTiming(rawArgs);
+  if (command === "_job-worker") return runJobWorker(rawArgs);
+  throw new Error(`Unknown subcommand '${command}'.`);
+}
+
 async function main() {
-  const [command, ...rawArgs] = process.argv.slice(2);
+  const fullArgs = process.argv.slice(2);
+  const { argv: normalizedArgs, runId: explicitRunId } = stripRunIdArgs(fullArgs);
+  const [command, ...rawArgs] = normalizedArgs;
   if (!command || command === "--help" || command === "-h") {
     printUsage();
     return;
@@ -1175,52 +1299,35 @@ async function main() {
     return;
   }
 
-  if (command === "setup") {
-    await runSetup(rawArgs);
-    return;
-  }
-  if (command === "health") {
-    await runHealth(rawArgs);
-    return;
-  }
-  if (command === "ask") {
-    await runAsk(rawArgs);
-    return;
-  }
-  if (command === "rescue") {
-    await runRescue(rawArgs);
-    return;
-  }
-  if (command === "review") {
-    await runReviewCommand(rawArgs, { adversarial: false });
-    return;
-  }
-  if (command === "adversarial-review") {
-    await runReviewCommand(rawArgs, { adversarial: true });
-    return;
-  }
-  if (command === "status") {
-    await runStatus(rawArgs);
-    return;
-  }
-  if (command === "result") {
-    await runResult(rawArgs);
-    return;
-  }
-  if (command === "cancel") {
-    await runCancel(rawArgs);
-    return;
-  }
-  if (command === "timing") {
-    await runTiming(rawArgs);
-    return;
-  }
-  if (command === "_job-worker") {
-    await runJobWorker(rawArgs);
-    return;
+  RUN_CONTEXT.command = command;
+  RUN_CONTEXT.hostSurface = resolveHostSurface(process.env, import.meta.url);
+  RUN_CONTEXT.rawArgs = fullArgs;
+  RUN_CONTEXT.runId = RUN_TRACKED_COMMANDS.has(command)
+    ? resolveRunId({ runId: explicitRunId }, process.env)
+    : null;
+
+  if (!RUN_CONTEXT.runId) {
+    return dispatchCommand(command, rawArgs);
   }
 
-  throw new Error(`Unknown subcommand '${command}'.`);
+  const workspaceRoot = resolveWorkspaceRoot(process.cwd());
+  await recordRunEvent(workspaceRoot, { phase: "run_started", status: "started" });
+  try {
+    const result = await dispatchCommand(command, rawArgs);
+    const failed = process.exitCode != null && process.exitCode !== 0;
+    await recordRunEvent(workspaceRoot, {
+      phase: "run_summary",
+      status: failed ? "failed" : "completed",
+    });
+    return result;
+  } catch (error) {
+    await recordRunEvent(workspaceRoot, {
+      phase: "run_summary",
+      status: "failed",
+      error: { message: String(error?.message || error).slice(0, 300) },
+    });
+    throw error;
+  }
 }
 
 main().catch((error) => {
