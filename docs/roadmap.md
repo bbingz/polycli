@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-07 (v0.6.6 review and host-adapter hardening).
+Snapshot: 2026-05-07 (v0.6.7 terminal CLI + run ledger; prepared, not yet published).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -11,11 +11,10 @@ Living document — update when items land, when priorities shift, or when a def
 ## Current state
 
 - Latest public release: **v0.6.6** — see `docs/release-notes-v0.6.6.md`.
-- Current release commit is the `v0.6.6` tag target.
-- Release verification targets are documented in `docs/release-notes-v0.6.6.md`.
+- v0.6.7 prepared in-tree (terminal CLI + run ledger + shared `debug` commands); see `docs/release-notes-v0.6.7.md`. Not yet tagged or published.
 - 9 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd).
-- 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode), each with an independent marketplace manifest.
-- Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
+- 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
+- Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
 
 Roadmap closure state:
 

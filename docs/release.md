@@ -1,17 +1,20 @@
 # Release Flow
 
-This repository publishes in two different ways:
+This repository publishes in three different ways:
 
 - `Claude` / `Codex` / `Copilot` ship from the GitHub repository marketplace files.
-- `OpenCode` ships as the npm package `@bbingz/polycli-opencode`.
+- `OpenCode` and the standalone terminal CLI ship as npm packages (`@bbingz/polycli-opencode` and `@bbingz/polycli`).
+- Library packages `@bbingz/polycli-utils` and `@bbingz/polycli-timing` ship on their own v1.x cadence.
 
 ## Current Release State
 
-As of `2026-05-06`, the current public patch release is:
+As of `2026-05-07`, the current public patch release is:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
-- GitHub release: `v0.6.6`
-- npm package: `@bbingz/polycli-opencode@0.6.6`
+- GitHub release: `v0.6.7` (prepared; not yet tagged or published)
+- Last published GitHub release: `v0.6.6`
+- npm package: `@bbingz/polycli-opencode@0.6.7`
+- npm package: `@bbingz/polycli@0.6.7` (terminal CLI; new in this release)
 - npm packages: `@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`
 
 Verified release paths:
@@ -20,6 +23,7 @@ Verified release paths:
 - `Codex`: marketplace add from `bbingz/polycli`, then install `Polycli` from TUI `/plugins`
 - `Copilot`: marketplace add/install from `bbingz/polycli`
 - `OpenCode`: `@bbingz/polycli-opencode`
+- Terminal CLI: `npm install -g @bbingz/polycli`
 - public utility packages: `@bbingz/polycli-utils`, `@bbingz/polycli-timing`
 
 Note:
@@ -141,3 +145,27 @@ opencode plugin @bbingz/polycli-opencode
 ```
 
 If npm account policy requires interactive browser verification, complete the CLI auth challenge and then re-run the same `npm publish` command.
+
+## Terminal CLI npm release (`@bbingz/polycli`)
+
+`@bbingz/polycli` is the PATH-callable wrapper around the bundled companion. It ships in lockstep with the host plugin version (`validate:manifests` enforces alignment).
+
+Pre-publish sanity checks (already wired into `release:check`):
+
+- `npm publish ./packages/polycli-terminal --dry-run --access public` returns `+ @bbingz/polycli@<version>` with no `npm pkg fix` warning.
+- `npm pack ./packages/polycli-terminal --dry-run --json` lists `LICENSE`, `README.md`, `package.json`, `bin/polycli.mjs`, and `bin/polycli-companion.bundle.mjs`.
+
+Publish with:
+
+```bash
+npm publish ./packages/polycli-terminal --access public
+```
+
+Consumers install with:
+
+```bash
+npm install -g @bbingz/polycli
+polycli health --json
+```
+
+The terminal package re-uses the same `polycli-companion.bundle.mjs` that every host adapter ships, so `npm run build:plugins` must succeed before publishing — `validate:bundles` confirms the five companion bundle copies are byte-identical.
