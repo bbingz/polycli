@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-07 — Claude — v0.6.8 release prep (manifests + notes; not published)
+
+- Bumped 7 release manifests from `0.6.7` to `0.6.8` (9 occurrences): `.claude-plugin/marketplace.json`, `.github/plugin/marketplace.json`, `plugins/polycli/.claude-plugin/plugin.json`, `plugins/polycli-codex/.codex-plugin/plugin.json`, `plugins/polycli-copilot/plugin.json`, `plugins/polycli-opencode/package.json`, `packages/polycli-terminal/package.json`. Utility packages unchanged on independent v1.x cadence.
+- Added `docs/release-notes-v0.6.8.md` covering Q6 Spec 2 (background-job ledger plumbing) + Q6 Spec 3 (read-only TUI inspector MVP) + run-ledger debug examples.
+- Updated `docs/release.md` Current Release State to "prepared for v0.6.8" (last published release still `v0.6.7`); updated `docs/roadmap.md` snapshot + Current state to mention prepared-but-not-published status.
+- Recorded automated TUI smoke results in the release notes (script-keys + non-TTY error path against the real wrapper binary). Real-TTY items (`q` quits + raw-mode restoration, interactive `r` refresh) explicitly listed as still-needed user-side smoke before tagging.
+- Local `npm test` 348/348, `release:check` exit 0 (bundles 5 / fixtures 16 / manifests 0.6.8 / host-map 11×4 / codex-adapter 5 / claude plugin validate ×2 / 4 npm pack dry-runs). No tag, no GitHub release, no npm publish in this slice.
+
 ## 2026-05-07 — Claude — TUI inspector MVP
 
 - Added terminal-only `polycli tui` as a read-only inspector over existing debug/run-ledger data.

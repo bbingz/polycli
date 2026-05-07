@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-07 (v0.6.7 terminal CLI + run ledger; published).
+Snapshot: 2026-05-07 (v0.6.8 prepared: background-job ledger plumbing + read-only TUI inspector; v0.6.7 still the latest published release).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -11,6 +11,7 @@ Living document — update when items land, when priorities shift, or when a def
 ## Current state
 
 - Latest public release: **v0.6.7** — see `docs/release-notes-v0.6.7.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.7` + `@bbingz/polycli@0.6.7` (new terminal CLI) all on the registry.
+- Next release prepared: **v0.6.8** — see `docs/release-notes-v0.6.8.md`. Manifests bumped, release notes drafted, local `release:check` green; tag / GitHub release / npm publish still pending real-TTY user smoke.
 - 9 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
