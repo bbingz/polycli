@@ -181,6 +181,34 @@ test("renderTuiFrame Help line appears only when showHelp=true", () => {
   assert.match(on, /Help:/);
 });
 
+test("polycli tui without --smoke and without TTY exits with TTY error", () => {
+  const result = spawnSync(process.execPath, [tuiBin], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /requires an interactive TTY/);
+});
+
+test("polycli tui smoke mode surfaces fixture failure cleanly", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-tui-bad-"));
+  try {
+    fs.writeFileSync(path.join(fixtureDir, "runs.json"), JSON.stringify({
+      ok: true,
+      runs: [{ runId: "run-missing", commands: ["ask"] }],
+    }));
+    const result = spawnSync(process.execPath, [tuiBin, "--smoke", "--fixture-dir", fixtureDir, "--run-id", "run-missing"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /^Error:/m);
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

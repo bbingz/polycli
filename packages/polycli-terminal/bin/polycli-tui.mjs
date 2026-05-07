@@ -89,48 +89,70 @@ async function interactive(options) {
 
   readline.emitKeypressEvents(process.stdin);
   process.stdin.setRawMode(true);
-
-  let state = {
-    ...loadData(options),
-    view: "list",
-    focusedPane: "runs",
-    showHelp: false,
+  let restored = false;
+  let keypressHandler = null;
+  const restoreRawMode = () => {
+    if (restored) return;
+    restored = true;
+    if (keypressHandler) {
+      try { process.stdin.removeListener("keypress", keypressHandler); } catch {}
+    }
+    if (process.stdin.isTTY) {
+      try { process.stdin.setRawMode(false); } catch {}
+    }
+    process.stdout.write("\n");
   };
-  const writeFrame = () => {
-    const frame = renderTuiFrame({
-      ...state,
-      width: process.stdout.columns || 100,
-      height: process.stdout.rows || 30,
-    });
-    process.stdout.write("\x1b[2J\x1b[H" + frame);
-  };
-  writeFrame();
+  process.once("SIGINT", restoreRawMode);
+  process.once("exit", restoreRawMode);
 
-  await new Promise((resolve) => {
-    process.stdin.on("keypress", (str, key = {}) => {
-      if (key.name === "q" || (key.ctrl && key.name === "c")) {
-        resolve();
-        return;
-      }
-      if (key.name === "r") {
+  try {
+    let state = {
+      ...loadData(options),
+      view: "list",
+      focusedPane: "runs",
+      showHelp: false,
+    };
+    const writeFrame = () => {
+      const frame = renderTuiFrame({
+        ...state,
+        width: process.stdout.columns || 100,
+        height: process.stdout.rows || 30,
+      });
+      process.stdout.write("\x1b[2J\x1b[H" + frame);
+    };
+    writeFrame();
+
+    await new Promise((resolve, reject) => {
+      keypressHandler = (str, key = {}) => {
         try {
-          const data = loadData(options);
-          state = { ...state, ...data };
-          writeFrame();
+          if (key.name === "q" || (key.ctrl && key.name === "c")) {
+            resolve();
+            return;
+          }
+          if (key.name === "r") {
+            try {
+              const data = loadData(options);
+              state = { ...state, ...data };
+              writeFrame();
+            } catch (error) {
+              process.stdout.write(`\x1b[2J\x1b[HError refreshing: ${error.message}\nPress q to quit.\n`);
+            }
+            return;
+          }
+          const keyId = mapKey(str, key);
+          if (keyId) {
+            state = applyKey(state, keyId);
+            writeFrame();
+          }
         } catch (error) {
-          process.stdout.write(`\x1b[2J\x1b[HError refreshing: ${error.message}\nPress q to quit.\n`);
+          reject(error);
         }
-        return;
-      }
-      const keyId = mapKey(str, key);
-      if (keyId) {
-        state = applyKey(state, keyId);
-        writeFrame();
-      }
+      };
+      process.stdin.on("keypress", keypressHandler);
     });
-  });
-
-  process.stdout.write("\n");
+  } finally {
+    restoreRawMode();
+  }
 }
 
 try {
