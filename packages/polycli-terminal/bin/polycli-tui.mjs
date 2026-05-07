@@ -11,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const companionPath = path.join(__dirname, "polycli-companion.bundle.mjs");
 
 function parseArgs(argv) {
-  const options = { history: null, runId: null, smoke: false, fixtureDir: null };
+  const options = { history: null, runId: null, smoke: false, fixtureDir: null, scriptKeys: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--run-id") options.runId = argv[++i] || null;
@@ -20,9 +20,16 @@ function parseArgs(argv) {
     else if (arg.startsWith("--history=")) options.history = arg.slice("--history=".length);
     else if (arg === "--smoke") options.smoke = true;
     else if (arg === "--fixture-dir") options.fixtureDir = argv[++i] || null;
+    else if (arg === "--script-keys") options.scriptKeys = parseScriptKeys(argv[++i]);
+    else if (arg.startsWith("--script-keys=")) options.scriptKeys = parseScriptKeys(arg.slice("--script-keys=".length));
     else throw new Error(`Unknown tui option: ${arg}`);
   }
   return options;
+}
+
+function parseScriptKeys(value) {
+  if (!value) return [];
+  return String(value).split(",").map((token) => token.trim()).filter(Boolean);
 }
 
 function parseHistoryArg(value) {
@@ -49,38 +56,68 @@ function runCompanionJson(args) {
   return JSON.parse(result.stdout);
 }
 
-function loadData(options) {
+function loadRunsIndex(options) {
   const limit = parseHistoryArg(options.history);
+  let allRuns;
   if (options.fixtureDir) {
     const runs = readFixtureJson(options.fixtureDir, "runs.json");
-    const allRuns = runs.runs || [];
-    const limitedRuns = limit == null ? allRuns : allRuns.slice(0, limit);
-    const selectedRunId = options.runId || limitedRuns[0]?.runId || null;
-    const show = selectedRunId
-      ? readFixtureJson(options.fixtureDir, `show-${selectedRunId}.json`)
-      : { events: [] };
-    const explain = selectedRunId
-      ? readFixtureJson(options.fixtureDir, `explain-${selectedRunId}.json`)
-      : { text: "" };
-    return { runs: limitedRuns, selectedRunId, events: show.events || [], explanationText: explain.text || "" };
+    allRuns = runs.runs || [];
+  } else {
+    const runs = runCompanionJson(["debug", "runs"]);
+    allRuns = runs.runs || [];
   }
-
-  const runs = runCompanionJson(["debug", "runs"]);
-  const allRuns = runs.runs || [];
-  const limitedRuns = limit == null ? allRuns : allRuns.slice(0, limit);
-  const selectedRunId = options.runId || limitedRuns[0]?.runId || null;
-  const show = selectedRunId ? runCompanionJson(["debug", "show", selectedRunId]) : { events: [] };
-  const explain = selectedRunId ? runCompanionJson(["debug", "explain", selectedRunId]) : { text: "" };
-  return { runs: limitedRuns, selectedRunId, events: show.events || [], explanationText: explain.text || "" };
+  return limit == null ? allRuns : allRuns.slice(0, limit);
 }
 
-function renderOnce(options) {
-  const data = loadData(options);
-  return renderTuiFrame({
-    ...data,
-    width: process.stdout.columns || 100,
-    height: process.stdout.rows || 30,
-  });
+function loadRunDetail(options, runId) {
+  if (!runId) return { events: [], explanationText: "" };
+  if (options.fixtureDir) {
+    const show = readFixtureJson(options.fixtureDir, `show-${runId}.json`);
+    const explain = readFixtureJson(options.fixtureDir, `explain-${runId}.json`);
+    return { events: show.events || [], explanationText: explain.text || "" };
+  }
+  const show = runCompanionJson(["debug", "show", runId]);
+  const explain = runCompanionJson(["debug", "explain", runId]);
+  return { events: show.events || [], explanationText: explain.text || "" };
+}
+
+function buildInitialState(options) {
+  const runs = loadRunsIndex(options);
+  const selectedRunId = options.runId || runs[0]?.runId || null;
+  const detail = loadRunDetail(options, selectedRunId);
+  return {
+    runs,
+    selectedRunId,
+    events: detail.events,
+    explanationText: detail.explanationText,
+    view: "list",
+    focusedPane: "runs",
+    showHelp: false,
+  };
+}
+
+function dispatchKey(state, keyId, options) {
+  const previousRunId = state.selectedRunId;
+  const next = applyKey(state, keyId);
+  if (next.selectedRunId !== previousRunId && next.selectedRunId) {
+    const detail = loadRunDetail(options, next.selectedRunId);
+    return { ...next, events: detail.events, explanationText: detail.explanationText };
+  }
+  return next;
+}
+
+function refreshState(state, options) {
+  const runs = loadRunsIndex(options);
+  const stillExists = runs.some((run) => run.runId === state.selectedRunId);
+  const nextSelected = stillExists ? state.selectedRunId : (runs[0]?.runId || null);
+  const detail = loadRunDetail(options, nextSelected);
+  return {
+    ...state,
+    runs,
+    selectedRunId: nextSelected,
+    events: detail.events,
+    explanationText: detail.explanationText,
+  };
 }
 
 function mapKey(str, key) {
@@ -117,12 +154,7 @@ async function interactive(options) {
   process.once("exit", restoreRawMode);
 
   try {
-    let state = {
-      ...loadData(options),
-      view: "list",
-      focusedPane: "runs",
-      showHelp: false,
-    };
+    let state = buildInitialState(options);
     const writeFrame = () => {
       const frame = renderTuiFrame({
         ...state,
@@ -142,8 +174,7 @@ async function interactive(options) {
           }
           if (key.name === "r") {
             try {
-              const data = loadData(options);
-              state = { ...state, ...data };
+              state = refreshState(state, options);
               writeFrame();
             } catch (error) {
               process.stdout.write(`\x1b[2J\x1b[HError refreshing: ${error.message}\nPress q to quit.\n`);
@@ -152,8 +183,12 @@ async function interactive(options) {
           }
           const keyId = mapKey(str, key);
           if (keyId) {
-            state = applyKey(state, keyId);
-            writeFrame();
+            try {
+              state = dispatchKey(state, keyId, options);
+              writeFrame();
+            } catch (error) {
+              process.stdout.write(`\x1b[2J\x1b[HError loading run ${state.selectedRunId}: ${error.message}\nPress q to quit.\n`);
+            }
           }
         } catch (error) {
           reject(error);
@@ -169,7 +204,16 @@ async function interactive(options) {
 try {
   const options = parseArgs(process.argv.slice(2));
   if (options.smoke) {
-    process.stdout.write(`${renderOnce(options)}\n`);
+    let state = buildInitialState(options);
+    for (const keyId of options.scriptKeys) {
+      state = dispatchKey(state, keyId, options);
+    }
+    const frame = renderTuiFrame({
+      ...state,
+      width: process.stdout.columns || 100,
+      height: process.stdout.rows || 30,
+    });
+    process.stdout.write(`${frame}\n`);
   } else {
     await interactive(options);
   }

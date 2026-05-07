@@ -269,6 +269,84 @@ test("polycli tui --history=-1 rejects negative integer", () => {
   }
 });
 
+test("polycli tui --script-keys down loads selected run's detail, not the initial run's", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-tui-script-"));
+  try {
+    fs.writeFileSync(path.join(fixtureDir, "runs.json"), JSON.stringify({
+      ok: true,
+      runs: [
+        { runId: "run-a", commands: ["ask"], startedAt: "2026-05-07T00:00:00Z" },
+        { runId: "run-b", commands: ["ask"], startedAt: "2026-05-07T00:00:01Z" },
+      ],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "show-run-a.json"), JSON.stringify({
+      ok: true, runId: "run-a",
+      events: [{ runId: "run-a", provider: "qwen", phase: "provider_decision", status: "adopted" }],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "show-run-b.json"), JSON.stringify({
+      ok: true, runId: "run-b",
+      events: [{ runId: "run-b", provider: "kimi", phase: "provider_decision", status: "adopted" }],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "explain-run-a.json"), JSON.stringify({
+      ok: true, runId: "run-a", found: true, text: "qwen adopted", events: [],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "explain-run-b.json"), JSON.stringify({
+      ok: true, runId: "run-b", found: true, text: "kimi adopted", events: [],
+    }));
+    const result = spawnSync(
+      process.execPath,
+      [tuiBin, "--smoke", "--fixture-dir", fixtureDir, "--script-keys", "down"],
+      { cwd: repoRoot, encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /kimi adopted/);
+    assert.equal(
+      result.stdout.includes("qwen adopted"),
+      false,
+      "after down, frame must not show the previous run's provider",
+    );
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test("polycli tui --script-keys down,enter shows detail explanation for the new run", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-tui-script-detail-"));
+  try {
+    fs.writeFileSync(path.join(fixtureDir, "runs.json"), JSON.stringify({
+      ok: true,
+      runs: [
+        { runId: "run-a", commands: ["ask"], startedAt: "2026-05-07T00:00:00Z" },
+        { runId: "run-b", commands: ["ask"], startedAt: "2026-05-07T00:00:01Z" },
+      ],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "show-run-a.json"), JSON.stringify({
+      ok: true, runId: "run-a",
+      events: [{ runId: "run-a", provider: "qwen", phase: "provider_decision", status: "adopted" }],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "show-run-b.json"), JSON.stringify({
+      ok: true, runId: "run-b",
+      events: [{ runId: "run-b", provider: "kimi", phase: "provider_decision", status: "adopted" }],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "explain-run-a.json"), JSON.stringify({
+      ok: true, runId: "run-a", found: true, text: "EXPL_RUN_A", events: [],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "explain-run-b.json"), JSON.stringify({
+      ok: true, runId: "run-b", found: true, text: "EXPL_RUN_B", events: [],
+    }));
+    const result = spawnSync(
+      process.execPath,
+      [tuiBin, "--smoke", "--fixture-dir", fixtureDir, "--script-keys", "down,enter"],
+      { cwd: repoRoot, encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /EXPL_RUN_B/);
+    assert.equal(result.stdout.includes("EXPL_RUN_A"), false);
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
