@@ -164,6 +164,11 @@ export function buildTuiModel({
       .filter((event) => Array.isArray(event.argv) && event.argv.length > 0)
       .map((event) => formatReproductionCommand(event.argv)),
   )];
+  const logPointers = [...new Set(
+    selectedEvents
+      .map((event) => event.logFile)
+      .filter((logFile) => typeof logFile === "string" && logFile.length > 0),
+  )];
 
   return {
     mode: layoutMode(width, height),
@@ -178,6 +183,7 @@ export function buildTuiModel({
     providers,
     explanationText,
     reproductionCommands,
+    logPointers,
   };
 }
 
@@ -229,6 +235,12 @@ export function renderTuiFrame(input = {}) {
         lines.push(fit(`repro: ${cmd}`, width));
       }
     }
+    if (model.logPointers.length > 0) {
+      lines.push(line(width));
+      for (const logFile of model.logPointers.slice(0, 3)) {
+        lines.push(fit(`log: ${logFile}`, width));
+      }
+    }
   } else {
     if (model.events.length > 0) {
       lines.push(line(width));
@@ -239,6 +251,10 @@ export function renderTuiFrame(input = {}) {
     if (model.reproductionCommands.length > 0) {
       lines.push(line(width));
       lines.push(fit(`repro: ${model.reproductionCommands[0]}`, width));
+    }
+    if (model.logPointers.length > 0) {
+      lines.push(line(width));
+      lines.push(fit(`log: ${model.logPointers[0]}`, width));
     }
   }
 

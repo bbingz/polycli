@@ -76,6 +76,22 @@ test("buildTuiModel creates run list, matrix, timeline, and detail panes", () =>
   assert.ok(model.reproductionCommands.includes("polycli ask --provider qwen '<prompt:redacted>'"));
 });
 
+test("buildTuiModel exposes deduplicated log file pointers for the selected run", () => {
+  const model = buildTuiModel({
+    runs: [{ runId: "run-a", commands: ["ask"] }],
+    events: [
+      { runId: "run-a", provider: "kimi", phase: "attempt_started", status: "started", logFile: "/tmp/job-k.log" },
+      { runId: "run-a", provider: "kimi", phase: "attempt_result", status: "failed", logFile: "/tmp/job-k.log" },
+      { runId: "run-b", provider: "qwen", phase: "attempt_started", status: "started", logFile: "/tmp/job-q.log" },
+    ],
+    selectedRunId: "run-a",
+    width: 96,
+    height: 28,
+  });
+
+  assert.deepEqual(model.logPointers, ["/tmp/job-k.log"]);
+});
+
 test("renderTuiFrame includes unfinished state and footer controls", () => {
   const frame = renderTuiFrame({
     runs: [{ runId: "run-a", commands: ["ask"], startedAt: "now" }],
@@ -91,6 +107,22 @@ test("renderTuiFrame includes unfinished state and footer controls", () => {
   assert.match(frame, /kimi/);
   assert.match(frame, /unfinished/);
   assert.match(frame, /q quit/);
+});
+
+test("renderTuiFrame shows log file pointers in detail view without reading log contents", () => {
+  const frame = renderTuiFrame({
+    runs: [{ runId: "run-a", commands: ["ask"], startedAt: "now" }],
+    events: [
+      { runId: "run-a", provider: "kimi", phase: "attempt_started", status: "started", jobId: "job-k", logFile: "/tmp/polycli/jobs/job-k.log" },
+    ],
+    selectedRunId: "run-a",
+    view: "detail",
+    width: 96,
+    height: 24,
+  });
+
+  assert.match(frame, /log: \/tmp\/polycli\/jobs\/job-k\.log/);
+  assert.equal(frame.includes("assistant progress"), false);
 });
 
 import { applyKey } from "../../packages/polycli-terminal/lib/tui/view-model.mjs";

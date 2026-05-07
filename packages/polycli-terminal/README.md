@@ -17,4 +17,4 @@ polycli tui
 polycli tui --run-id run_abc123
 ```
 
-The TUI is read-only. It renders recent run-ledger data from the same debug commands used by `polycli debug runs/show/explain`. Jobs with `started` or `attempt_started` but no terminal result are shown as `unfinished` / `unknown`.
+The TUI is read-only. It renders recent run-ledger data from the same debug commands used by `polycli debug runs/show/explain`. Jobs with `started` or `attempt_started` but no terminal result are shown as `unfinished` / `unknown`. When ledger events include a local job log path, the TUI shows the path as a pointer; it does not read or print log contents.

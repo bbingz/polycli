@@ -93,7 +93,7 @@ Non-goals for this package:
 
 ### `polycli tui`
 
-Read-only terminal inspector over run-ledger data. Supports `--run-id <id>` and `--history <count>`. It does not run, cancel, retry, or mutate provider jobs.
+Read-only terminal inspector over run-ledger data. Supports `--run-id <id>` and `--history <count>`. It does not run, cancel, retry, or mutate provider jobs. When ledger events include `logFile`, the inspector renders a local path pointer only; it does not read or print log contents.
 
 ### `@bbingz/polycli-runtime`
 
