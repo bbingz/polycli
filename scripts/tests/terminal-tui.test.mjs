@@ -209,6 +209,66 @@ test("polycli tui smoke mode surfaces fixture failure cleanly", () => {
   }
 });
 
+test("polycli tui --history=1 only renders one run from fixtures", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-tui-history-"));
+  try {
+    fs.writeFileSync(path.join(fixtureDir, "runs.json"), JSON.stringify({
+      ok: true,
+      runs: [
+        { runId: "run-newer", commands: ["ask"], startedAt: "2026-05-07T00:00:01Z" },
+        { runId: "run-older", commands: ["health"], startedAt: "2026-05-07T00:00:00Z" },
+      ],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "show-run-newer.json"), JSON.stringify({
+      ok: true,
+      runId: "run-newer",
+      events: [{ runId: "run-newer", provider: "qwen", phase: "provider_decision", status: "adopted" }],
+    }));
+    fs.writeFileSync(path.join(fixtureDir, "explain-run-newer.json"), JSON.stringify({
+      ok: true, runId: "run-newer", found: true, text: "qwen adopted", events: [],
+    }));
+    const result = spawnSync(process.execPath, [tuiBin, "--smoke", "--fixture-dir", fixtureDir, "--history", "1"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /run-newer/);
+    assert.equal(result.stdout.includes("run-older"), false, "run-older must not render when --history=1");
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test("polycli tui --history=abc rejects non-integer with clear error", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-tui-history-bad-"));
+  try {
+    fs.writeFileSync(path.join(fixtureDir, "runs.json"), JSON.stringify({ ok: true, runs: [] }));
+    const result = spawnSync(process.execPath, [tuiBin, "--smoke", "--fixture-dir", fixtureDir, "--history", "abc"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /non-negative integer/);
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test("polycli tui --history=-1 rejects negative integer", () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-tui-history-neg-"));
+  try {
+    fs.writeFileSync(path.join(fixtureDir, "runs.json"), JSON.stringify({ ok: true, runs: [] }));
+    const result = spawnSync(process.execPath, [tuiBin, "--smoke", "--fixture-dir", fixtureDir, "--history=-1"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /non-negative integer/);
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

@@ -25,6 +25,14 @@ function parseArgs(argv) {
   return options;
 }
 
+function parseHistoryArg(value) {
+  if (value == null) return null;
+  if (!/^\d+$/.test(String(value))) {
+    throw new Error("--history must be a non-negative integer.");
+  }
+  return Number.parseInt(value, 10);
+}
+
 function readFixtureJson(fixtureDir, name) {
   return JSON.parse(fs.readFileSync(path.join(fixtureDir, name), "utf8"));
 }
@@ -42,25 +50,28 @@ function runCompanionJson(args) {
 }
 
 function loadData(options) {
+  const limit = parseHistoryArg(options.history);
   if (options.fixtureDir) {
     const runs = readFixtureJson(options.fixtureDir, "runs.json");
-    const selectedRunId = options.runId || runs.runs?.[0]?.runId || null;
+    const allRuns = runs.runs || [];
+    const limitedRuns = limit == null ? allRuns : allRuns.slice(0, limit);
+    const selectedRunId = options.runId || limitedRuns[0]?.runId || null;
     const show = selectedRunId
       ? readFixtureJson(options.fixtureDir, `show-${selectedRunId}.json`)
       : { events: [] };
     const explain = selectedRunId
       ? readFixtureJson(options.fixtureDir, `explain-${selectedRunId}.json`)
       : { text: "" };
-    return { runs: runs.runs || [], selectedRunId, events: show.events || [], explanationText: explain.text || "" };
+    return { runs: limitedRuns, selectedRunId, events: show.events || [], explanationText: explain.text || "" };
   }
 
-  const runsArgs = ["debug", "runs"];
-  if (options.history) runsArgs.push("--history", options.history);
-  const runs = runCompanionJson(runsArgs);
-  const selectedRunId = options.runId || runs.runs?.[0]?.runId || null;
+  const runs = runCompanionJson(["debug", "runs"]);
+  const allRuns = runs.runs || [];
+  const limitedRuns = limit == null ? allRuns : allRuns.slice(0, limit);
+  const selectedRunId = options.runId || limitedRuns[0]?.runId || null;
   const show = selectedRunId ? runCompanionJson(["debug", "show", selectedRunId]) : { events: [] };
   const explain = selectedRunId ? runCompanionJson(["debug", "explain", selectedRunId]) : { text: "" };
-  return { runs: runs.runs || [], selectedRunId, events: show.events || [], explanationText: explain.text || "" };
+  return { runs: limitedRuns, selectedRunId, events: show.events || [], explanationText: explain.text || "" };
 }
 
 function renderOnce(options) {
