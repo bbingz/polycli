@@ -5152,6 +5152,54 @@ async function appendRunLedgerEvent(workspaceRoot, event) {
   appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO });
   return full;
 }
+async function readRunLedgerEvents(workspaceRoot) {
+  const file = resolveRunLedgerFile(workspaceRoot);
+  return readNdjson(file);
+}
+function groupRunLedgerEvents(events) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const event of events) {
+    if (!event?.runId) continue;
+    const group = groups.get(event.runId) || { runId: event.runId, commands: [], events: [] };
+    group.events.push(event);
+    group.commands = [
+      ...new Set([...group.commands, ...event.commands || [], event.command].filter(Boolean))
+    ].sort();
+    groups.set(event.runId, group);
+  }
+  for (const group of groups.values()) {
+    group.events.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  }
+  return groups;
+}
+function summarizeRunLedger(events) {
+  return [...groupRunLedgerEvents(events).values()].map((group) => {
+    const decisions = group.events.filter(
+      (event) => event.phase === "provider_decision" && event.provider
+    );
+    return {
+      runId: group.runId,
+      commands: group.commands,
+      startedAt: group.events[0]?.at || null,
+      updatedAt: group.events.at(-1)?.at || null,
+      providerCount: new Set(decisions.map((event) => event.provider)).size,
+      adoptedCount: decisions.filter((event) => event.status === "adopted").length,
+      skippedCount: decisions.filter((event) => event.status === "skipped").length,
+      failedCount: decisions.filter((event) => event.status === "failed").length
+    };
+  });
+}
+function buildRunExplanation(events, runId) {
+  const group = groupRunLedgerEvents(events).get(runId);
+  if (!group) {
+    return { runId, found: false, text: `Run ${runId} was not found.`, events: [] };
+  }
+  const decisions = group.events.filter((event) => event.phase === "provider_decision");
+  const lines = decisions.map(
+    (event) => `${event.provider || "run"} ${event.status}${event.reason ? ` (${event.reason})` : ""}`
+  );
+  return { runId, found: true, text: lines.join("\n"), events: group.events };
+}
 
 // plugins/polycli/scripts/polycli-companion.mjs
 var COMPANION_PATH = fileURLToPath(import.meta.url);
@@ -5229,7 +5277,10 @@ function printUsage() {
       "  polycli-companion.mjs status [job-id] [--all] [--wait] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs result [job-id] [--json]",
       "  polycli-companion.mjs cancel [job-id] [--json]",
-      "  polycli-companion.mjs timing [--provider <provider>] [--history <count>] [--json]"
+      "  polycli-companion.mjs timing [--provider <provider>] [--history <count>] [--json]",
+      "  polycli-companion.mjs debug runs [--json]",
+      "  polycli-companion.mjs debug show <run-id> [--json]",
+      "  polycli-companion.mjs debug explain <run-id> [--json]"
     ].join("\n")
   );
 }
@@ -6266,6 +6317,64 @@ async function runJobWorker(rawArgs) {
     cleanupRuntimeOptions(execution.runtimeOptions);
   }
 }
+function formatDebugRunsTable(runs) {
+  if (runs.length === 0) return "No runs found.";
+  const lines = [
+    "| runId | commands | startedAt | updatedAt | adopted | skipped | failed |",
+    "|---|---|---|---|---|---|---|"
+  ];
+  for (const run of runs) {
+    lines.push(
+      `| ${run.runId} | ${run.commands.join(",")} | ${run.startedAt || ""} | ${run.updatedAt || ""} | ${run.adoptedCount} | ${run.skippedCount} | ${run.failedCount} |`
+    );
+  }
+  return lines.join("\n");
+}
+async function runDebugCommand(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, {
+    booleanOptions: ["json"]
+  });
+  const subcommand = positionals[0] || "runs";
+  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const events = await readRunLedgerEvents(workspaceRoot);
+  const asJson = Boolean(options.json);
+  if (subcommand === "runs") {
+    const runs = summarizeRunLedger(events);
+    if (asJson) {
+      output({ ok: true, runs }, true);
+      return;
+    }
+    output(formatDebugRunsTable(runs), false);
+    return;
+  }
+  if (subcommand === "show") {
+    const runId = positionals[1];
+    if (!runId) {
+      throw new Error("Missing run id for debug show.");
+    }
+    const runEvents = events.filter((event) => event.runId === runId);
+    if (asJson) {
+      output({ ok: true, runId, events: runEvents }, true);
+      return;
+    }
+    output(JSON.stringify({ runId, events: runEvents }, null, 2), false);
+    return;
+  }
+  if (subcommand === "explain") {
+    const runId = positionals[1];
+    if (!runId) {
+      throw new Error("Missing run id for debug explain.");
+    }
+    const explanation = buildRunExplanation(events, runId);
+    if (asJson) {
+      output({ ok: true, ...explanation }, true);
+      return;
+    }
+    output(explanation.text, false);
+    return;
+  }
+  throw new Error(`Unknown subcommand 'debug ${subcommand}'.`);
+}
 async function dispatchCommand(command, rawArgs) {
   if (command === "setup") return runSetup(rawArgs);
   if (command === "health") return runHealth(rawArgs);
@@ -6277,6 +6386,7 @@ async function dispatchCommand(command, rawArgs) {
   if (command === "result") return runResult(rawArgs);
   if (command === "cancel") return runCancel(rawArgs);
   if (command === "timing") return runTiming(rawArgs);
+  if (command === "debug") return runDebugCommand(rawArgs);
   if (command === "_job-worker") return runJobWorker(rawArgs);
   throw new Error(`Unknown subcommand '${command}'.`);
 }

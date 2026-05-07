@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { createClaudeFixtureReplay } from "./helpers/fixture-replay.mjs";
 import { readLastUsedProvider, resolveWorkspaceRoot } from "../lib/state.mjs";
-import { readRunLedgerEvents } from "../lib/run-ledger.mjs";
+import { appendRunLedgerEvent, readRunLedgerEvents } from "../lib/run-ledger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const companionPath = path.resolve(__dirname, "..", "polycli-companion.bundle.mjs");
@@ -2060,4 +2060,71 @@ test("integration: review with no changes writes no_changes skipped decision", a
     ),
     `expected no_changes skipped decision for run-clean; got ${JSON.stringify(events)}`,
   );
+});
+
+test("integration: debug runs returns summarized ledger runs", async (t) => {
+  const context = createLedgerContext(t);
+  await appendRunLedgerEvent(context.cwd, {
+    runId: "run-debug",
+    command: "health",
+    commands: ["health"],
+    phase: "run_started",
+    status: "started",
+    hostSurface: "terminal",
+  });
+  await appendRunLedgerEvent(context.cwd, {
+    runId: "run-debug",
+    command: "health",
+    commands: ["health"],
+    phase: "provider_decision",
+    provider: "pi",
+    status: "skipped",
+    reason: "health_failed",
+    hostSurface: "terminal",
+  });
+  const result = await runCompanion(["debug", "runs", "--json"], context);
+  assert.equal(result.code, 0, result.stderr);
+  const json = JSON.parse(result.stdout);
+  assert.equal(json.ok, true);
+  assert.equal(json.runs[0].runId, "run-debug");
+  assert.deepEqual(json.runs[0].commands, ["health"]);
+});
+
+test("integration: debug show returns raw events for a run", async (t) => {
+  const context = createLedgerContext(t);
+  await appendRunLedgerEvent(context.cwd, {
+    runId: "run-show",
+    command: "ask",
+    commands: ["ask"],
+    phase: "provider_decision",
+    provider: "cmd",
+    status: "failed",
+    reason: "ask_failed",
+    hostSurface: "terminal",
+  });
+  const result = await runCompanion(["debug", "show", "run-show", "--json"], context);
+  assert.equal(result.code, 0, result.stderr);
+  const json = JSON.parse(result.stdout);
+  assert.equal(json.ok, true);
+  assert.equal(json.runId, "run-show");
+  assert.equal(json.events[0].provider, "cmd");
+});
+
+test("integration: debug explain returns provider decisions", async (t) => {
+  const context = createLedgerContext(t);
+  await appendRunLedgerEvent(context.cwd, {
+    runId: "run-explain",
+    command: "ask",
+    commands: ["ask"],
+    phase: "provider_decision",
+    provider: "qwen",
+    status: "adopted",
+    hostSurface: "terminal",
+  });
+  const result = await runCompanion(["debug", "explain", "run-explain", "--json"], context);
+  assert.equal(result.code, 0, result.stderr);
+  const json = JSON.parse(result.stdout);
+  assert.equal(json.ok, true);
+  assert.equal(json.found, true);
+  assert.match(json.text, /qwen adopted/);
 });

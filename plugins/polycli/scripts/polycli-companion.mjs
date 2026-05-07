@@ -48,10 +48,13 @@ import {
 import { appendPreview, previewText } from "./lib/preview.mjs";
 import {
   appendRunLedgerEvent,
+  buildRunExplanation,
+  readRunLedgerEvents,
   redactArgv,
   resolveHostSurface,
   resolveRunId,
   stripRunIdArgs,
+  summarizeRunLedger,
 } from "./lib/run-ledger.mjs";
 
 const COMPANION_PATH = fileURLToPath(import.meta.url);
@@ -137,6 +140,9 @@ function printUsage() {
       "  polycli-companion.mjs result [job-id] [--json]",
       "  polycli-companion.mjs cancel [job-id] [--json]",
       "  polycli-companion.mjs timing [--provider <provider>] [--history <count>] [--json]",
+      "  polycli-companion.mjs debug runs [--json]",
+      "  polycli-companion.mjs debug show <run-id> [--json]",
+      "  polycli-companion.mjs debug explain <run-id> [--json]",
     ].join("\n")
   );
 }
@@ -1271,6 +1277,70 @@ async function runJobWorker(rawArgs) {
   }
 }
 
+function formatDebugRunsTable(runs) {
+  if (runs.length === 0) return "No runs found.";
+  const lines = [
+    "| runId | commands | startedAt | updatedAt | adopted | skipped | failed |",
+    "|---|---|---|---|---|---|---|",
+  ];
+  for (const run of runs) {
+    lines.push(
+      `| ${run.runId} | ${run.commands.join(",")} | ${run.startedAt || ""} | ${run.updatedAt || ""} | ${run.adoptedCount} | ${run.skippedCount} | ${run.failedCount} |`,
+    );
+  }
+  return lines.join("\n");
+}
+
+async function runDebugCommand(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, {
+    booleanOptions: ["json"],
+  });
+  const subcommand = positionals[0] || "runs";
+  const workspaceRoot = resolveWorkspaceRoot(process.cwd());
+  const events = await readRunLedgerEvents(workspaceRoot);
+  const asJson = Boolean(options.json);
+
+  if (subcommand === "runs") {
+    const runs = summarizeRunLedger(events);
+    if (asJson) {
+      output({ ok: true, runs }, true);
+      return;
+    }
+    output(formatDebugRunsTable(runs), false);
+    return;
+  }
+
+  if (subcommand === "show") {
+    const runId = positionals[1];
+    if (!runId) {
+      throw new Error("Missing run id for debug show.");
+    }
+    const runEvents = events.filter((event) => event.runId === runId);
+    if (asJson) {
+      output({ ok: true, runId, events: runEvents }, true);
+      return;
+    }
+    output(JSON.stringify({ runId, events: runEvents }, null, 2), false);
+    return;
+  }
+
+  if (subcommand === "explain") {
+    const runId = positionals[1];
+    if (!runId) {
+      throw new Error("Missing run id for debug explain.");
+    }
+    const explanation = buildRunExplanation(events, runId);
+    if (asJson) {
+      output({ ok: true, ...explanation }, true);
+      return;
+    }
+    output(explanation.text, false);
+    return;
+  }
+
+  throw new Error(`Unknown subcommand 'debug ${subcommand}'.`);
+}
+
 async function dispatchCommand(command, rawArgs) {
   if (command === "setup") return runSetup(rawArgs);
   if (command === "health") return runHealth(rawArgs);
@@ -1282,6 +1352,7 @@ async function dispatchCommand(command, rawArgs) {
   if (command === "result") return runResult(rawArgs);
   if (command === "cancel") return runCancel(rawArgs);
   if (command === "timing") return runTiming(rawArgs);
+  if (command === "debug") return runDebugCommand(rawArgs);
   if (command === "_job-worker") return runJobWorker(rawArgs);
   throw new Error(`Unknown subcommand '${command}'.`);
 }
