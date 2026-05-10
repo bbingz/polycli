@@ -6,6 +6,15 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-10 — Codex — v0.6.15 observability and provider failure classification
+
+- Fixed the observability split found after several days of real polycli use: `POLYCLI_STATE_ROOT` now overrides `CLAUDE_PLUGIN_DATA/state`, `timing --all` / `--history all` can read full history, and `timing --json` reports store metadata (`stateRoot`, `stateRootSource`, workspace slug/root, history limit, record count).
+- Extended timing records with outcome diagnostics (`outcome`, `exitCode`, `terminationReason`, `responseMatched`, `errorCode`) so aggregates no longer mix successful health/ask runs with provider failures without explanation.
+- Added run-ledger failure classification and explanation output for failed attempts, including structured counts for qwen max-session-turns, timeouts, terminated/cancelled runs, missing binaries, auth failures, and no-visible-text failures.
+- Hardened provider adapters around observed failure modes: qwen max-session-turns becomes `qwen_max_session_turns`, kimi resume footer exits with visible assistant text no longer fail, and qwen/kimi/opencode/cmd attach `errorCode` classifications used by timing and ledger.
+- Updated README/release docs and bumped host/terminal release manifests to `0.6.15`; regenerated all five companion bundles.
+- Verification: focused TDD red/green slices for timing, run-ledger, qwen/kimi/opencode/cmd, plus `npm test` exit 0 (374/374 tests) and `npm run release:check` exit 0 (full tests, bundle/fixture/manifest/host-map/Codex adapter checks, Claude plugin validation, npm dry-run/pack checks).
+
 ## 2026-05-07 — Codex — v0.6.14 post-publish host update closeout
 
 - Confirmed npm `@bbingz/polycli-opencode@0.6.14` and `@bbingz/polycli@0.6.14` are observable on the registry, then updated the GitHub release notes and release docs from "pending npm auth" to published.

@@ -43,6 +43,7 @@ import {
 } from "./lib/state.mjs";
 import {
   appendTimingRecord,
+  describeTimingStore,
   listTimingRecords,
   summarizeTimingRecords,
 } from "./lib/timing.mjs";
@@ -161,7 +162,7 @@ function printUsage() {
       "  polycli-companion.mjs status [job-id] [--all] [--wait] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs result [job-id] [--json]",
       "  polycli-companion.mjs cancel [job-id] [--json]",
-      "  polycli-companion.mjs timing [--provider <provider>] [--history <count>] [--json]",
+      "  polycli-companion.mjs timing [--provider <provider>] [--history <count|all>] [--all] [--json]",
       "  polycli-companion.mjs debug runs [--json]",
       "  polycli-companion.mjs debug show <run-id> [--json]",
       "  polycli-companion.mjs debug explain <run-id> [--json]",
@@ -186,7 +187,10 @@ function classifyErrorCode(message = "") {
   if (/^Job '.+' not found\.$/.test(message)) return "job_not_found";
   if (message === "No completed job found.") return "no_completed_job";
   if (message === "No active job found.") return "no_active_job";
-  if (message === "--history must be a non-negative integer.") return "invalid_history";
+  if (
+    message === "--history must be a non-negative integer."
+    || message === "--history must be a non-negative integer or all."
+  ) return "invalid_history";
   if (message === "--max-diff-bytes must be a non-negative integer.") return "invalid_max_diff_bytes";
   return "error";
 }
@@ -445,6 +449,8 @@ async function runForegroundExecution(execution, asJson) {
     preview: result.response ? String(result.response).slice(0, 180) : null,
     stdoutBytes: result.stdoutBytes ?? null,
     stderrBytes: result.stderrBytes ?? null,
+    errorCode: result.errorCode ?? result.timing?.errorCode ?? null,
+    failureClass: result.errorCode ?? result.timing?.errorCode ?? null,
     timingRef: result.timing
       ? {
         provider: result.timing.provider,
@@ -1200,10 +1206,12 @@ function renderTimingReport(records, aggregate) {
   return lines.join("\n");
 }
 
-function parseHistoryLimit(value) {
+function parseHistoryLimit(value, { all = false } = {}) {
+  if (all) return null;
   if (value == null) return 20;
+  if (String(value).toLowerCase() === "all") return null;
   if (!/^\d+$/.test(String(value))) {
-    throw new Error("--history must be a non-negative integer.");
+    throw new Error("--history must be a non-negative integer or all.");
   }
   return Number.parseInt(value, 10);
 }
@@ -1219,22 +1227,29 @@ function parseMaxDiffBytes(value) {
 
 async function runTiming(rawArgs) {
   const { options } = parseArgs(rawArgs, {
-    booleanOptions: ["json"],
+    booleanOptions: ["all", "json"],
     valueOptions: ["provider", "history"],
   });
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
   const provider = options.provider
     ? resolveProvider({ provider: options.provider }).provider
     : null;
-  const limit = parseHistoryLimit(options.history);
+  const limit = parseHistoryLimit(options.history, { all: options.all });
   const records = listTimingRecords(workspaceRoot, {
     provider,
     limit,
   });
   const aggregate = summarizeTimingRecords(records);
+  const metadata = {
+    ...describeTimingStore(workspaceRoot),
+    provider,
+    historyLimit: limit == null ? "all" : limit,
+    recordCount: records.length,
+    aggregateScope: "records",
+  };
 
   if (options.json) {
-    output({ records, aggregate }, true);
+    output({ records, aggregate, metadata }, true);
     return;
   }
 
@@ -1358,6 +1373,8 @@ async function runJobWorker(rawArgs) {
         preview: result.response ? String(result.response).slice(0, 180) : null,
         stdoutBytes: compactResult.stdoutBytes ?? null,
         stderrBytes: compactResult.stderrBytes ?? null,
+        errorCode: result.errorCode ?? result.timing?.errorCode ?? null,
+        failureClass: result.errorCode ?? result.timing?.errorCode ?? null,
         durationMs: Date.now() - startedAt,
         timingRef: result.timing
           ? {

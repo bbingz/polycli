@@ -1,7 +1,7 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
-import { formatProviderExitError } from "./errors.js";
+import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
@@ -217,6 +217,9 @@ export function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel =
   const resultError = getOpenCodeResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
 
+  const error = status === 0
+    ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
+    : (String(stderr ?? "").trim() || formatProviderExitError("opencode", status));
   return {
     ok: status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
@@ -224,9 +227,8 @@ export function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel =
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model ?? defaultModel,
     status,
-    error: status === 0
-      ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
-      : (String(stderr ?? "").trim() || formatProviderExitError("opencode", status)),
+    error,
+    errorCode: classifyProviderFailure(error, { provider: "opencode" }),
   };
 }
 
@@ -292,11 +294,13 @@ export function runOpenCodePrompt({
 
   const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
   if (result.error) {
+    const error = result.error.code === "ETIMEDOUT"
+      ? `opencode timed out after ${Math.round(timeout / 1000)}s`
+      : result.error.message;
     return {
       ok: false,
-      error: result.error.code === "ETIMEDOUT"
-        ? `opencode timed out after ${Math.round(timeout / 1000)}s`
-        : result.error.message,
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "opencode" }),
     };
   }
 
@@ -368,15 +372,17 @@ export function runOpenCodePromptStreaming({
     if (ok && !resolvedModel) {
       resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? resolvedSession.sessionId, { cwd, env, bin });
     }
+    const error = result.ok
+      ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
+      : result.error;
     return {
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       model: resolvedModel,
       ok,
-      error: result.ok
-        ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
-        : result.error,
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "opencode" }),
     };
   });
 }

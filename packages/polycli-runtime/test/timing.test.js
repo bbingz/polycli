@@ -76,6 +76,28 @@ test("buildPromptTimingRecord keeps supported-but-missing metrics separate from 
   assert.equal(record.metrics.retry.status, "unsupported");
 });
 
+test("buildPromptTimingRecord preserves outcome diagnostics", () => {
+  const record = buildPromptTimingRecord({
+    provider: "qwen",
+    kind: "ask",
+    completedAt: "2026-04-22T00:00:00.000Z",
+    totalMs: 1000,
+    outcome: "failure",
+    exitCode: 1,
+    terminationReason: "qwen_max_session_turns",
+    responseMatched: false,
+    errorCode: "qwen_max_session_turns",
+  });
+
+  const validation = validateTimingRecord(record);
+  assert.equal(validation.ok, true);
+  assert.equal(record.outcome, "failure");
+  assert.equal(record.exitCode, 1);
+  assert.equal(record.terminationReason, "qwen_max_session_turns");
+  assert.equal(record.responseMatched, false);
+  assert.equal(record.errorCode, "qwen_max_session_turns");
+});
+
 test("buildPromptTimingRecord degrades negative derived metrics to missing instead of throwing", () => {
   const record = buildPromptTimingRecord({
     provider: "gemini",
@@ -94,6 +116,31 @@ test("buildPromptTimingRecord degrades negative derived metrics to missing inste
   assert.equal(record.metrics.ttft.status, "measured");
   assert.equal(record.metrics.gen.status, "missing");
   assert.equal(record.metrics.tail.status, "missing");
+});
+
+test("runProviderPrompt attaches failure diagnostics to timing", async () => {
+  const result = await runProviderPrompt({
+    provider: "qwen",
+    prompt: "ping",
+    cwd: process.cwd(),
+    nowMs: (() => {
+      const values = [1000, 2500];
+      return () => values.shift() ?? 2500;
+    })(),
+    runtime: {
+      runPrompt: async () => ({
+        ok: false,
+        response: "",
+        error: "qwen exited with code 124",
+        status: 124,
+      }),
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.timing.outcome, "timeout");
+  assert.equal(result.timing.exitCode, 124);
+  assert.equal(result.timing.terminationReason, "timeout");
 });
 
 test("runProviderPrompt preserves session persistence capability when a run omits sessionId", async () => {

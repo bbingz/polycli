@@ -36,6 +36,23 @@
     "kind": {
       "type": "string"
     },
+    "outcome": {
+      "enum": ["success", "failure", "timeout", "terminated", "cancelled"]
+    },
+    "exitCode": {
+      "type": "integer"
+    },
+    "terminationReason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "responseMatched": {
+      "type": "boolean"
+    },
+    "errorCode": {
+      "type": "string",
+      "minLength": 1
+    },
     "meta": {
       "type": "object"
     },

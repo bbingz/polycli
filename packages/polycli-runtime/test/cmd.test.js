@@ -112,6 +112,7 @@ process.exit(0);
 
       assert.equal(result.ok, false);
       assert.equal(result.error, "cmd produced no visible text");
+      assert.equal(result.errorCode, "no_visible_text");
     }
   );
 });

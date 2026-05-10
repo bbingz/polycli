@@ -1,7 +1,7 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
-import { formatProviderExitError } from "./errors.js";
+import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const QWEN_BIN = process.env.QWEN_CLI_BIN || "qwen";
@@ -288,7 +288,8 @@ export function runQwenPrompt({
   });
 
   if (result.error) {
-    return { ok: false, error: result.error.message };
+    const error = result.error.message;
+    return { ok: false, error, errorCode: classifyProviderFailure(error, { provider: "qwen" }) };
   }
 
   const parsed = parseQwenStreamText(result.stdout);
@@ -298,15 +299,20 @@ export function runQwenPrompt({
     priority: ["stdout", "stderr", "file"],
   });
   const resultEventError = extractQwenResultError(parsed.resultEvent);
+  const error = result.status === 0 && !resultEventError && parsed.response.trim()
+    ? null
+    : result.stderr.trim() || resultEventError || formatProviderExitError("qwen", result.status);
+  const errorCode = resultEventError
+    ? (classifyProviderFailure(resultEventError, { provider: "qwen" }) || "provider_error")
+    : classifyProviderFailure(error, { provider: "qwen" });
   return {
     ok: result.status === 0 && !resultEventError && Boolean(parsed.response.trim()),
     status: result.status,
     stderr: result.stderr,
     ...parsed,
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-    error: result.status === 0 && !resultEventError && parsed.response.trim()
-      ? null
-      : result.stderr.trim() || resultEventError || formatProviderExitError("qwen", result.status),
+    error,
+    errorCode,
   };
 }
 
@@ -369,14 +375,19 @@ export function runQwenPromptStreaming({
     });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultEventError = extractQwenResultError(parsed.resultEvent);
+    const error = result.ok && !resultEventError
+      ? (hasVisibleText ? null : (resultEventError || "qwen produced no visible text"))
+      : (resultEventError || result.error);
+    const errorCode = resultEventError
+      ? (classifyProviderFailure(resultEventError, { provider: "qwen" }) || "provider_error")
+      : classifyProviderFailure(error, { provider: "qwen" });
     return {
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultEventError && hasVisibleText,
-      error: result.ok && !resultEventError
-        ? (hasVisibleText ? null : (resultEventError || "qwen produced no visible text"))
-        : (resultEventError || result.error),
+      error,
+      errorCode,
     };
   });
 }

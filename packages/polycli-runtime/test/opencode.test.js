@@ -281,6 +281,7 @@ test("runOpenCodePromptStreaming returns a structured failure on spawn error", a
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+  assert.equal(result.errorCode, "binary_missing");
 });
 
 test("runOpenCodePromptStreaming captures standalone error events as terminal failures", async () => {

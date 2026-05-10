@@ -307,6 +307,32 @@ function formatProviderExitError(provider, status) {
   }
   return `${provider} exited with code ${status}`;
 }
+function classifyProviderFailure(error, { provider = null } = {}) {
+  const text = typeof error === "string" ? error : String(error?.message ?? error ?? "");
+  if (!text.trim()) return null;
+  if (provider === "qwen" && /\bmaximum session turn\b|\bmax(?:imum)? session turns?\b/i.test(text)) {
+    return "qwen_max_session_turns";
+  }
+  if (/\bspawn\b.*\bENOENT\b|\bENOENT\b|\bnot found\b/i.test(text)) {
+    return "binary_missing";
+  }
+  if (/\b(timed out|timeout)\b/i.test(text)) {
+    return "timeout";
+  }
+  if (/\b(terminated|SIGTERM|exit(?:ed)? with code 143)\b/i.test(text)) {
+    return "terminated";
+  }
+  if (/\b(interrupted|SIGINT|aborted|cancelled|canceled|exit(?:ed)? with code 130)\b/i.test(text)) {
+    return "cancelled";
+  }
+  if (/\b(no visible text|produced no visible text)\b/i.test(text)) {
+    return "no_visible_text";
+  }
+  if (/\b(auth|authenticated|login|credential)\b/i.test(text)) {
+    return "auth";
+  }
+  return null;
+}
 
 // packages/polycli-runtime/src/spawn.js
 import { spawn } from "node:child_process";
@@ -735,7 +761,7 @@ function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = null } =
     });
     const response = typeof parsed.result === "string" ? parsed.result : "";
     const sessionId = parsed.session_id ?? parsed.sessionId ?? resolvedSession.sessionId ?? null;
-    const errorText = isClaudeErrorResultEvent(parsed) ? getClaudeErrorText(parsed) : null;
+    const errorText2 = isClaudeErrorResultEvent(parsed) ? getClaudeErrorText(parsed) : null;
     const processError = status === 0 ? null : String(stderr ?? "").trim() || formatProviderExitError("claude", status);
     return {
       ok: status === 0 && !isClaudeErrorResultEvent(parsed),
@@ -745,7 +771,7 @@ function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = null } =
       durationMs: parsed.duration_ms ?? null,
       totalCostUsd: parsed.total_cost_usd ?? null,
       status,
-      error: isClaudeErrorResultEvent(parsed) ? errorText : processError
+      error: isClaudeErrorResultEvent(parsed) ? errorText2 : processError
     };
   } catch (error) {
     return { ok: false, error: `JSON parse failed: ${error.message}`, status };
@@ -1441,6 +1467,9 @@ var TRANSIENT_PROBE_ERROR_PATTERNS2 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
 var KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path.join(os.homedir(), ".kimi", "config.toml");
+function isKimiResumeFooter(text) {
+  return /^To resume:\s*kimi\s+-r\s+/im.test(String(text ?? "").trim());
+}
 function kimiJsonPath() {
   return path.join(os.homedir(), ".kimi", "kimi.json");
 }
@@ -1711,12 +1740,15 @@ function runKimiPrompt({
     input: invocation.input
   });
   if (result.error) {
-    return { ok: false, error: result.error.message };
+    const error2 = result.error.message;
+    return { ok: false, error: error2, errorCode: classifyProviderFailure(error2, { provider: "kimi" }) };
   }
   if (result.status !== 0) {
+    const error2 = result.stderr.trim() || formatProviderExitError("kimi", result.status);
     return {
       ok: false,
-      error: result.stderr.trim() || formatProviderExitError("kimi", result.status),
+      error: error2,
+      errorCode: classifyProviderFailure(error2, { provider: "kimi" }),
       status: result.status
     };
   }
@@ -1726,6 +1758,7 @@ function runKimiPrompt({
     stderr: result.stderr,
     priority: ["stdout", "stderr", "file"]
   });
+  const error = parsed.response.trim() ? null : "kimi produced no visible text";
   return withKimiResumeWarnings({
     ok: Boolean(parsed.response.trim()),
     response: parsed.response,
@@ -1733,7 +1766,8 @@ function runKimiPrompt({
     toolEvents: parsed.toolEvents,
     sessionId: session.sessionId,
     model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
-    error: parsed.response.trim() ? null : "kimi produced no visible text"
+    error,
+    errorCode: classifyProviderFailure(error, { provider: "kimi" })
   }, resume.sessionId);
 }
 function runKimiPromptStreaming({
@@ -1789,13 +1823,17 @@ function runKimiPromptStreaming({
       priority: ["stdout", "stderr", "file"]
     });
     const hasVisibleText = Boolean(parsed.response.trim());
+    const resumeFooterOnly = hasVisibleText && !result.ok && isKimiResumeFooter(result.error);
+    const ok = (result.ok || resumeFooterOnly) && hasVisibleText;
+    const error = ok ? null : result.ok ? "kimi produced no visible text" : result.error;
     return withKimiResumeWarnings({
       ...result,
       ...parsed,
       sessionId: session.sessionId,
       model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
-      ok: result.ok && hasVisibleText,
-      error: result.ok ? hasVisibleText ? null : "kimi produced no visible text" : result.error
+      ok,
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "kimi" })
     }, resume.sessionId);
   });
 }
@@ -2081,7 +2119,8 @@ function runQwenPrompt({
     timeout
   });
   if (result.error) {
-    return { ok: false, error: result.error.message };
+    const error2 = result.error.message;
+    return { ok: false, error: error2, errorCode: classifyProviderFailure(error2, { provider: "qwen" }) };
   }
   const parsed = parseQwenStreamText(result.stdout);
   const resolvedSession = resolveSessionId({
@@ -2090,13 +2129,16 @@ function runQwenPrompt({
     priority: ["stdout", "stderr", "file"]
   });
   const resultEventError = extractQwenResultError(parsed.resultEvent);
+  const error = result.status === 0 && !resultEventError && parsed.response.trim() ? null : result.stderr.trim() || resultEventError || formatProviderExitError("qwen", result.status);
+  const errorCode = resultEventError ? classifyProviderFailure(resultEventError, { provider: "qwen" }) || "provider_error" : classifyProviderFailure(error, { provider: "qwen" });
   return {
     ok: result.status === 0 && !resultEventError && Boolean(parsed.response.trim()),
     status: result.status,
     stderr: result.stderr,
     ...parsed,
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
-    error: result.status === 0 && !resultEventError && parsed.response.trim() ? null : result.stderr.trim() || resultEventError || formatProviderExitError("qwen", result.status)
+    error,
+    errorCode
   };
 }
 function runQwenPromptStreaming({
@@ -2159,12 +2201,15 @@ function runQwenPromptStreaming({
     });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultEventError = extractQwenResultError(parsed.resultEvent);
+    const error = result.ok && !resultEventError ? hasVisibleText ? null : resultEventError || "qwen produced no visible text" : resultEventError || result.error;
+    const errorCode = resultEventError ? classifyProviderFailure(resultEventError, { provider: "qwen" }) || "provider_error" : classifyProviderFailure(error, { provider: "qwen" });
     return {
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       ok: result.ok && !resultEventError && hasVisibleText,
-      error: result.ok && !resultEventError ? hasVisibleText ? null : resultEventError || "qwen produced no visible text" : resultEventError || result.error
+      error,
+      errorCode
     };
   });
 }
@@ -2556,6 +2601,7 @@ function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel = null }
   });
   const resultError = getOpenCodeResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
+  const error = status === 0 ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : String(stderr ?? "").trim() || formatProviderExitError("opencode", status);
   return {
     ok: status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
@@ -2563,7 +2609,8 @@ function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel = null }
     sessionId: parsed.sessionId ?? resolvedSession.sessionId,
     model: parsed.model ?? defaultModel,
     status,
-    error: status === 0 ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : String(stderr ?? "").trim() || formatProviderExitError("opencode", status)
+    error,
+    errorCode: classifyProviderFailure(error, { provider: "opencode" })
   };
 }
 function getOpenCodeAvailability(cwd) {
@@ -2623,9 +2670,11 @@ function runOpenCodePrompt({
   });
   const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
   if (result.error) {
+    const error = result.error.code === "ETIMEDOUT" ? `opencode timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
     return {
       ok: false,
-      error: result.error.code === "ETIMEDOUT" ? `opencode timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "opencode" })
     };
   }
   const parsed = parseOpenCodeJsonResult(result.stdout, result.stderr, result.status, {
@@ -2696,13 +2745,15 @@ function runOpenCodePromptStreaming({
     if (ok && !resolvedModel) {
       resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? resolvedSession.sessionId, { cwd, env, bin });
     }
+    const error = result.ok ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : result.error;
     return {
       ...result,
       ...parsed,
       sessionId: parsed.sessionId ?? resolvedSession.sessionId,
       model: resolvedModel,
       ok,
-      error: result.ok ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : result.error
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "opencode" })
     };
   });
 }
@@ -3071,9 +3122,11 @@ function runCmdPrompt({
   });
   const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
   if (result.error) {
+    const error2 = result.error.code === "ETIMEDOUT" ? `cmd timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
     return {
       ok: false,
-      error: result.error.code === "ETIMEDOUT" ? `cmd timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+      error: error2,
+      errorCode: classifyProviderFailure(error2, { provider: "cmd" })
     };
   }
   const parsed = parseCmdTextResult(result.stdout);
@@ -3083,13 +3136,15 @@ function runCmdPrompt({
     priority: ["stdout", "stderr", "file"]
   });
   const hasVisibleText = Boolean(parsed.response.trim());
+  const error = result.status === 0 ? hasVisibleText ? null : "cmd produced no visible text" : result.stderr.trim() || formatProviderExitError("cmd", result.status);
   return {
     ok: result.status === 0 && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
     sessionId: resolvedSession.sessionId,
     model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
-    error: result.status === 0 ? hasVisibleText ? null : "cmd produced no visible text" : result.stderr.trim() || formatProviderExitError("cmd", result.status),
+    error,
+    errorCode: classifyProviderFailure(error, { provider: "cmd" }),
     status: result.status
   };
 }
@@ -3133,13 +3188,15 @@ function runCmdPromptStreaming({
       priority: ["stdout", "stderr", "file"]
     });
     const hasVisibleText = Boolean(parsed.response.trim());
+    const error = result.ok ? hasVisibleText ? null : "cmd produced no visible text" : result.error;
     return {
       ...result,
       ...parsed,
       sessionId: resolvedSession.sessionId,
       model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
       ok: result.ok && hasVisibleText,
-      error: result.ok ? hasVisibleText ? null : "cmd produced no visible text" : result.error
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "cmd" })
     };
   });
 }
@@ -3346,6 +3403,7 @@ function aggregateTimingRecords(records) {
 var TIMING_SCHEMA_URL = new URL("../timing.schema.json", import.meta.url);
 
 // packages/polycli-runtime/src/timing.js
+var TIMING_OUTCOMES = /* @__PURE__ */ new Set(["success", "failure", "timeout", "terminated", "cancelled"]);
 function measuredOrZero(ms) {
   if (!Number.isFinite(ms) || ms < 0) {
     throw new Error(`Invalid measured timing value: ${ms}`);
@@ -3370,6 +3428,60 @@ function capabilityMetric(ms, supported) {
   }
   return measuredOrZero(ms);
 }
+function errorText(result) {
+  if (typeof result?.error === "string") return result.error;
+  if (result?.error?.message) return result.error.message;
+  return "";
+}
+function normalizeExitCode(value) {
+  return Number.isInteger(value) ? value : null;
+}
+function inferTimingOutcome(result) {
+  if (result?.ok) return "success";
+  const exitCode = normalizeExitCode(result?.status ?? result?.exitCode);
+  const text = errorText(result);
+  if (result?.timedOut || exitCode === 124 || /\b(timed out|timeout)\b/i.test(text)) return "timeout";
+  if (result?.aborted || exitCode === 130 || /\b(interrupted|aborted|cancelled|canceled)\b/i.test(text)) {
+    return "cancelled";
+  }
+  if (result?.signal || exitCode === 143 || /\bterminated\b/i.test(text)) return "terminated";
+  return "failure";
+}
+function inferTerminationReason(result, outcome, exitCode) {
+  if (result?.terminationReason) return result.terminationReason;
+  if (outcome === "timeout") return "timeout";
+  if (outcome === "cancelled") return "cancelled";
+  if (result?.signal) return `signal:${result.signal}`;
+  if (outcome === "terminated") return "terminated";
+  if (exitCode != null && exitCode !== 0) return `exit_code:${exitCode}`;
+  return null;
+}
+function buildTimingDiagnostics(result, explicit = {}) {
+  const exitCode = normalizeExitCode(explicit.exitCode ?? result?.status ?? result?.exitCode);
+  const outcome = explicit.outcome ?? inferTimingOutcome(result);
+  return {
+    outcome,
+    exitCode,
+    terminationReason: explicit.terminationReason ?? inferTerminationReason(result, outcome, exitCode),
+    responseMatched: explicit.responseMatched,
+    errorCode: explicit.errorCode ?? result?.errorCode
+  };
+}
+function addStringField(record, key, value) {
+  if (typeof value === "string" && value.trim()) {
+    record[key] = value;
+  }
+}
+function addIntegerField(record, key, value) {
+  if (Number.isInteger(value)) {
+    record[key] = value;
+  }
+}
+function addBooleanField(record, key, value) {
+  if (typeof value === "boolean") {
+    record[key] = value;
+  }
+}
 function extractProviderEventText(provider, event) {
   if (provider === "claude") return extractClaudeText(event);
   if (provider === "copilot") return extractCopilotText(event);
@@ -3393,7 +3505,12 @@ function buildPromptTimingRecord({
   tailMs = null,
   toolMs = null,
   supportedMetrics = {},
-  meta = null
+  meta = null,
+  outcome = null,
+  exitCode = null,
+  terminationReason = null,
+  responseMatched = null,
+  errorCode = null
 } = {}) {
   const metrics = {
     cold: unsupportedMetric(),
@@ -3419,6 +3536,13 @@ function buildPromptTimingRecord({
   if (meta && typeof meta === "object" && Object.keys(meta).length > 0) {
     record.meta = meta;
   }
+  if (TIMING_OUTCOMES.has(outcome)) {
+    record.outcome = outcome;
+  }
+  addIntegerField(record, "exitCode", exitCode);
+  addStringField(record, "terminationReason", terminationReason);
+  addBooleanField(record, "responseMatched", responseMatched);
+  addStringField(record, "errorCode", errorCode);
   const validation = validateTimingRecord(record);
   if (!validation.ok) {
     throw new Error(`Invalid timing record: ${validation.errors.join("; ")}`);
@@ -3435,8 +3559,20 @@ function attachPromptTiming(result, {
   tailMs = null,
   toolMs = null,
   supportedMetrics = {},
-  meta = null
+  meta = null,
+  outcome = null,
+  exitCode = null,
+  terminationReason = null,
+  responseMatched = null,
+  errorCode = null
 } = {}) {
+  const diagnostics = buildTimingDiagnostics(result, {
+    outcome,
+    exitCode,
+    terminationReason,
+    responseMatched,
+    errorCode
+  });
   return {
     ...result,
     timing: buildPromptTimingRecord({
@@ -3450,6 +3586,7 @@ function attachPromptTiming(result, {
       toolMs,
       supportedMetrics,
       meta,
+      ...diagnostics,
       completedAt: (/* @__PURE__ */ new Date()).toISOString()
     })
   };
@@ -3732,6 +3869,7 @@ var STATE_VERSION = 1;
 var STATE_FILE_NAME = "state.json";
 var JOBS_DIR_NAME = "jobs";
 var MAX_JOBS = 100;
+var POLYCLI_STATE_ROOT_ENV = "POLYCLI_STATE_ROOT";
 var PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
 var FALLBACK_STATE_ROOT = path2.join(os2.tmpdir(), "polycli-companion");
 function sleepSync(ms) {
@@ -3867,12 +4005,28 @@ function backupCorruptStateFile(stateFile) {
   } catch {
   }
 }
-function stateRootDir() {
+function describeStateRoot() {
+  const polycliStateRoot = process.env[POLYCLI_STATE_ROOT_ENV];
+  if (polycliStateRoot) {
+    return {
+      stateRoot: path2.resolve(polycliStateRoot),
+      source: POLYCLI_STATE_ROOT_ENV
+    };
+  }
   const pluginData = process.env[PLUGIN_DATA_ENV];
   if (pluginData) {
-    return path2.join(pluginData, "state");
+    return {
+      stateRoot: path2.join(pluginData, "state"),
+      source: PLUGIN_DATA_ENV
+    };
   }
-  return FALLBACK_STATE_ROOT;
+  return {
+    stateRoot: FALLBACK_STATE_ROOT,
+    source: "temp"
+  };
+}
+function stateRootDir() {
+  return describeStateRoot().stateRoot;
 }
 function resolveWorkspaceRoot(cwd = process.cwd()) {
   const result = runCommand2("git", ["rev-parse", "--show-toplevel"], { cwd });
@@ -4423,6 +4577,8 @@ function createRunLedgerEvent(event = {}) {
     stdoutBytes: event.stdoutBytes ?? null,
     stderrBytes: event.stderrBytes ?? null,
     durationMs: event.durationMs ?? null,
+    errorCode: event.errorCode ?? null,
+    failureClass: event.failureClass ?? null,
     pid: event.pid ?? null,
     logFile: event.logFile ?? null,
     argv: event.argv || [],
@@ -4464,11 +4620,58 @@ function groupRunLedgerEvents(events) {
   }
   return groups;
 }
+function incrementCount(counts, key) {
+  if (!key) return;
+  counts[key] = (counts[key] || 0) + 1;
+}
+function classifyRunFailure(event = {}) {
+  if (event.failureClass) return event.failureClass;
+  if (event.errorCode) return event.errorCode;
+  if (event.status !== "failed" && event.status !== "cancelled" && !event.error) return null;
+  const error = typeof event.error === "string" ? event.error : String(event.error?.message ?? event.error ?? "");
+  const text = [
+    event.provider,
+    event.reason,
+    error,
+    event.preview
+  ].filter(Boolean).join("\n");
+  if (/\bmaximum session turn\b|\bmax(?:imum)? session turns?\b/i.test(text)) {
+    return "qwen_max_session_turns";
+  }
+  if (/\bspawn\b.*\bENOENT\b|\bENOENT\b|\bnot found\b/i.test(text)) {
+    return "binary_missing";
+  }
+  if (/\b(timed out|timeout)\b/i.test(text)) {
+    return "timeout";
+  }
+  if (/\b(terminated|SIGTERM|exit(?:ed)? with code 143)\b/i.test(text)) {
+    return "terminated";
+  }
+  if (/\b(interrupted|SIGINT|aborted|cancelled|canceled|exit(?:ed)? with code 130)\b/i.test(text)) {
+    return "cancelled";
+  }
+  if (/\b(no visible text|produced no visible text)\b/i.test(text)) {
+    return "no_visible_text";
+  }
+  if (/\b(auth|authenticated|login|credential)\b/i.test(text)) {
+    return "auth";
+  }
+  const exitCodeMatch = text.match(/\bexit(?:ed)? with code (\d+)\b/i);
+  if (exitCodeMatch) {
+    return `exit_code_${exitCodeMatch[1]}`;
+  }
+  return event.reason || "unclassified_failure";
+}
 function summarizeRunLedger(events) {
   return [...groupRunLedgerEvents(events).values()].map((group) => {
     const decisions = group.events.filter(
       (event) => event.phase === "provider_decision" && event.provider
     );
+    const failureClassCounts = {};
+    for (const event of group.events) {
+      if (event.phase !== "attempt_result") continue;
+      incrementCount(failureClassCounts, classifyRunFailure(event));
+    }
     return {
       runId: group.runId,
       commands: group.commands,
@@ -4477,7 +4680,8 @@ function summarizeRunLedger(events) {
       providerCount: new Set(decisions.map((event) => event.provider)).size,
       adoptedCount: decisions.filter((event) => event.status === "adopted").length,
       skippedCount: decisions.filter((event) => event.status === "skipped").length,
-      failedCount: decisions.filter((event) => event.status === "failed").length
+      failedCount: decisions.filter((event) => event.status === "failed").length,
+      failureClassCounts
     };
   });
 }
@@ -4490,6 +4694,10 @@ function buildRunExplanation(events, runId) {
   const lines = decisions.map(
     (event) => `${event.provider || "run"} ${event.status}${event.reason ? ` (${event.reason})` : ""}`
   );
+  for (const event of group.events.filter((item) => item.phase === "attempt_result" && item.status === "failed")) {
+    const subject = event.provider || event.jobId || "run";
+    lines.push(`attempt ${subject} failed (${classifyRunFailure(event)})`);
+  }
   return { runId, found: true, text: lines.join("\n"), events: group.events };
 }
 
@@ -4563,6 +4771,8 @@ function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason
       preview: result?.response ? String(result.response).slice(0, 180) : null,
       stdoutBytes: result?.stdoutBytes ?? null,
       stderrBytes: result?.stderrBytes ?? null,
+      errorCode: result?.errorCode ?? result?.timing?.errorCode ?? null,
+      failureClass: result?.errorCode ?? result?.timing?.errorCode ?? null,
       timingRef: result?.timing ? {
         provider: result.timing.provider,
         kind: result.timing.kind,
@@ -5181,6 +5391,17 @@ var MAX_TIMING_BYTES = 2e6;
 function resolveTimingHistoryFile(workspaceRoot) {
   return path6.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
 }
+function describeTimingStore(workspaceRoot) {
+  const root = describeStateRoot();
+  return {
+    stateRoot: root.stateRoot,
+    stateRootSource: root.source,
+    workspaceRoot,
+    workspaceSlug: computeWorkspaceSlug(workspaceRoot),
+    stateDir: resolveStateDir(workspaceRoot),
+    timingFile: resolveTimingHistoryFile(workspaceRoot)
+  };
+}
 function appendTimingRecord(workspaceRoot, record) {
   const validation = validateTimingRecord(record);
   if (!validation.ok) {
@@ -5398,7 +5619,7 @@ function printUsage() {
       "  polycli-companion.mjs status [job-id] [--all] [--wait] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs result [job-id] [--json]",
       "  polycli-companion.mjs cancel [job-id] [--json]",
-      "  polycli-companion.mjs timing [--provider <provider>] [--history <count>] [--json]",
+      "  polycli-companion.mjs timing [--provider <provider>] [--history <count|all>] [--all] [--json]",
       "  polycli-companion.mjs debug runs [--json]",
       "  polycli-companion.mjs debug show <run-id> [--json]",
       "  polycli-companion.mjs debug explain <run-id> [--json]"
@@ -5420,7 +5641,7 @@ function classifyErrorCode(message = "") {
   if (/^Job '.+' not found\.$/.test(message)) return "job_not_found";
   if (message === "No completed job found.") return "no_completed_job";
   if (message === "No active job found.") return "no_active_job";
-  if (message === "--history must be a non-negative integer.") return "invalid_history";
+  if (message === "--history must be a non-negative integer." || message === "--history must be a non-negative integer or all.") return "invalid_history";
   if (message === "--max-diff-bytes must be a non-negative integer.") return "invalid_max_diff_bytes";
   return "error";
 }
@@ -5664,6 +5885,8 @@ async function runForegroundExecution(execution, asJson) {
     preview: result.response ? String(result.response).slice(0, 180) : null,
     stdoutBytes: result.stdoutBytes ?? null,
     stderrBytes: result.stderrBytes ?? null,
+    errorCode: result.errorCode ?? result.timing?.errorCode ?? null,
+    failureClass: result.errorCode ?? result.timing?.errorCode ?? null,
     timingRef: result.timing ? {
       provider: result.timing.provider,
       kind: result.timing.kind,
@@ -6348,10 +6571,12 @@ function renderTimingReport(records, aggregate) {
   }
   return lines.join("\n");
 }
-function parseHistoryLimit(value) {
+function parseHistoryLimit(value, { all = false } = {}) {
+  if (all) return null;
   if (value == null) return 20;
+  if (String(value).toLowerCase() === "all") return null;
   if (!/^\d+$/.test(String(value))) {
-    throw new Error("--history must be a non-negative integer.");
+    throw new Error("--history must be a non-negative integer or all.");
   }
   return Number.parseInt(value, 10);
 }
@@ -6365,19 +6590,26 @@ function parseMaxDiffBytes(value) {
 }
 async function runTiming(rawArgs) {
   const { options } = parseArgs(rawArgs, {
-    booleanOptions: ["json"],
+    booleanOptions: ["all", "json"],
     valueOptions: ["provider", "history"]
   });
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
   const provider = options.provider ? resolveProvider({ provider: options.provider }).provider : null;
-  const limit = parseHistoryLimit(options.history);
+  const limit = parseHistoryLimit(options.history, { all: options.all });
   const records = listTimingRecords(workspaceRoot, {
     provider,
     limit
   });
   const aggregate = summarizeTimingRecords(records);
+  const metadata = {
+    ...describeTimingStore(workspaceRoot),
+    provider,
+    historyLimit: limit == null ? "all" : limit,
+    recordCount: records.length,
+    aggregateScope: "records"
+  };
   if (options.json) {
-    output({ records, aggregate }, true);
+    output({ records, aggregate, metadata }, true);
     return;
   }
   output(renderTimingReport(records, aggregate), false);
@@ -6493,6 +6725,8 @@ async function runJobWorker(rawArgs) {
         preview: result.response ? String(result.response).slice(0, 180) : null,
         stdoutBytes: compactResult.stdoutBytes ?? null,
         stderrBytes: compactResult.stderrBytes ?? null,
+        errorCode: result.errorCode ?? result.timing?.errorCode ?? null,
+        failureClass: result.errorCode ?? result.timing?.errorCode ?? null,
         durationMs: Date.now() - startedAt,
         timingRef: result.timing ? {
           provider: result.timing.provider,

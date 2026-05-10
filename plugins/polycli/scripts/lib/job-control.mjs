@@ -103,6 +103,8 @@ function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason
       preview: result?.response ? String(result.response).slice(0, 180) : null,
       stdoutBytes: result?.stdoutBytes ?? null,
       stderrBytes: result?.stderrBytes ?? null,
+      errorCode: result?.errorCode ?? result?.timing?.errorCode ?? null,
+      failureClass: result?.errorCode ?? result?.timing?.errorCode ?? null,
       timingRef: result?.timing
         ? {
           provider: result.timing.provider,

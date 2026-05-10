@@ -10,6 +10,8 @@ import { extractOpenCodeText } from "./opencode.js";
 import { extractPiText } from "./pi.js";
 import { extractCmdText } from "./cmd.js";
 
+const TIMING_OUTCOMES = new Set(["success", "failure", "timeout", "terminated", "cancelled"]);
+
 function measuredOrZero(ms) {
   if (!Number.isFinite(ms) || ms < 0) {
     throw new Error(`Invalid measured timing value: ${ms}`);
@@ -38,6 +40,68 @@ function capabilityMetric(ms, supported) {
   return measuredOrZero(ms);
 }
 
+function errorText(result) {
+  if (typeof result?.error === "string") return result.error;
+  if (result?.error?.message) return result.error.message;
+  return "";
+}
+
+function normalizeExitCode(value) {
+  return Number.isInteger(value) ? value : null;
+}
+
+function inferTimingOutcome(result) {
+  if (result?.ok) return "success";
+  const exitCode = normalizeExitCode(result?.status ?? result?.exitCode);
+  const text = errorText(result);
+  if (result?.timedOut || exitCode === 124 || /\b(timed out|timeout)\b/i.test(text)) return "timeout";
+  if (result?.aborted || exitCode === 130 || /\b(interrupted|aborted|cancelled|canceled)\b/i.test(text)) {
+    return "cancelled";
+  }
+  if (result?.signal || exitCode === 143 || /\bterminated\b/i.test(text)) return "terminated";
+  return "failure";
+}
+
+function inferTerminationReason(result, outcome, exitCode) {
+  if (result?.terminationReason) return result.terminationReason;
+  if (outcome === "timeout") return "timeout";
+  if (outcome === "cancelled") return "cancelled";
+  if (result?.signal) return `signal:${result.signal}`;
+  if (outcome === "terminated") return "terminated";
+  if (exitCode != null && exitCode !== 0) return `exit_code:${exitCode}`;
+  return null;
+}
+
+function buildTimingDiagnostics(result, explicit = {}) {
+  const exitCode = normalizeExitCode(explicit.exitCode ?? result?.status ?? result?.exitCode);
+  const outcome = explicit.outcome ?? inferTimingOutcome(result);
+  return {
+    outcome,
+    exitCode,
+    terminationReason: explicit.terminationReason ?? inferTerminationReason(result, outcome, exitCode),
+    responseMatched: explicit.responseMatched,
+    errorCode: explicit.errorCode ?? result?.errorCode,
+  };
+}
+
+function addStringField(record, key, value) {
+  if (typeof value === "string" && value.trim()) {
+    record[key] = value;
+  }
+}
+
+function addIntegerField(record, key, value) {
+  if (Number.isInteger(value)) {
+    record[key] = value;
+  }
+}
+
+function addBooleanField(record, key, value) {
+  if (typeof value === "boolean") {
+    record[key] = value;
+  }
+}
+
 export function extractProviderEventText(provider, event) {
   if (provider === "claude") return extractClaudeText(event);
   if (provider === "copilot") return extractCopilotText(event);
@@ -63,6 +127,11 @@ export function buildPromptTimingRecord({
   toolMs = null,
   supportedMetrics = {},
   meta = null,
+  outcome = null,
+  exitCode = null,
+  terminationReason = null,
+  responseMatched = null,
+  errorCode = null,
 } = {}) {
   const metrics = {
     cold: unsupportedMetric(),
@@ -90,6 +159,13 @@ export function buildPromptTimingRecord({
   if (meta && typeof meta === "object" && Object.keys(meta).length > 0) {
     record.meta = meta;
   }
+  if (TIMING_OUTCOMES.has(outcome)) {
+    record.outcome = outcome;
+  }
+  addIntegerField(record, "exitCode", exitCode);
+  addStringField(record, "terminationReason", terminationReason);
+  addBooleanField(record, "responseMatched", responseMatched);
+  addStringField(record, "errorCode", errorCode);
 
   const validation = validateTimingRecord(record);
   if (!validation.ok) {
@@ -110,7 +186,19 @@ export function attachPromptTiming(result, {
   toolMs = null,
   supportedMetrics = {},
   meta = null,
+  outcome = null,
+  exitCode = null,
+  terminationReason = null,
+  responseMatched = null,
+  errorCode = null,
 } = {}) {
+  const diagnostics = buildTimingDiagnostics(result, {
+    outcome,
+    exitCode,
+    terminationReason,
+    responseMatched,
+    errorCode,
+  });
   return {
     ...result,
     timing: buildPromptTimingRecord({
@@ -124,6 +212,7 @@ export function attachPromptTiming(result, {
       toolMs,
       supportedMetrics,
       meta,
+      ...diagnostics,
       completedAt: new Date().toISOString(),
     }),
   };

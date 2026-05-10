@@ -177,6 +177,8 @@ export function createRunLedgerEvent(event = {}) {
     stdoutBytes: event.stdoutBytes ?? null,
     stderrBytes: event.stderrBytes ?? null,
     durationMs: event.durationMs ?? null,
+    errorCode: event.errorCode ?? null,
+    failureClass: event.failureClass ?? null,
     pid: event.pid ?? null,
     logFile: event.logFile ?? null,
     argv: event.argv || [],
@@ -222,11 +224,65 @@ export function groupRunLedgerEvents(events) {
   return groups;
 }
 
+function incrementCount(counts, key) {
+  if (!key) return;
+  counts[key] = (counts[key] || 0) + 1;
+}
+
+export function classifyRunFailure(event = {}) {
+  if (event.failureClass) return event.failureClass;
+  if (event.errorCode) return event.errorCode;
+  if (event.status !== 'failed' && event.status !== 'cancelled' && !event.error) return null;
+  const error = typeof event.error === 'string'
+    ? event.error
+    : String(event.error?.message ?? event.error ?? '');
+  const text = [
+    event.provider,
+    event.reason,
+    error,
+    event.preview,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  if (/\bmaximum session turn\b|\bmax(?:imum)? session turns?\b/i.test(text)) {
+    return 'qwen_max_session_turns';
+  }
+  if (/\bspawn\b.*\bENOENT\b|\bENOENT\b|\bnot found\b/i.test(text)) {
+    return 'binary_missing';
+  }
+  if (/\b(timed out|timeout)\b/i.test(text)) {
+    return 'timeout';
+  }
+  if (/\b(terminated|SIGTERM|exit(?:ed)? with code 143)\b/i.test(text)) {
+    return 'terminated';
+  }
+  if (/\b(interrupted|SIGINT|aborted|cancelled|canceled|exit(?:ed)? with code 130)\b/i.test(text)) {
+    return 'cancelled';
+  }
+  if (/\b(no visible text|produced no visible text)\b/i.test(text)) {
+    return 'no_visible_text';
+  }
+  if (/\b(auth|authenticated|login|credential)\b/i.test(text)) {
+    return 'auth';
+  }
+  const exitCodeMatch = text.match(/\bexit(?:ed)? with code (\d+)\b/i);
+  if (exitCodeMatch) {
+    return `exit_code_${exitCodeMatch[1]}`;
+  }
+  return event.reason || 'unclassified_failure';
+}
+
 export function summarizeRunLedger(events) {
   return [...groupRunLedgerEvents(events).values()].map((group) => {
     const decisions = group.events.filter(
       (event) => event.phase === 'provider_decision' && event.provider,
     );
+    const failureClassCounts = {};
+    for (const event of group.events) {
+      if (event.phase !== 'attempt_result') continue;
+      incrementCount(failureClassCounts, classifyRunFailure(event));
+    }
     return {
       runId: group.runId,
       commands: group.commands,
@@ -236,6 +292,7 @@ export function summarizeRunLedger(events) {
       adoptedCount: decisions.filter((event) => event.status === 'adopted').length,
       skippedCount: decisions.filter((event) => event.status === 'skipped').length,
       failedCount: decisions.filter((event) => event.status === 'failed').length,
+      failureClassCounts,
     };
   });
 }
@@ -249,5 +306,9 @@ export function buildRunExplanation(events, runId) {
   const lines = decisions.map(
     (event) => `${event.provider || 'run'} ${event.status}${event.reason ? ` (${event.reason})` : ''}`,
   );
+  for (const event of group.events.filter((item) => item.phase === 'attempt_result' && item.status === 'failed')) {
+    const subject = event.provider || event.jobId || 'run';
+    lines.push(`attempt ${subject} failed (${classifyRunFailure(event)})`);
+  }
   return { runId, found: true, text: lines.join('\n'), events: group.events };
 }

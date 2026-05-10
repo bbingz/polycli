@@ -281,6 +281,32 @@ test("runKimiPromptStreaming returns a structured failure on spawn error", async
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+  assert.equal(result.errorCode, "binary_missing");
+});
+
+test("runKimiPromptStreaming treats resume footer exits as success when assistant text exists", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runKimiPromptStreaming({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"role":"assistant","content":[{"type":"text","text":"hello"}]}\n');
+        child.stderr.emit("data", "To resume: kimi -r 123e4567-e89b-42d3-a456-426614174000\n");
+        child.emit("close", 1, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.response, "hello");
+  assert.equal(result.error, null);
+  assert.equal(result.errorCode, null);
 });
 
 test("runKimiPromptStreaming returns an explicit error when no visible assistant text is emitted", async () => {
@@ -304,6 +330,7 @@ test("runKimiPromptStreaming returns an explicit error when no visible assistant
 
   assert.equal(result.ok, false);
   assert.equal(result.error, "kimi produced no visible text");
+  assert.equal(result.errorCode, "no_visible_text");
 });
 
 test("parseKimiStreamText replays a captured real cli fixture", () => {

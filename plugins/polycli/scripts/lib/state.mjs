@@ -8,6 +8,7 @@ const STATE_VERSION = 1;
 const STATE_FILE_NAME = "state.json";
 const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 100;
+const POLYCLI_STATE_ROOT_ENV = "POLYCLI_STATE_ROOT";
 const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
 const FALLBACK_STATE_ROOT = path.join(os.tmpdir(), "polycli-companion");
 
@@ -157,12 +158,31 @@ function backupCorruptStateFile(stateFile) {
   }
 }
 
-function stateRootDir() {
+export function describeStateRoot() {
+  const polycliStateRoot = process.env[POLYCLI_STATE_ROOT_ENV];
+  if (polycliStateRoot) {
+    return {
+      stateRoot: path.resolve(polycliStateRoot),
+      source: POLYCLI_STATE_ROOT_ENV,
+    };
+  }
+
   const pluginData = process.env[PLUGIN_DATA_ENV];
   if (pluginData) {
-    return path.join(pluginData, "state");
+    return {
+      stateRoot: path.join(pluginData, "state"),
+      source: PLUGIN_DATA_ENV,
+    };
   }
-  return FALLBACK_STATE_ROOT;
+
+  return {
+    stateRoot: FALLBACK_STATE_ROOT,
+    source: "temp",
+  };
+}
+
+function stateRootDir() {
+  return describeStateRoot().stateRoot;
 }
 
 export function resolveWorkspaceRoot(cwd = process.cwd()) {

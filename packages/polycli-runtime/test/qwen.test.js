@@ -246,6 +246,26 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "error", result: 
       assert.equal(result.ok, false);
       assert.equal(result.response, "");
       assert.equal(result.error, "permission denied");
+      assert.equal(result.errorCode, "provider_error");
+    }
+  );
+});
+
+test("runQwenPrompt classifies maximum session turn failures", () => {
+  withFakeQwenBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "result", subtype: "error", result: "Maximum session turn limit reached", is_error: true }) + "\\n");
+`,
+    ({ root, env }) => {
+      const result = runQwenPrompt({
+        prompt: "ping",
+        cwd: root,
+        env,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "Maximum session turn limit reached");
+      assert.equal(result.errorCode, "qwen_max_session_turns");
     }
   );
 });

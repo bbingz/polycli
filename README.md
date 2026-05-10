@@ -8,6 +8,7 @@
 
 [![GitHub release](https://img.shields.io/github/v/release/bbingz/polycli?label=release&color=111827)](https://github.com/bbingz/polycli/releases)
 [![CI](https://github.com/bbingz/polycli/actions/workflows/ci.yml/badge.svg)](https://github.com/bbingz/polycli/actions/workflows/ci.yml)
+[![npm: polycli](https://img.shields.io/npm/v/@bbingz/polycli?label=%40bbingz%2Fpolycli&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli)
 [![npm: polycli-opencode](https://img.shields.io/npm/v/@bbingz/polycli-opencode?label=%40bbingz%2Fpolycli-opencode&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-opencode)
 [![npm: polycli-utils](https://img.shields.io/npm/v/@bbingz/polycli-utils?label=%40bbingz%2Fpolycli-utils&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-utils)
 [![npm: polycli-timing](https://img.shields.io/npm/v/@bbingz/polycli-timing?label=%40bbingz%2Fpolycli-timing&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-timing)
@@ -27,6 +28,18 @@
 > **polycli is primarily an in-host plugin.** Each host adapter exposes the same `health / ask / review / rescue / timing / debug` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, an installed `polycli` skill in Codex). For environments without a supported host, the optional `@bbingz/polycli` terminal package adds a PATH-callable wrapper around the same companion. See [Outside a supported host](#outside-a-supported-host).
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
+
+## Latest release: v0.6.15
+
+The latest patch focuses on operator observability:
+
+- `POLYCLI_STATE_ROOT` gives every host a shared, explicit state root.
+- `timing --all --json` returns full history plus state/workspace metadata.
+- timing records now include run outcome diagnostics (`outcome`, `exitCode`, `terminationReason`, `responseMatched`, `errorCode`).
+- `debug runs` / `debug explain` can summarize failed attempts by class, including `qwen_max_session_turns`, `binary_missing`, `no_visible_text`, timeouts, terminations, cancellations, and auth-like failures.
+- kimi resume-footer exits with visible assistant text no longer count as failed runs.
+
+See [`docs/release-notes-v0.6.15.md`](./docs/release-notes-v0.6.15.md).
 
 ## Why polycli?
 
@@ -212,6 +225,7 @@ Each timing record also carries:
 
 - `runtimePersistence` — `ephemeral | session | daemon`
 - `measurementScope` — `request | turn | job`
+- outcome diagnostics — `outcome`, `exitCode`, `terminationReason`, `responseMatched`, and `errorCode`
 
 ## Packages
 

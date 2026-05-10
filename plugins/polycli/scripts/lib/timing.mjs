@@ -3,13 +3,30 @@ import path from "node:path";
 import { aggregateTimingRecords, validateTimingRecord } from "@bbingz/polycli-timing";
 import { appendNdjson, readNdjson } from "@bbingz/polycli-utils/ndjson";
 
-import { ensureStateDir, resolveStateDir } from "./state.mjs";
+import {
+  computeWorkspaceSlug,
+  describeStateRoot,
+  ensureStateDir,
+  resolveStateDir,
+} from "./state.mjs";
 
 const TIMING_FILE_NAME = "timings.ndjson";
 const MAX_TIMING_BYTES = 2_000_000;
 
 export function resolveTimingHistoryFile(workspaceRoot) {
   return path.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
+}
+
+export function describeTimingStore(workspaceRoot) {
+  const root = describeStateRoot();
+  return {
+    stateRoot: root.stateRoot,
+    stateRootSource: root.source,
+    workspaceRoot,
+    workspaceSlug: computeWorkspaceSlug(workspaceRoot),
+    stateDir: resolveStateDir(workspaceRoot),
+    timingFile: resolveTimingHistoryFile(workspaceRoot),
+  };
 }
 
 export function appendTimingRecord(workspaceRoot, record) {

@@ -158,8 +158,24 @@ test('groupRunLedgerEvents and summarizeRunLedger count provider decisions', () 
     adoptedCount: 1,
     skippedCount: 1,
     failedCount: 1,
+    failureClassCounts: {},
   });
   assert.match(buildRunExplanation(events, 'run-a').text, /qwen adopted/);
   assert.match(buildRunExplanation(events, 'run-a').text, /cmd failed/);
   assert.match(buildRunExplanation(events, 'run-a').text, /pi skipped/);
+});
+
+test('summarizeRunLedger classifies attempt failures', () => {
+  const events = [
+    { runId: 'run-b', at: '2026-05-07T00:00:00.000Z', command: 'ask', commands: ['ask'], phase: 'run_started', status: 'started', hostSurface: 'terminal' },
+    { runId: 'run-b', at: '2026-05-07T00:00:01.000Z', command: 'ask', commands: ['ask'], phase: 'attempt_result', provider: 'qwen', status: 'failed', reason: 'worker_exited', error: { message: 'Maximum session turn limit reached' }, hostSurface: 'terminal' },
+    { runId: 'run-b', at: '2026-05-07T00:00:02.000Z', command: 'ask', commands: ['ask'], phase: 'attempt_result', provider: 'cmd', status: 'failed', reason: 'worker_exited', error: 'process terminated', hostSurface: 'terminal' },
+  ];
+
+  assert.deepEqual(summarizeRunLedger(events)[0].failureClassCounts, {
+    qwen_max_session_turns: 1,
+    terminated: 1,
+  });
+  assert.match(buildRunExplanation(events, 'run-b').text, /attempt qwen failed \(qwen_max_session_turns\)/);
+  assert.match(buildRunExplanation(events, 'run-b').text, /attempt cmd failed \(terminated\)/);
 });

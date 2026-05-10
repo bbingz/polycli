@@ -1,7 +1,7 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
-import { formatProviderExitError } from "./errors.js";
+import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const CMD_BIN = process.env.CMD_CLI_BIN || "cmd";
@@ -113,11 +113,13 @@ export function runCmdPrompt({
 
   const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
   if (result.error) {
+    const error = result.error.code === "ETIMEDOUT"
+      ? `cmd timed out after ${Math.round(timeout / 1000)}s`
+      : result.error.message;
     return {
       ok: false,
-      error: result.error.code === "ETIMEDOUT"
-        ? `cmd timed out after ${Math.round(timeout / 1000)}s`
-        : result.error.message,
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "cmd" }),
     };
   }
 
@@ -129,15 +131,17 @@ export function runCmdPrompt({
   });
   const hasVisibleText = Boolean(parsed.response.trim());
 
+  const error = result.status === 0
+    ? (hasVisibleText ? null : "cmd produced no visible text")
+    : (result.stderr.trim() || formatProviderExitError("cmd", result.status));
   return {
     ok: result.status === 0 && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
     sessionId: resolvedSession.sessionId,
     model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
-    error: result.status === 0
-      ? (hasVisibleText ? null : "cmd produced no visible text")
-      : (result.stderr.trim() || formatProviderExitError("cmd", result.status)),
+    error,
+    errorCode: classifyProviderFailure(error, { provider: "cmd" }),
     status: result.status,
   };
 }
@@ -182,15 +186,17 @@ export function runCmdPromptStreaming({
       priority: ["stdout", "stderr", "file"],
     });
     const hasVisibleText = Boolean(parsed.response.trim());
+    const error = result.ok
+      ? (hasVisibleText ? null : "cmd produced no visible text")
+      : result.error;
     return {
       ...result,
       ...parsed,
       sessionId: resolvedSession.sessionId,
       model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
       ok: result.ok && hasVisibleText,
-      error: result.ok
-        ? (hasVisibleText ? null : "cmd produced no visible text")
-        : result.error,
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "cmd" }),
     };
   });
 }

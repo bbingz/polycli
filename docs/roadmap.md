@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-07 (v0.6.14 published: provider-path hardening, conservative stateless ask/review defaults, and official `mmx-cli` MiniMax path).
+Snapshot: 2026-05-10 (v0.6.15 published: shared observability state root, full timing history, timing outcome diagnostics, and provider/run-ledger failure classification).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,7 +10,7 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.14** — see `docs/release-notes-v0.6.14.md`. Published 2026-05-07: GitHub release + `@bbingz/polycli-opencode@0.6.14` + `@bbingz/polycli@0.6.14` all on the registry. Patch on top of v0.6.13 records the provider-path table, fixes qwen ask away from the failing one-turn cap, constrains stateless ask/review defaults, and replaces MiniMax `mini-agent` log scraping with official `mmx-cli`.
+- Latest public release: **v0.6.15** — see `docs/release-notes-v0.6.15.md`. Published 2026-05-10: GitHub release + `@bbingz/polycli-opencode@0.6.15` + `@bbingz/polycli@0.6.15` all on the registry. Patch on top of v0.6.14 fixes split timing stores with `POLYCLI_STATE_ROOT`, adds `timing --all`/metadata, records timing outcome diagnostics, and classifies run-ledger/provider failures.
 - 9 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.

@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
-import { formatProviderExitError } from "./errors.js";
+import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
@@ -19,6 +19,10 @@ export const TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
 ];
 const KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path.join(os.homedir(), ".kimi", "config.toml");
+
+function isKimiResumeFooter(text) {
+  return /^To resume:\s*kimi\s+-r\s+/im.test(String(text ?? "").trim());
+}
 
 function kimiJsonPath() {
   return path.join(os.homedir(), ".kimi", "kimi.json");
@@ -325,12 +329,15 @@ export function runKimiPrompt({
   });
 
   if (result.error) {
-    return { ok: false, error: result.error.message };
+    const error = result.error.message;
+    return { ok: false, error, errorCode: classifyProviderFailure(error, { provider: "kimi" }) };
   }
   if (result.status !== 0) {
+    const error = result.stderr.trim() || formatProviderExitError("kimi", result.status);
     return {
       ok: false,
-      error: result.stderr.trim() || formatProviderExitError("kimi", result.status),
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "kimi" }),
       status: result.status,
     };
   }
@@ -342,6 +349,7 @@ export function runKimiPrompt({
     priority: ["stdout", "stderr", "file"],
   });
 
+  const error = parsed.response.trim() ? null : "kimi produced no visible text";
   return withKimiResumeWarnings({
     ok: Boolean(parsed.response.trim()),
     response: parsed.response,
@@ -349,7 +357,8 @@ export function runKimiPrompt({
     toolEvents: parsed.toolEvents,
     sessionId: session.sessionId,
     model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
-    error: parsed.response.trim() ? null : "kimi produced no visible text",
+    error,
+    errorCode: classifyProviderFailure(error, { provider: "kimi" }),
   }, resume.sessionId);
 }
 
@@ -403,15 +412,19 @@ export function runKimiPromptStreaming({
       priority: ["stdout", "stderr", "file"],
     });
     const hasVisibleText = Boolean(parsed.response.trim());
+    const resumeFooterOnly = hasVisibleText && !result.ok && isKimiResumeFooter(result.error);
+    const ok = (result.ok || resumeFooterOnly) && hasVisibleText;
+    const error = ok
+      ? null
+      : (result.ok ? "kimi produced no visible text" : result.error);
     return withKimiResumeWarnings({
       ...result,
       ...parsed,
       sessionId: session.sessionId,
       model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
-      ok: result.ok && hasVisibleText,
-      error: result.ok
-        ? (hasVisibleText ? null : "kimi produced no visible text")
-        : result.error,
+      ok,
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "kimi" }),
     }, resume.sessionId);
   });
 }
