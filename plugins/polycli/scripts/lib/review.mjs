@@ -9,6 +9,8 @@ const REVIEW_SCOPES = new Set(["auto", "staged", "unstaged", "working-tree", "br
 const REVIEW_APPEND_SYSTEM =
   "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
 const REVIEW_CONSTRAINT_ERROR = "non-overridable review hard constraints";
+const AGY_REVIEW_UNSUPPORTED_ERROR = "agy does not expose a non-interactive plan mode; /review cannot enforce read-only constraints.";
+const REVIEW_UNSUPPORTED_PROVIDERS = new Set(["agy"]);
 const GEMINI_REVIEW_DISABLED_MCP_NAME = "__polycli_review_no_mcp__";
 const COPILOT_REVIEW_EXCLUDED_TOOLS = [
   "bash",
@@ -94,6 +96,12 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   }
 }
 
+export function assertReviewProviderSupported(provider) {
+  if (REVIEW_UNSUPPORTED_PROVIDERS.has(provider)) {
+    throw new Error(AGY_REVIEW_UNSUPPORTED_ERROR);
+  }
+}
+
 const REVIEW_HARD_CONSTRAINTS = {
   kimi() {
     return { yolo: false, extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] };
@@ -159,6 +167,7 @@ export function buildReviewRuntimeOptions({
   runtimeOptions = {},
   env = process.env,
 } = {}) {
+  assertReviewProviderSupported(provider);
   const constraintBuilder = REVIEW_HARD_CONSTRAINTS[provider];
   if (!constraintBuilder) {
     return runtimeOptions;

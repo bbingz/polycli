@@ -11,8 +11,8 @@ import {
   runProviderPromptStreaming,
 } from "../src/index.js";
 
-test("provider registry exposes the nine integrated runtimes", () => {
-  assert.deepEqual(PROVIDER_IDS, ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd"]);
+test("provider registry exposes the ten integrated runtimes", () => {
+  assert.deepEqual(PROVIDER_IDS, ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd", "agy"]);
   assert.deepEqual(PROVIDER_OPERATION_NAMES, ["prompt"]);
 
   const runtimes = listProviderRuntimes();
@@ -32,6 +32,16 @@ test("provider registry exposes the nine integrated runtimes", () => {
 test("cmd runtime reflects documented standalone headless session scope", () => {
   const runtime = getProviderRuntime("cmd");
   assert.equal(runtime.capabilities.sessionResume, false);
+});
+
+test("agy runtime reflects documented text-only session-resumable scope", () => {
+  const runtime = getProviderRuntime("agy");
+  assert.deepEqual(runtime.capabilities, {
+    streaming: true,
+    sessionResume: true,
+    structuredOutput: false,
+    operations: PROVIDER_OPERATION_NAMES,
+  });
 });
 
 test("getProviderRuntime returns a stable runtime for each provider id", () => {
@@ -183,6 +193,43 @@ test("runProviderPromptStreaming records cmd timing from plain stdout text", asy
   assert.equal(result.timing.runtimePersistence, "ephemeral");
   assert.equal(result.timing.metrics.ttft.ms, 200);
   assert.equal(result.timing.metrics.tail.ms, 400);
+});
+
+test("runProviderPromptStreaming records agy timing from plain stdout text with missing session id", async () => {
+  let now = 1_000;
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+  child.unref = () => {};
+
+  const result = await runProviderPromptStreaming({
+    provider: "agy",
+    prompt: "ping",
+    cwd: process.cwd(),
+    timeout: 5_000,
+    nowMs: () => now,
+    spawnImpl() {
+      queueMicrotask(() => {
+        now = 1_200;
+        child.stdout.emit("data", "hello\n");
+        now = 1_300;
+        child.stdout.emit("data", "world\n");
+        now = 1_700;
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.response, "hello\nworld");
+  assert.equal(result.timing.runtimePersistence, "session");
+  assert.equal(result.timing.meta.sessionIdMissing, true);
+  assert.equal(result.timing.metrics.ttft.ms, 200);
+  assert.equal(result.timing.metrics.tail.ms, 400);
+  assert.equal(result.timing.metrics.tool.status, "unsupported");
 });
 
 test("runProviderPromptStreaming passes defaultModel as final model fallback", async () => {

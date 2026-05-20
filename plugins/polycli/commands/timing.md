@@ -1,6 +1,6 @@
 ---
 description: Show stored polycli timing history and aggregates for this repository
-argument-hint: '[--provider <claude|copilot|opencode|pi|cmd|gemini|kimi|qwen|minimax>] [--history <count>]'
+argument-hint: '[--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax>] [--history <count>]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---

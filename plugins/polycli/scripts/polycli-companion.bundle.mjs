@@ -85,7 +85,7 @@ function parseArgs(argv, config = {}) {
 }
 
 // packages/polycli-runtime/src/constants.js
-var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd"];
+var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd", "agy"];
 var PROVIDER_OPERATION_NAMES = ["prompt"];
 
 // packages/polycli-utils/src/parse-stream-json.js
@@ -3201,6 +3201,217 @@ function runCmdPromptStreaming({
   });
 }
 
+// packages/polycli-runtime/src/agy.js
+var AGY_BIN = process.env.AGY_CLI_BIN || "agy";
+var DEFAULT_AGY_MODEL = null;
+var DEFAULT_TIMEOUT_MS10 = 9e5;
+var AUTH_CHECK_TIMEOUT_MS10 = 3e4;
+var AGY_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS7 = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
+var AGY_BENIGN_STDERR_RE = /^Shell cwd was reset/i;
+function buildAgyInvocation({
+  prompt,
+  yolo = true,
+  continueLast = false,
+  resumeConversationId = null,
+  sandbox = false,
+  addDirs = [],
+  printTimeoutSeconds = null,
+  extraArgs = [],
+  bin = AGY_BIN
+} = {}) {
+  const args = [];
+  if (yolo) args.push("--dangerously-skip-permissions");
+  if (sandbox) args.push("--sandbox");
+  if (resumeConversationId) {
+    args.push("--conversation", resumeConversationId);
+  } else if (continueLast) {
+    args.push("--continue");
+  }
+  for (const dir of addDirs) {
+    args.push("--add-dir", dir);
+  }
+  if (printTimeoutSeconds && Number.isFinite(printTimeoutSeconds)) {
+    args.push("--print-timeout", `${Math.max(1, Math.round(printTimeoutSeconds))}s`);
+  }
+  if (extraArgs.length > 0) args.push(...extraArgs);
+  args.push("-p", String(prompt ?? ""));
+  return { bin, args };
+}
+function extractAgyText(event) {
+  if (!event || typeof event !== "object") {
+    return "";
+  }
+  if (event.type === "text_delta" && typeof event.delta === "string") {
+    return event.delta;
+  }
+  if (event.type === "result" && typeof event.text === "string") {
+    return event.text;
+  }
+  return "";
+}
+function textEventsFromStdout2(stdout) {
+  return String(stdout ?? "").split(/\r?\n/).map((line) => line.trimEnd()).filter((line) => line.trim()).map((line) => ({ type: "text_delta", delta: line }));
+}
+function parseAgyTextResult(stdout) {
+  const response = String(stdout ?? "").trim();
+  const events = textEventsFromStdout2(stdout);
+  return { response, events };
+}
+function stripAgyBenignStderr(stderr) {
+  return String(stderr ?? "").split(/\r?\n/).filter((line) => line.trim() && !AGY_BENIGN_STDERR_RE.test(line.trim())).join("\n");
+}
+function getAgyAvailability(cwd, { bin = AGY_BIN } = {}) {
+  return binaryAvailable(bin, ["--help"], { cwd });
+}
+function buildAgyAuthStatus(result) {
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: DEFAULT_AGY_MODEL
+    };
+  }
+  const detail = String(result.error ?? "").trim() || "agy auth probe failed";
+  if (AGY_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (TRANSIENT_PROBE_ERROR_PATTERNS7.some((pattern) => pattern.test(detail))) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: DEFAULT_AGY_MODEL };
+  }
+  return { loggedIn: false, detail };
+}
+function getAgyAuthStatus(cwd, { promptRunner = runAgyPrompt } = {}) {
+  const result = promptRunner({
+    prompt: "ping",
+    cwd,
+    timeout: AUTH_CHECK_TIMEOUT_MS10,
+    yolo: true
+  });
+  return buildAgyAuthStatus(result);
+}
+function runAgyPrompt({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS10,
+  env = process.env,
+  extraArgs = [],
+  yolo = true,
+  continueLast = false,
+  resumeConversationId = null,
+  sandbox = false,
+  addDirs = [],
+  defaultModel = null,
+  bin = AGY_BIN
+} = {}) {
+  const printTimeoutSeconds = Math.max(5, Math.floor((timeout - 5e3) / 1e3));
+  const invocation = buildAgyInvocation({
+    prompt,
+    yolo,
+    continueLast,
+    resumeConversationId,
+    sandbox,
+    addDirs,
+    printTimeoutSeconds,
+    extraArgs,
+    bin
+  });
+  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
+  if (result.error) {
+    const error2 = result.error.code === "ETIMEDOUT" ? `agy timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
+    return {
+      ok: false,
+      error: error2,
+      errorCode: classifyProviderFailure(error2, { provider: "agy" })
+    };
+  }
+  const parsed = parseAgyTextResult(result.stdout);
+  const resolvedSession = resolveSessionId({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    priority: ["stdout", "stderr", "file"]
+  });
+  const filteredStderr = stripAgyBenignStderr(result.stderr);
+  const hasVisibleText = Boolean(parsed.response.trim());
+  const error = result.status === 0 ? hasVisibleText ? null : "agy produced no visible text" : filteredStderr.trim() || formatProviderExitError("agy", result.status);
+  return {
+    ok: result.status === 0 && hasVisibleText,
+    response: parsed.response,
+    events: parsed.events,
+    sessionId: resolvedSession.sessionId,
+    model: model ?? defaultModel ?? DEFAULT_AGY_MODEL,
+    error,
+    errorCode: classifyProviderFailure(error, { provider: "agy" }),
+    status: result.status
+  };
+}
+function runAgyPromptStreaming({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS10,
+  env = process.env,
+  extraArgs = [],
+  yolo = true,
+  continueLast = false,
+  resumeConversationId = null,
+  sandbox = false,
+  addDirs = [],
+  defaultModel = null,
+  onEvent = () => {
+  },
+  bin = AGY_BIN,
+  spawnImpl
+} = {}) {
+  const printTimeoutSeconds = Math.max(5, Math.floor((timeout - 5e3) / 1e3));
+  const invocation = buildAgyInvocation({
+    prompt,
+    yolo,
+    continueLast,
+    resumeConversationId,
+    sandbox,
+    addDirs,
+    printTimeoutSeconds,
+    extraArgs,
+    bin
+  });
+  return spawnStreamingCommand({
+    bin: invocation.bin,
+    args: invocation.args,
+    cwd,
+    env: { ...env },
+    timeout,
+    spawnImpl,
+    onStdoutLine(line) {
+      const trimmed = line.trimEnd();
+      if (!trimmed.trim()) return;
+      onEvent({ type: "text_delta", delta: trimmed });
+    }
+  }).then((result) => {
+    const parsed = parseAgyTextResult(result.stdout);
+    const resolvedSession = resolveSessionId({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
+    const filteredStderr = stripAgyBenignStderr(result.stderr);
+    const hasVisibleText = Boolean(parsed.response.trim());
+    const error = result.ok ? hasVisibleText ? null : "agy produced no visible text" : filteredStderr.trim() || result.error;
+    return {
+      ...result,
+      ...parsed,
+      sessionId: resolvedSession.sessionId,
+      model: model ?? defaultModel ?? DEFAULT_AGY_MODEL,
+      ok: result.ok && hasVisibleText,
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "agy" })
+    };
+  });
+}
+
 // packages/polycli-runtime/src/registry.js
 import { performance } from "node:perf_hooks";
 
@@ -3492,6 +3703,7 @@ function extractProviderEventText(provider, event) {
   if (provider === "opencode") return extractOpenCodeText(event);
   if (provider === "pi") return extractPiText(event);
   if (provider === "cmd") return extractCmdText(event);
+  if (provider === "agy") return extractAgyText(event);
   return "";
 }
 function buildPromptTimingRecord({
@@ -3602,7 +3814,8 @@ var TIMING_SUPPORT = {
   minimax: { ttft: false, gen: false, tail: false, tool: false, runtimePersistence: "ephemeral" },
   opencode: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
-  cmd: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "ephemeral" }
+  cmd: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "ephemeral" },
+  agy: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" }
 };
 var RUNTIMES = Object.freeze({
   claude: {
@@ -3721,6 +3934,19 @@ var RUNTIMES = Object.freeze({
     getAuthStatus: getCmdAuthStatus,
     runPrompt: runCmdPrompt,
     runPromptStreaming: runCmdPromptStreaming
+  },
+  agy: {
+    id: "agy",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: false,
+      operations: PROVIDER_OPERATION_NAMES
+    },
+    getAvailability: getAgyAvailability,
+    getAuthStatus: getAgyAuthStatus,
+    runPrompt: runAgyPrompt,
+    runPromptStreaming: runAgyPromptStreaming
   }
 });
 for (const runtime of Object.values(RUNTIMES)) {
@@ -4984,6 +5210,12 @@ function buildPromptRuntimeOptions({
   kind,
   runtimeOptions = {}
 } = {}) {
+  if ((kind === "ask" || kind === "rescue") && provider === "agy") {
+    return {
+      ...runtimeOptions,
+      yolo: true
+    };
+  }
   if (kind === "ask" && provider === "kimi") {
     return {
       ...runtimeOptions,
@@ -5102,6 +5334,8 @@ var DEFAULT_MAX_DIFF_BYTES = null;
 var REVIEW_SCOPES = /* @__PURE__ */ new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
 var REVIEW_APPEND_SYSTEM = "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
 var REVIEW_CONSTRAINT_ERROR = "non-overridable review hard constraints";
+var AGY_REVIEW_UNSUPPORTED_ERROR = "agy does not expose a non-interactive plan mode; /review cannot enforce read-only constraints.";
+var REVIEW_UNSUPPORTED_PROVIDERS = /* @__PURE__ */ new Set(["agy"]);
 var GEMINI_REVIEW_DISABLED_MCP_NAME = "__polycli_review_no_mcp__";
 var COPILOT_REVIEW_EXCLUDED_TOOLS = [
   "bash",
@@ -5182,6 +5416,11 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
 }
+function assertReviewProviderSupported(provider) {
+  if (REVIEW_UNSUPPORTED_PROVIDERS.has(provider)) {
+    throw new Error(AGY_REVIEW_UNSUPPORTED_ERROR);
+  }
+}
 var REVIEW_HARD_CONSTRAINTS = {
   kimi() {
     return { yolo: false, extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] };
@@ -5246,6 +5485,7 @@ function buildReviewRuntimeOptions({
   runtimeOptions = {},
   env = process.env
 } = {}) {
+  assertReviewProviderSupported(provider);
   const constraintBuilder = REVIEW_HARD_CONSTRAINTS[provider];
   if (!constraintBuilder) {
     return runtimeOptions;
@@ -5507,6 +5747,10 @@ function summarizeEventText(provider, event) {
     }
     if (event.type === "agent_end" && typeof event.result?.text === "string") return event.result.text;
     if (typeof event.text === "string") return event.text;
+  }
+  if (provider === "agy") {
+    if (event.type === "text_delta" && typeof event.delta === "string") return event.delta;
+    if (event.type === "result" && typeof event.text === "string") return event.text;
   }
   return "";
 }
@@ -5780,6 +6024,23 @@ function buildProviderFlagRuntimeOptions(provider, options) {
     if (options.effort) runtimeOptions.effort = options.effort;
     if (resumeFlags.length > 0) {
       notes.push(`${resumeFlags.join(", ")} ${resumeFlags.length === 1 ? "is" : "are"} kimi-specific; ${provider} will proceed without ${resumeFlags.length === 1 ? "it" : "them"}.`);
+    }
+    return { runtimeOptions, notes };
+  }
+  if (provider === "agy") {
+    if (resumeFlags.length > 1) {
+      throw new Error("Choose only one of --resume-last, --resume, or --fresh.");
+    }
+    if (options["resume-last"]) runtimeOptions.continueLast = true;
+    if (options.resume) runtimeOptions.resumeConversationId = options.resume;
+    if (options.fresh) {
+      notes.push("--fresh is already agy's default for non-resumed print runs.");
+    }
+    if (options.write) {
+      notes.push("--write is gemini-specific; agy will proceed without it.");
+    }
+    if (options.effort) {
+      notes.push("--effort is gemini-specific; agy will proceed without it.");
     }
     return { runtimeOptions, notes };
   }
@@ -6359,6 +6620,7 @@ function buildReviewExecution(rawArgs, { adversarial }) {
     provider: options.provider,
     positionals
   });
+  assertReviewProviderSupported(provider);
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
   const focus = remainingPositionals.join(" ").trim();
   const maxDiffBytes = parseMaxDiffBytes(options["max-diff-bytes"]);

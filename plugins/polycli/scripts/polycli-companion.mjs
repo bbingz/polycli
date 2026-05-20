@@ -22,7 +22,7 @@ import {
 } from "./lib/job-control.mjs";
 import { buildPromptRuntimeOptions } from "./lib/prompt-runtime.mjs";
 import { resolveProvider } from "./lib/providers.mjs";
-import { buildReviewPrompt, buildReviewRuntimeOptions, collectReviewContext } from "./lib/review.mjs";
+import { assertReviewProviderSupported, buildReviewPrompt, buildReviewRuntimeOptions, collectReviewContext } from "./lib/review.mjs";
 import {
   getJob,
   recordLastUsedProvider,
@@ -337,6 +337,24 @@ function buildProviderFlagRuntimeOptions(provider, options) {
     if (options.effort) runtimeOptions.effort = options.effort;
     if (resumeFlags.length > 0) {
       notes.push(`${resumeFlags.join(", ")} ${resumeFlags.length === 1 ? "is" : "are"} kimi-specific; ${provider} will proceed without ${resumeFlags.length === 1 ? "it" : "them"}.`);
+    }
+    return { runtimeOptions, notes };
+  }
+
+  if (provider === "agy") {
+    if (resumeFlags.length > 1) {
+      throw new Error("Choose only one of --resume-last, --resume, or --fresh.");
+    }
+    if (options["resume-last"]) runtimeOptions.continueLast = true;
+    if (options.resume) runtimeOptions.resumeConversationId = options.resume;
+    if (options.fresh) {
+      notes.push("--fresh is already agy's default for non-resumed print runs.");
+    }
+    if (options.write) {
+      notes.push("--write is gemini-specific; agy will proceed without it.");
+    }
+    if (options.effort) {
+      notes.push("--effort is gemini-specific; agy will proceed without it.");
     }
     return { runtimeOptions, notes };
   }
@@ -965,6 +983,7 @@ function buildReviewExecution(rawArgs, { adversarial }) {
     provider: options.provider,
     positionals,
   });
+  assertReviewProviderSupported(provider);
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
   const focus = remainingPositionals.join(" ").trim();
   const maxDiffBytes = parseMaxDiffBytes(options["max-diff-bytes"]);

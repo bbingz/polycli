@@ -15,7 +15,7 @@ node "$PLUGIN_ROOT_DIR/scripts/polycli-companion.bundle.mjs" $ARGUMENTS
 
 Supported subcommands:
 
-- `setup [--provider <claude|copilot|opencode|pi|cmd|gemini|kimi|qwen|minimax>] [--json]`
+- `setup [--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax>] [--json]`
 - `health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]`
 - `ask --provider <provider> [--model <model>] [--background] [--json] <prompt>`
 - `rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>`

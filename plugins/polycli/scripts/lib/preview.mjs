@@ -108,6 +108,11 @@ function summarizeEventText(provider, event) {
     if (typeof event.text === "string") return event.text;
   }
 
+  if (provider === "agy") {
+    if (event.type === "text_delta" && typeof event.delta === "string") return event.delta;
+    if (event.type === "result" && typeof event.text === "string") return event.text;
+  }
+
   return "";
 }
 

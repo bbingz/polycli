@@ -427,6 +427,37 @@ process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: reply }
   };
 }
 
+function createFakeAgyBin() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-fake-agy-"));
+  const bin = path.join(root, "agy");
+  fs.writeFileSync(
+    bin,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("--help")) {
+  process.stdout.write("Usage: agy [options]\\n");
+  process.exit(0);
+}
+if (process.env.AGY_ARGV_LOG) {
+  fs.writeFileSync(process.env.AGY_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
+}
+const prompt = args[args.indexOf("-p") + 1] || "ping";
+const replyMatch = prompt.match(/__reply=([^\\n]+)/);
+const reply = process.env.AGY_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
+process.stdout.write(reply + "\\n");
+`,
+    { mode: 0o755 }
+  );
+  return {
+    root,
+    bin,
+    cleanup() {
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
 function cleanEnv(extra = {}) {
   const env = {};
   for (const key of ["PATH", "HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"]) {
@@ -515,10 +546,14 @@ async function assertSetupAndAsk(provider, env, prompt = "__reply=PONG") {
   const askPayload = JSON.parse(ask.stdout);
   assert.equal(askPayload.provider, provider);
   assert.equal(askPayload.response, "PONG");
-  assert.ok(
-    askPayload.model && typeof askPayload.model === "string" && askPayload.model.length > 0,
-    `${provider} ask result should include model`
-  );
+  if (provider === "agy") {
+    assert.equal(askPayload.model, null);
+  } else {
+    assert.ok(
+      askPayload.model && typeof askPayload.model === "string" && askPayload.model.length > 0,
+      `${provider} ask result should include model`
+    );
+  }
   assert.ok(askPayload.timing, "ask result should include timing");
   return askPayload;
 }
@@ -834,6 +869,7 @@ test("integration: health without provider returns every healthy provider", asyn
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
       CLAUDE_CLI_BIN: missingBin,
+      AGY_CLI_BIN: missingBin,
       CMD_CLI_BIN: missingBin,
       COPILOT_CLI_BIN: missingBin,
       GEMINI_CLI_BIN: missingBin,
@@ -855,8 +891,8 @@ test("integration: health without provider returns every healthy provider", asyn
     assert.equal(payload.anyHealthy, true);
     assert.equal(payload.allHealthy, false);
     assert.deepEqual(payload.healthyProviders, ["qwen"]);
-    assert.deepEqual(payload.unhealthyProviders.sort(), ["claude", "cmd", "copilot", "gemini", "kimi", "minimax", "opencode", "pi"].sort());
-    assert.equal(payload.results.length, 9);
+    assert.deepEqual(payload.unhealthyProviders.sort(), ["agy", "claude", "cmd", "copilot", "gemini", "kimi", "minimax", "opencode", "pi"].sort());
+    assert.equal(payload.results.length, 10);
     assert.equal(payload.results.find((result) => result.provider === "qwen").ok, true);
     assert.equal(payload.results.find((result) => result.provider === "kimi").ok, false);
     assert.equal(payload.results.find((result) => result.provider === "kimi").probe.responseMatched, false);
@@ -877,6 +913,7 @@ test("integration: health without provider probes providers concurrently", async
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
       CLAUDE_CLI_BIN: missingBin,
+      AGY_CLI_BIN: missingBin,
       CMD_CLI_BIN: missingBin,
       COPILOT_CLI_BIN: missingBin,
       GEMINI_CLI_BIN: missingBin,

@@ -24,6 +24,15 @@ test("buildPromptRuntimeOptions leaves kimi rescue unconstrained", () => {
   assert.deepEqual(options, {});
 });
 
+test("buildPromptRuntimeOptions auto-approves agy ask and rescue", () => {
+  assert.deepEqual(buildPromptRuntimeOptions({ provider: "agy", kind: "ask" }), {
+    yolo: true,
+  });
+  assert.deepEqual(buildPromptRuntimeOptions({ provider: "agy", kind: "rescue" }), {
+    yolo: true,
+  });
+});
+
 test("buildPromptRuntimeOptions keeps qwen ask multi-step but excludes tools", () => {
   const options = buildPromptRuntimeOptions({
     provider: "qwen",

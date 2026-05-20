@@ -55,6 +55,12 @@ import {
   runCmdPrompt,
   runCmdPromptStreaming,
 } from "./cmd.js";
+import {
+  getAgyAvailability,
+  getAgyAuthStatus,
+  runAgyPrompt,
+  runAgyPromptStreaming,
+} from "./agy.js";
 import { attachPromptTiming, extractProviderEventText } from "./timing.js";
 
 const TIMING_SUPPORT = {
@@ -67,6 +73,7 @@ const TIMING_SUPPORT = {
   opencode: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   cmd: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "ephemeral" },
+  agy: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
 };
 
 const RUNTIMES = Object.freeze({
@@ -186,6 +193,19 @@ const RUNTIMES = Object.freeze({
     getAuthStatus: getCmdAuthStatus,
     runPrompt: runCmdPrompt,
     runPromptStreaming: runCmdPromptStreaming,
+  },
+  agy: {
+    id: "agy",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: false,
+      operations: PROVIDER_OPERATION_NAMES,
+    },
+    getAvailability: getAgyAvailability,
+    getAuthStatus: getAgyAuthStatus,
+    runPrompt: runAgyPrompt,
+    runPromptStreaming: runAgyPromptStreaming,
   },
 });
 

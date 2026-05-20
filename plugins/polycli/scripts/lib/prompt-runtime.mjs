@@ -49,6 +49,13 @@ export function buildPromptRuntimeOptions({
   kind,
   runtimeOptions = {},
 } = {}) {
+  if ((kind === "ask" || kind === "rescue") && provider === "agy") {
+    return {
+      ...runtimeOptions,
+      yolo: true,
+    };
+  }
+
   if (kind === "ask" && provider === "kimi") {
     return {
       ...runtimeOptions,

@@ -16,7 +16,7 @@ If you are switching between hosts, read the first two sections (identity + samp
 
 All five dispatch to the same `polycli-companion.bundle.mjs` underneath. Differences are at the surface only; behavior, output format, exit codes, and `--json` shape are identical.
 
-Codex-specific rule: when the installed `polycli` skill from `polycli-codex` is available, prefer the skill over direct official CLI shell calls for `claude`, `copilot`, `opencode`, `pi`, `cmd`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell. Use `health`, `status`, `result`, and `timing` as the observable control plane around prompt-bearing work.
+Codex-specific rule: when the installed `polycli` skill from `polycli-codex` is available, prefer the skill over direct official CLI shell calls for `claude`, `copilot`, `opencode`, `pi`, `cmd`, `agy`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell. Use `health`, `status`, `result`, and `timing` as the observable control plane around prompt-bearing work.
 
 ## Command-by-command mapping
 
@@ -39,6 +39,7 @@ All commands take the same flags regardless of host (see `node polycli-companion
 Notes:
 
 - Anywhere a cell shows `...`, pass the same flags you would to the raw CLI: `--provider <p>`, `--json`, `--background`, `<prompt>`, etc. The argument grammar does not change between hosts.
+- Provider `agy` supports `setup`, `health`, `ask`, `rescue`, `status`, `result`, `cancel`, `timing`, and `debug`. `review` and `adversarial-review` are unsupported for `agy` because Antigravity CLI does not expose a non-interactive plan mode.
 - OpenCode has two tool functions. `polycli_run` is the generic one accepting `argv: string[]`. `polycli_timing` is a convenience wrapper that takes `{provider?, history?, json?}` for the single most-used read-only command. Everything else must go through `polycli_run`.
 - `polycli tui` is terminal-only. Host plugins continue to use `debug runs/show/explain`; no Claude/Codex/Copilot/OpenCode command is added for the TUI.
 
@@ -60,11 +61,11 @@ The same four operations, across all four host adapters plus the Terminal CLI.
 
 | host          | invocation                                                                 |
 |---------------|----------------------------------------------------------------------------|
-| Claude Code   | `/polycli:ask --provider qwen Reply with only: OK`                         |
-| Codex         | `Choose Polycli with @, then ask it to run: ask --provider qwen Reply with only: OK` |
-| Copilot       | `polycli ask --provider qwen "Reply with only: OK"`                        |
-| OpenCode      | `polycli_run(["ask", "--provider", "qwen", "Reply with only: OK"])`        |
-| Terminal CLI  | `polycli ask --provider qwen "Reply with only: OK"`                        |
+| Claude Code   | `/polycli:ask --provider agy Reply with only: OK`                         |
+| Codex         | `Choose Polycli with @, then ask it to run: ask --provider agy Reply with only: OK` |
+| Copilot       | `polycli ask --provider agy "Reply with only: OK"`                        |
+| OpenCode      | `polycli_run(["ask", "--provider", "agy", "Reply with only: OK"])`        |
+| Terminal CLI  | `polycli ask --provider agy "Reply with only: OK"`                        |
 
 ### Launch a background review and poll
 

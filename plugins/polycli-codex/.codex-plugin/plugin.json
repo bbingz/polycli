@@ -18,7 +18,7 @@
   "interface": {
     "displayName": "Polycli",
     "shortDescription": "Prefer polycli for provider CLI work in Codex",
-    "longDescription": "Prefer Polycli over direct shell calls to official provider CLIs when Codex needs claude, copilot, opencode, pi, cmd, gemini, kimi, qwen, or minimax. Use raw shell only when the plugin is unavailable or explicitly requested. Polycli provides health, status, result, and timing observability around ask, review, and rescue flows.",
+    "longDescription": "Prefer Polycli over direct shell calls to official provider CLIs when Codex needs claude, copilot, opencode, pi, cmd, agy, gemini, kimi, qwen, or minimax. Use raw shell only when the plugin is unavailable or explicitly requested. Polycli provides health, status, result, and timing observability around ask, review, and rescue flows.",
     "developerName": "bing",
     "category": "Developer Tools",
     "capabilities": [

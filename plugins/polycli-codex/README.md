@@ -1,6 +1,6 @@
 # polycli Codex Plugin
 
-Codex host adapter for the shared `polycli` companion. Prefer the installed Codex skill over direct official CLI shell calls when using `claude`, `copilot`, `opencode`, `pi`, `cmd`, `gemini`, `kimi`, `qwen`, or `minimax`; fall back to raw provider CLIs only when the plugin is unavailable or the user explicitly asks for raw shell.
+Codex host adapter for the shared `polycli` companion. Prefer the installed Codex skill over direct official CLI shell calls when using `claude`, `copilot`, `opencode`, `pi`, `cmd`, `agy`, `gemini`, `kimi`, `qwen`, or `minimax`; fall back to raw provider CLIs only when the plugin is unavailable or the user explicitly asks for raw shell.
 
 ## Install
 

@@ -6,6 +6,16 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-20 — Claude+Codex — add agy (Google Antigravity CLI 1.0.0) provider
+
+- Added `agy` as the tenth polycli-managed provider CLI. Adapter mirrors the text-only `cmd` pattern with claude-style session flags (`--continue`/`--conversation <id>`/`--add-dir`/`--sandbox`) and YOLO via `--dangerously-skip-permissions`. agy emits plain stdout (no JSON envelope, no session id, no model field); the adapter honors the four-state timing semantics by returning `null` model and the resolver's `null` sessionId rather than fabricating values.
+- TIMING_SUPPORT: `ttft/gen/tail` true (line-buffered stdout), `tool` false, `runtimePersistence: "session"`. The session id is always missing, so `buildTimingMeta` will correctly stamp `sessionIdMissing: true` on every agy run — honest, not folded into `unsupported`.
+- `/review --provider agy` is rejected upfront via a new `REVIEW_UNSUPPORTED_PROVIDERS` set and `assertReviewProviderSupported` in `plugins/polycli/scripts/lib/review.mjs`. Rationale: agy has no plan-mode / approval-mode flag, so the review hard constraint cannot enforce read-only execution. Drift watcher (`scripts/check-review-cli-drift.mjs`) carries the agy row with `expect: []` so future plan-mode additions are picked up.
+- ask/rescue auto-YOLO for agy (matches the `project_yolo_standard.md` rule), provider listings in companion dispatcher / Claude commands / Codex+Copilot skills / README SVG header updated from "nine providers" to "ten providers".
+- Verification: `node --test packages/polycli-runtime/test/agy.test.js` exit 0 (13/13); `npm test` exit 0 (392/392, up from 374); `npm run check:provider-paths` exit 0 (8 ok + agy ok + pi skipped on local timeout). No release manifest bump in this slice; release version stays at v0.6.15 until a separate publish slice.
+
+---
+
 ## 2026-05-10 — Codex — v0.6.15 observability and provider failure classification
 
 - Fixed the observability split found after several days of real polycli use: `POLYCLI_STATE_ROOT` now overrides `CLAUDE_PLUGIN_DATA/state`, `timing --all` / `--history all` can read full history, and `timing --json` reports store metadata (`stateRoot`, `stateRootSource`, workspace slug/root, history limit, record count).

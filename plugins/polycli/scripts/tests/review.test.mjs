@@ -153,6 +153,16 @@ test("buildReviewRuntimeOptions applies cmd plan-mode hard constraints", () => {
   assert.deepEqual(options.extraArgs, ["--permission-mode", "plan"]);
 });
 
+test("buildReviewRuntimeOptions rejects agy because it has no plan mode", () => {
+  assert.throws(
+    () => buildReviewRuntimeOptions({
+      provider: "agy",
+      cwd: process.cwd(),
+    }),
+    /agy does not expose a non-interactive plan mode; \/review cannot enforce read-only constraints\./
+  );
+});
+
 test("buildReviewRuntimeOptions leaves minimax on mmx text chat defaults", () => {
   const options = buildReviewRuntimeOptions({
     provider: "minimax",

@@ -62,6 +62,13 @@ const CHECKS = [
     notes: "Review hard constraint uses --permission-mode plan.",
   },
   {
+    provider: "agy",
+    bin: process.env.AGY_CLI_BIN || "agy",
+    helpArgs: ["--help"],
+    expect: [],
+    notes: "agy has no plan-mode flag; /review is unsupported for this provider.",
+  },
+  {
     provider: "minimax",
     bin: process.env.MMX_CLI_BIN || process.env.MINIMAX_CLI_BIN || "mmx",
     probes: [

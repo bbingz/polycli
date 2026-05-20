@@ -35,3 +35,13 @@ test("appendPreview dedupes repeated blocks from an in-memory tail cache", () =>
   assert.equal(readCount, 0);
   assert.equal(fs.readFileSync(logFile, "utf8"), "same line\n");
 });
+
+test("appendPreview records agy text delta events", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-preview-"));
+  const logFile = path.join(root, "preview.log");
+
+  resetPreviewTailCache();
+  appendPreview(logFile, "agy", { type: "text_delta", delta: "plain text" });
+
+  assert.equal(fs.readFileSync(logFile, "utf8"), "plain text\n");
+});

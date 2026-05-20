@@ -9,6 +9,7 @@ import { extractMiniMaxEventText } from "./minimax.js";
 import { extractOpenCodeText } from "./opencode.js";
 import { extractPiText } from "./pi.js";
 import { extractCmdText } from "./cmd.js";
+import { extractAgyText } from "./agy.js";
 
 const TIMING_OUTCOMES = new Set(["success", "failure", "timeout", "terminated", "cancelled"]);
 
@@ -112,6 +113,7 @@ export function extractProviderEventText(provider, event) {
   if (provider === "opencode") return extractOpenCodeText(event);
   if (provider === "pi") return extractPiText(event);
   if (provider === "cmd") return extractCmdText(event);
+  if (provider === "agy") return extractAgyText(event);
   return "";
 }
 
