@@ -29,17 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.15
+## Latest release: v0.6.16
 
-The latest patch focuses on operator observability:
+The latest patch adds Google Antigravity CLI (`agy`) as the tenth polycli-managed provider:
 
-- `POLYCLI_STATE_ROOT` gives every host a shared, explicit state root.
-- `timing --all --json` returns full history plus state/workspace metadata.
-- timing records now include run outcome diagnostics (`outcome`, `exitCode`, `terminationReason`, `responseMatched`, `errorCode`).
-- `debug runs` / `debug explain` can summarize failed attempts by class, including `qwen_max_session_turns`, `binary_missing`, `no_visible_text`, timeouts, terminations, cancellations, and auth-like failures.
-- kimi resume-footer exits with visible assistant text no longer count as failed runs.
+- New runtime adapter at `packages/polycli-runtime/src/agy.js` mirrors the text-only `cmd` pattern with claude-style session flags (`-c` / `--conversation <id>` / `--add-dir` / `--sandbox`) and YOLO via `--dangerously-skip-permissions`.
+- `TIMING_SUPPORT.agy = { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" }`; agy never exposes a session id or model, so the adapter returns `null` for both rather than fabricating values — honest four-state semantics preserved.
+- `/review --provider agy` is refused upfront via a new `REVIEW_UNSUPPORTED_PROVIDERS` gate because agy has no plan-mode flag and review must enforce read-only execution.
+- ask / rescue auto-YOLO for agy (per-provider YOLO default, same as the rest).
 
-See [`docs/release-notes-v0.6.15.md`](./docs/release-notes-v0.6.15.md).
+See [`docs/release-notes-v0.6.16.md`](./docs/release-notes-v0.6.16.md).
 
 ## Why polycli?
 

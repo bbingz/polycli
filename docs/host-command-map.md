@@ -61,11 +61,11 @@ The same four operations, across all four host adapters plus the Terminal CLI.
 
 | host          | invocation                                                                 |
 |---------------|----------------------------------------------------------------------------|
-| Claude Code   | `/polycli:ask --provider agy Reply with only: OK`                         |
-| Codex         | `Choose Polycli with @, then ask it to run: ask --provider agy Reply with only: OK` |
-| Copilot       | `polycli ask --provider agy "Reply with only: OK"`                        |
-| OpenCode      | `polycli_run(["ask", "--provider", "agy", "Reply with only: OK"])`        |
-| Terminal CLI  | `polycli ask --provider agy "Reply with only: OK"`                        |
+| Claude Code   | `/polycli:ask --provider qwen Reply with only: OK`                         |
+| Codex         | `Choose Polycli with @, then ask it to run: ask --provider qwen Reply with only: OK` |
+| Copilot       | `polycli ask --provider qwen "Reply with only: OK"`                        |
+| OpenCode      | `polycli_run(["ask", "--provider", "qwen", "Reply with only: OK"])`        |
+| Terminal CLI  | `polycli ask --provider qwen "Reply with only: OK"`                        |
 
 ### Launch a background review and poll
 
