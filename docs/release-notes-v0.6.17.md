@@ -21,7 +21,7 @@ No runtime provider behavior, timing schema, session persistence, or host comman
 ## Release artifacts
 
 - GitHub release `v0.6.17`
-- npm `@bbingz/polycli-opencode@0.6.17` pending npm authentication
-- npm `@bbingz/polycli@0.6.17` pending npm authentication
+- npm `@bbingz/polycli-opencode@0.6.17`
+- npm `@bbingz/polycli@0.6.17`
 
 Utility packages stay on the independent v1.x cadence (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`). No schema or utility changes in this slice.

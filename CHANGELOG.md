@@ -10,7 +10,7 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 - Fixed the Codex host manifest noise found in `codex-tui.log`: `plugins/polycli-codex/.codex-plugin/plugin.json` had 4 `interface.defaultPrompt` entries, while Codex currently supports a maximum of 3. The manifest now keeps health, ask, review, and timing coverage in 3 supported prompt entries.
 - Hardened `scripts/validate-codex-adapter.mjs` so release validation rejects more than 3 Codex default prompts and rejects any default prompt entry over 128 characters. Added focused regression tests for both limits.
-- Verification before release prep: `node --test scripts/tests/validate-codex-adapter.test.mjs` exit 0 (4/4); `node scripts/validate-codex-adapter.mjs` exit 0; `node --test scripts/tests/*.test.mjs` exit 0 (45/45). Release verification: `npm run release:check` exit 0 (394/394 tests; bundles 5; fixtures 16; manifests 0.6.17; host-map 11x4+terminal; codex-adapter 5; claude plugin validate ×2; npm dry-runs/pack checks passed). npm publish is pending npm authentication (`npm whoami` returned E401).
+- Verification before release prep: `node --test scripts/tests/validate-codex-adapter.test.mjs` exit 0 (4/4); `node scripts/validate-codex-adapter.mjs` exit 0; `node --test scripts/tests/*.test.mjs` exit 0 (45/45). Release verification: `npm run release:check` exit 0 (394/394 tests; bundles 5; fixtures 16; manifests 0.6.17; host-map 11x4+terminal; codex-adapter 5; claude plugin validate ×2; npm dry-runs/pack checks passed). Post-publish: tag `v0.6.17`, GitHub release (not draft, not prerelease), and both npm packages observable at 0.6.17 (`@bbingz/polycli-opencode@0.6.17` at 2026-05-25T12:01:21Z, `@bbingz/polycli@0.6.17` at 2026-05-25T12:01:32Z).
 
 ---
 
