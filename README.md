@@ -29,16 +29,15 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.16
+## Latest release: v0.6.17
 
-The latest patch adds Google Antigravity CLI (`agy`) as the tenth polycli-managed provider:
+The latest patch tightens the Codex host manifest so Codex no longer rejects the Polycli default prompts while loading plugin metadata:
 
-- New runtime adapter at `packages/polycli-runtime/src/agy.js` mirrors the text-only `cmd` pattern with claude-style session flags (`-c` / `--conversation <id>` / `--add-dir` / `--sandbox`) and YOLO via `--dangerously-skip-permissions`.
-- `TIMING_SUPPORT.agy = { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" }`; agy never exposes a session id or model, so the adapter returns `null` for both rather than fabricating values — honest four-state semantics preserved.
-- `/review --provider agy` is refused upfront via a new `REVIEW_UNSUPPORTED_PROVIDERS` gate because agy has no plan-mode flag and review must enforce read-only execution.
-- ask / rescue auto-YOLO for agy (per-provider YOLO default, same as the rest).
+- `plugins/polycli-codex/.codex-plugin/plugin.json` now keeps `interface.defaultPrompt` within Codex's supported 3-prompt limit.
+- Codex adapter validation now rejects both too many default prompts and prompt entries longer than 128 characters.
+- No runtime, provider, timing, or session semantics changed.
 
-See [`docs/release-notes-v0.6.16.md`](./docs/release-notes-v0.6.16.md).
+See [`docs/release-notes-v0.6.17.md`](./docs/release-notes-v0.6.17.md).
 
 ## Why polycli?
 

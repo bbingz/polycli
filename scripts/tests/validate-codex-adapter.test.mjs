@@ -29,8 +29,7 @@ const goodManifest = JSON.stringify({
     defaultPrompt: [
       "Choose Polycli with @ and ask it to run health to verify providers",
       "Choose Polycli with @ and ask it to run ask --provider qwen Reply with only OK",
-      "Choose Polycli with @ and ask it to run review --provider qwen --scope staged",
-      "Choose Polycli with @ and ask it to run timing --provider qwen --json",
+      "Choose Polycli with @ and ask it to run review --provider qwen --scope staged, then timing --provider qwen --json",
     ],
   },
 });
@@ -93,7 +92,7 @@ test("validateCodexAdapter accepts discoverable provider routing and observabili
   });
 });
 
-test("validateCodexAdapter rejects weak Codex guidance that lets raw CLIs stay the default", () => {
+test("validateCodexAdapter rejects more default prompts than Codex loads", () => {
   const root = makeFixtureRoot();
   writeFixture(root, {
     "plugins/polycli-codex/.codex-plugin/plugin.json": JSON.stringify({
@@ -105,6 +104,59 @@ test("validateCodexAdapter rejects weak Codex guidance that lets raw CLIs stay t
           "Choose Polycli with @ and ask it to run ask --provider qwen Reply with only OK",
           "Choose Polycli with @ and ask it to run review --provider qwen --scope staged",
           "Choose Polycli with @ and ask it to run timing --provider qwen --json",
+        ],
+      },
+    }),
+    "plugins/polycli-codex/skills/polycli/SKILL.md": goodSkill,
+    "plugins/polycli-codex/README.md": goodReadme,
+    "README.md": goodReadme,
+    "docs/host-command-map.md": goodReadme,
+  });
+
+  assert.throws(
+    () => validateCodexAdapter({ root }),
+    /Codex defaultPrompt must include at most 3 examples/
+  );
+});
+
+test("validateCodexAdapter rejects default prompts too long for Codex", () => {
+  const root = makeFixtureRoot();
+  writeFixture(root, {
+    "plugins/polycli-codex/.codex-plugin/plugin.json": JSON.stringify({
+      interface: {
+        longDescription:
+          "Prefer Polycli over direct shell calls to official provider CLIs when Codex needs claude, copilot, opencode, pi, cmd, agy, gemini, kimi, qwen, or minimax. Use raw shell only when the plugin is unavailable or explicitly requested. It provides health, status, result, and timing observability.",
+        defaultPrompt: [
+          "Choose Polycli with @ and ask it to run health to verify providers",
+          "Choose Polycli with @ and ask it to run ask --provider qwen Reply with only OK",
+          "Choose Polycli with @ and ask it to run review --provider qwen --scope staged, then timing --provider qwen --json " +
+            "x".repeat(32),
+        ],
+      },
+    }),
+    "plugins/polycli-codex/skills/polycli/SKILL.md": goodSkill,
+    "plugins/polycli-codex/README.md": goodReadme,
+    "README.md": goodReadme,
+    "docs/host-command-map.md": goodReadme,
+  });
+
+  assert.throws(
+    () => validateCodexAdapter({ root }),
+    /Codex defaultPrompt entries must be at most 128 characters/
+  );
+});
+
+test("validateCodexAdapter rejects weak Codex guidance that lets raw CLIs stay the default", () => {
+  const root = makeFixtureRoot();
+  writeFixture(root, {
+    "plugins/polycli-codex/.codex-plugin/plugin.json": JSON.stringify({
+      interface: {
+        longDescription:
+          "Prefer Polycli over direct shell calls to official provider CLIs when Codex needs claude, copilot, opencode, pi, cmd, agy, gemini, kimi, qwen, or minimax. Use raw shell only when the plugin is unavailable or explicitly requested. It provides health, status, result, and timing observability.",
+        defaultPrompt: [
+          "Choose Polycli with @ and ask it to run health to verify providers",
+          "Choose Polycli with @ and ask it to run ask --provider qwen Reply with only OK",
+          "Choose Polycli with @ and ask it to run review --provider qwen --scope staged, then timing --provider qwen --json",
         ],
       },
     }),

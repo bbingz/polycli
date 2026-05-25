@@ -82,6 +82,11 @@ function assertDefaultPrompts(manifest) {
   const prompts = manifest.interface?.defaultPrompt;
   assert.equal(Array.isArray(prompts), true, "Codex defaultPrompt must be an array");
   assert.ok(prompts.length >= 3, "Codex defaultPrompt must include health, ask, and timing examples");
+  assert.ok(prompts.length <= 3, "Codex defaultPrompt must include at most 3 examples");
+  assert.ok(
+    prompts.every((prompt) => prompt.length <= 128),
+    "Codex defaultPrompt entries must be at most 128 characters"
+  );
   assertNoCodexSlashExamples(prompts.join("\n"), "Codex defaultPrompt");
   assertCodexSkillExamples(prompts.join("\n"), "Codex defaultPrompt");
   assert.doesNotMatch(prompts[0], /\bsetup\b/, "Codex defaultPrompt must not make setup the first-run default");

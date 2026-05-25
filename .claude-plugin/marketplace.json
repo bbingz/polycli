@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Polycli host adapters for Claude Code and related agent CLIs",
-    "version": "0.6.16"
+    "version": "0.6.17"
   },
   "plugins": [
     {
       "name": "polycli",
       "description": "Claude Code adapter for the shared polycli companion",
-      "version": "0.6.16",
+      "version": "0.6.17",
       "source": "./plugins/polycli"
     }
   ]
