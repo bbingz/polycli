@@ -1,6 +1,6 @@
 ---
 description: Run an adversarial provider-backed review on the current diff through polycli
-argument-hint: '--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--max-diff-bytes <n>] [focus ...]'
+argument-hint: '--provider <claude|copilot|opencode|pi|cmd|gemini|kimi|qwen|minimax> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--max-diff-bytes <n>] [focus ...]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*)
 ---

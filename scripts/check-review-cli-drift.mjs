@@ -66,7 +66,12 @@ const CHECKS = [
     bin: process.env.AGY_CLI_BIN || "agy",
     helpArgs: ["--help"],
     expect: [],
-    notes: "agy has no plan-mode flag; /review is unsupported for this provider.",
+    // agy is review-unsupported because it has NO plan/approval flag. An empty
+    // `expect` can only catch flags disappearing, so we also `forbid` the
+    // plan-mode flags other providers use: if any appears, agy may now support
+    // a read-only mode and /review support should be re-evaluated.
+    forbid: ["--approval-mode", "--permission-mode", "--policy", "--plan", "--agent"],
+    notes: "agy has no plan-mode flag; /review is unsupported. If a forbidden plan/approval flag appears, re-evaluate enabling /review for agy.",
   },
   {
     provider: "minimax",
@@ -108,33 +113,40 @@ function probe({ bin, helpArgs }) {
 }
 
 function check(entry) {
-  const { provider, expect, notes } = entry;
+  const { provider, expect, forbid = [], notes } = entry;
   const probes = entry.probes ?? [{ helpArgs: entry.helpArgs, expect }];
   const missing = [];
+  let lastText = "";
   for (const probeEntry of probes) {
     const result = probe({ ...entry, helpArgs: probeEntry.helpArgs });
     if (result.skipped) {
       return { provider, status: "skipped", reason: result.reason, notes };
     }
+    lastText = result.text;
     missing.push(...probeEntry.expect.filter((flag) => !result.text.includes(flag)));
   }
-  if (missing.length === 0) {
+  const appeared = forbid.filter((flag) => lastText.includes(flag));
+  if (missing.length === 0 && appeared.length === 0) {
     return { provider, status: "ok" };
   }
-  return { provider, status: "drift", missing, notes };
+  return { provider, status: "drift", missing, appeared, notes };
 }
 
-function formatRow({ provider, status, reason, missing, notes }) {
+function formatRow({ provider, status, reason, missing, appeared, notes }) {
   switch (status) {
     case "ok":
       return `[ ok     ] ${provider}`;
     case "skipped":
       return `[ skip   ] ${provider} — ${reason}`;
-    case "drift":
+    case "drift": {
+      const parts = [];
+      if (missing?.length) parts.push(`missing: ${missing.join(", ")}`);
+      if (appeared?.length) parts.push(`unexpected: ${appeared.join(", ")}`);
       return [
-        `[ DRIFT  ] ${provider} — missing: ${missing.join(", ")}`,
+        `[ DRIFT  ] ${provider} — ${parts.join("; ")}`,
         `           ${notes}`,
       ].join("\n");
+    }
     default:
       return `[ ??     ] ${provider}`;
   }

@@ -6,6 +6,19 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-27 — Claude — v0.6.18 agy provider review fixes
+
+- Ran 5 review rounds on the agy provider (`a836fa1..HEAD`). Fixed the confirmed and clearly-actionable findings:
+  - **No fabricated session id (headline):** `agy.js` no longer feeds `result.stdout` to `resolveSessionId`. agy stdout is pure assistant prose, so the UUID scan would capture any UUID in an answer (e.g. "give me a uuid") as a fake `sessionId`, violating the spec ("sessionId always null / do not fabricate") and suppressing `buildTimingMeta`'s `sessionIdMissing:true`. `sessionId` is now hard-`null` on both sync and streaming paths; dropped the unused `resolveSessionId` import.
+  - **Hardened auth probe:** `buildAgyAuthStatus` now inspects combined `error`+`response` text (catches a logged-out agy that prints sign-in guidance to stdout and exits 0 → `loggedIn:false`) and treats a clean `status:0` with no auth signal as authenticated even when the probe produced no visible text (fixes the empty-output false-negative where the `hasVisibleText` gate leaked into auth classification). Transient→inconclusive-authenticated behavior preserved.
+  - **Review hints corrected:** removed `agy` from the `--provider` argument-hint in `commands/review.md` and `commands/adversarial-review.md`; the runtime rejects agy review (host-command-map already marked it unsupported), so the hints no longer advertise an unsupported choice.
+  - **Drift watcher actually watches:** `check-review-cli-drift.mjs` agy row had `expect:[]`, a no-op that could only detect *expected* flags disappearing — never a *new* plan flag appearing, which is the row's whole purpose. Added a `forbid` list (`--approval-mode`/`--permission-mode`/`--policy`/`--plan`/`--agent`); the checker now reports DRIFT if any appear so /review support can be re-evaluated.
+  - **Tests:** added 5 agy regression cases (UUID-in-output→null sessionId; empty-output→no_visible_text; authed-empty→loggedIn; logged-out-to-stdout-exit0→loggedOut; streaming non-zero→auth failure).
+- Verification: `node --test packages/polycli-runtime/test/agy.test.js` exit 0 (18/18); `npm test` exit 0 (399/399, up from 392); `node scripts/check-review-cli-drift.mjs` runs clean (`[ ok ] agy`); all 5 companion bundles rebuilt and byte-identical (validatePluginBundles green).
+- Deferred (not fixed, with rationale): signal-kill `status:null→0` misclassification is a repo-wide `runCommand` pattern (all providers) — fix cross-cutting, not agy-only; stdout banner/notice pollution of response+ttft and the internal-`--print-timeout`-beats-outer-timeout classification both depend on agy's actual print-mode output shape, which upstream has not been verified; response-vs-events blank-line divergence only affects preview events (compacted away). The v0.6.16 release notes' `--add-dir`/`--sandbox` mention describes runtime params with no companion CLI surface (historical, left as-is). `validate-codex-adapter` prompts≤3/≤128 is an intentional Codex limit, not a bug.
+
+---
+
 ## 2026-05-25 — Codex — v0.6.17 Codex manifest prompt-limit patch
 
 - Fixed the Codex host manifest noise found in `codex-tui.log`: `plugins/polycli-codex/.codex-plugin/plugin.json` had 4 `interface.defaultPrompt` entries, while Codex currently supports a maximum of 3. The manifest now keeps health, ask, review, and timing coverage in 3 supported prompt entries.

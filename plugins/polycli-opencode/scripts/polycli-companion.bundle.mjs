@@ -3267,21 +3267,18 @@ function getAgyAvailability(cwd, { bin = AGY_BIN } = {}) {
   return binaryAvailable(bin, ["--help"], { cwd });
 }
 function buildAgyAuthStatus(result) {
-  if (result.ok) {
-    return {
-      loggedIn: true,
-      detail: "authenticated",
-      model: DEFAULT_AGY_MODEL
-    };
+  const probeText = `${String(result.error ?? "")}
+${String(result.response ?? "")}`.trim();
+  if (AGY_EXPLICIT_AUTH_ERROR_RE.test(probeText)) {
+    return { loggedIn: false, detail: probeText };
   }
-  const detail = String(result.error ?? "").trim() || "agy auth probe failed";
-  if (AGY_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
-    return { loggedIn: false, detail };
+  if (TRANSIENT_PROBE_ERROR_PATTERNS7.some((pattern) => pattern.test(probeText))) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${probeText}`, model: DEFAULT_AGY_MODEL };
   }
-  if (TRANSIENT_PROBE_ERROR_PATTERNS7.some((pattern) => pattern.test(detail))) {
-    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: DEFAULT_AGY_MODEL };
+  if (result.ok || result.status === 0) {
+    return { loggedIn: true, detail: "authenticated", model: DEFAULT_AGY_MODEL };
   }
-  return { loggedIn: false, detail };
+  return { loggedIn: false, detail: probeText || "agy auth probe failed" };
 }
 function getAgyAuthStatus(cwd, { promptRunner = runAgyPrompt } = {}) {
   const result = promptRunner({
@@ -3329,11 +3326,6 @@ function runAgyPrompt({
     };
   }
   const parsed = parseAgyTextResult(result.stdout);
-  const resolvedSession = resolveSessionId({
-    stdout: result.stdout,
-    stderr: result.stderr,
-    priority: ["stdout", "stderr", "file"]
-  });
   const filteredStderr = stripAgyBenignStderr(result.stderr);
   const hasVisibleText = Boolean(parsed.response.trim());
   const error = result.status === 0 ? hasVisibleText ? null : "agy produced no visible text" : filteredStderr.trim() || formatProviderExitError("agy", result.status);
@@ -3341,7 +3333,9 @@ function runAgyPrompt({
     ok: result.status === 0 && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: resolvedSession.sessionId,
+    // agy stdout is pure assistant text and carries no session id; never scan
+    // it for a UUID, which would fabricate one (spec: sessionId always null).
+    sessionId: null,
     model: model ?? defaultModel ?? DEFAULT_AGY_MODEL,
     error,
     errorCode: classifyProviderFailure(error, { provider: "agy" }),
@@ -3392,18 +3386,14 @@ function runAgyPromptStreaming({
     }
   }).then((result) => {
     const parsed = parseAgyTextResult(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"]
-    });
     const filteredStderr = stripAgyBenignStderr(result.stderr);
     const hasVisibleText = Boolean(parsed.response.trim());
     const error = result.ok ? hasVisibleText ? null : "agy produced no visible text" : filteredStderr.trim() || result.error;
     return {
       ...result,
       ...parsed,
-      sessionId: resolvedSession.sessionId,
+      // See sync path: agy carries no session id; always null, never scraped.
+      sessionId: null,
       model: model ?? defaultModel ?? DEFAULT_AGY_MODEL,
       ok: result.ok && hasVisibleText,
       error,

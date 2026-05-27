@@ -29,15 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.17
+## Latest release: v0.6.18
 
-The latest patch tightens the Codex host manifest so Codex no longer rejects the Polycli default prompts while loading plugin metadata:
+The latest patch fixes correctness issues in the `agy` provider found during a multi-round review:
 
-- `plugins/polycli-codex/.codex-plugin/plugin.json` now keeps `interface.defaultPrompt` within Codex's supported 3-prompt limit.
-- Codex adapter validation now rejects both too many default prompts and prompt entries longer than 128 characters.
-- No runtime, provider, timing, or session semantics changed.
+- `agy` no longer fabricates a session id by scanning its plain-text stdout for a UUID; `sessionId` is now always `null`, keeping the four-state timing schema honest.
+- The `agy` auth probe is hardened: it inspects stdout as well as stderr (catching a logged-out CLI that prints sign-in guidance and still exits 0) and no longer misreports an authenticated-but-empty probe as logged out.
+- `agy` removed from the `/review` and `/adversarial-review` provider hints (it is unsupported there), and the review-flow drift watcher now actively flags a future agy plan-mode flag.
+- No other provider, host command grammar, or timing schema changed.
 
-See [`docs/release-notes-v0.6.17.md`](./docs/release-notes-v0.6.17.md).
+See [`docs/release-notes-v0.6.18.md`](./docs/release-notes-v0.6.18.md).
 
 ## Why polycli?
 

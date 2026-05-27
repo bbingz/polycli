@@ -177,6 +177,86 @@ process.stdout.write("hello world\\n");
   );
 });
 
+test("runAgyPrompt never fabricates a session id from a UUID in the answer text", () => {
+  withFakeAgyBin(
+    `#!/usr/bin/env node
+process.stdout.write("Here is a sample id 123e4567-e89b-42d3-a456-426614174000 for you\\n");
+`,
+    ({ root, bin }) => {
+      const result = runAgyPrompt({ prompt: "give me a uuid", cwd: root, bin });
+
+      assert.equal(result.ok, true);
+      assert.match(result.response, /123e4567-e89b-42d3-a456-426614174000/);
+      assert.equal(result.sessionId, null);
+    }
+  );
+});
+
+test("runAgyPrompt reports no-visible-text on a clean exit with empty stdout", () => {
+  withFakeAgyBin(
+    `#!/usr/bin/env node
+process.exit(0);
+`,
+    ({ root, bin }) => {
+      const result = runAgyPrompt({ prompt: "ping", cwd: root, bin });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "agy produced no visible text");
+      assert.equal(result.errorCode, "no_visible_text");
+    }
+  );
+});
+
+test("getAgyAuthStatus reports authenticated when an authed agy returns empty output", () => {
+  const auth = getAgyAuthStatus(process.cwd(), {
+    promptRunner() {
+      // exit 0 with no visible text -> runAgyPrompt sets ok:false, status:0
+      return { ok: false, status: 0, response: "", error: "agy produced no visible text" };
+    },
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.equal(auth.detail, "authenticated");
+});
+
+test("getAgyAuthStatus detects a logged-out agy that prints sign-in guidance and exits 0", () => {
+  const auth = getAgyAuthStatus(process.cwd(), {
+    promptRunner() {
+      return { ok: true, status: 0, response: "Please sign in at https://example.invalid to continue" };
+    },
+  });
+
+  assert.equal(auth.loggedIn, false);
+  assert.match(auth.detail, /sign in/i);
+});
+
+test("runAgyPromptStreaming reports failure and classifies auth errors on non-zero exit", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+  child.unref = () => {};
+
+  const result = await runAgyPromptStreaming({
+    prompt: "ping",
+    cwd: process.cwd(),
+    timeout: 5_000,
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stderr.emit("data", "login required\n");
+        child.emit("close", 1, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "login required");
+  assert.equal(result.errorCode, "auth");
+  assert.equal(result.sessionId, null);
+});
+
 test("runAgyPrompt reports stderr text and classifies auth failures on non-zero exit", () => {
   withFakeAgyBin(
     `#!/usr/bin/env node
