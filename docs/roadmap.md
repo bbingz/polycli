@@ -94,6 +94,31 @@ Survey verdict (durable; do not re-survey unless these benchmarks change):
 
 Memory: `project_provider_capability_matrix_deferred.md`; updated by the 2026-05-07 provider-path implementation.
 
+### Q8 — Provider-drift maintenance hardening
+
+Source: 2026-05-29 strategy recon (memory `project_competitive_landscape_and_moat`, workflow `wmyci560m`). The maintenance burden's root cause is ecosystem heterogeneity (10 targets across 4 languages + 3 architectural shapes, no common contract to wrap) — this validates Path B rather than refuting it. The actionable debt is three internal weaknesses, none requiring a framework:
+
+- a provider's option vocabulary is spelled in 3-5 unsynchronized sites (`src/<provider>.js`, `lib/prompt-runtime.mjs`, `lib/review.mjs` constraints + read-only key map, `scripts/check-review-cli-drift.mjs`) with no test asserting they agree;
+- the only drift detector (`check-review-cli-drift.mjs`) is out of CI and covers flag-presence only — not output/JSON shape, auth-error wording, or model-field location;
+- fixtures are version-pinned static snapshots, so an upstream output-format change keeps CI green (false confidence) until a human re-captures.
+
+Items:
+
+- **Q8a — fixture-staleness warning** (landed 2026-05-29): opt-in check that spawns each installed CLI `--version` and compares to the fixture `meta.json` `version`, emitting WARN on mismatch (skip if CLI absent, mirroring the drift script). Read-only, short-lived, no daemon.
+- **Q8b — option-vocabulary single source** (landed 2026-05-29): a single frozen `REVIEW_FLAG_EXPECTATIONS` map in `packages/polycli-runtime/src/review-flags.js` is the sole declaration of each provider's drift `expectFlags`/`forbidFlags`/`probes`, its read-only option key/value, and its exact `extraArgTokens`. `scripts/check-review-cli-drift.mjs` derives its CHECKS from the map; `lib/review.mjs` sources the read-only keys from it; a consistency test asserts `extraArgTokens` EXACTLY equals the `--`flags `REVIEW_HARD_CONSTRAINTS` emits (catches a token added OR removed). Data co-location, NOT a `BaseProvider` — the flat dispatch table is preserved (non-goal #1 intact). Single-module home (not per-provider const); revisit if it grows.
+- **Q8c — drift into the release gate + local auth-anchor sanity check** (landed 2026-05-29): `check:review-drift` is wired into `release:check` (self-skips when a CLI is absent; blocks a release only on genuine flag drift). The drift script also reads the `GEMINI_EXPLICIT_AUTH_ERROR_RE` / `KIMI_EXPLICIT_AUTH_ERROR_RE` source and confirms the auth anchor phrase is still present — a LOCAL guard against a polycli-side refactor silently dropping it. It does NOT detect upstream CLI wording changes; a real upstream auth-wording probe stays an open follow-up (no safe way to force an unauthenticated CLI response in the check).
+- **Q8d — migrate churn-heavy providers off stdout scraping** (deferred, medium-term): move qwen/gemini (worst cadence) toward upstream JSON event streams / SDKs (Claude Agent SDK + `--bare`, Qwen Python SDK, Kimi `kimi-agent-sdk`, opencode OpenAPI). Multi-release effort; revisit per-provider. Note the upcoming Claude `--bare`-becomes-`-p`-default change.
+
+### Q9 — Upstream session/history pollution control
+
+Source: same recon. polycli does zero isolation/tagging/cleanup of the session/history that upstream CLIs write under `$HOME` (`spawn.js` passes the parent env + real cwd verbatim; the `SessionEnd` hook only prunes polycli's own job state). Adapters also *depend* on those files for `--resume`/`--continue`, and suppression knobs are asymmetric across providers (clean off-switch only for codex `--ephemeral` and gemini `general.sessionRetention`). The primary remedy is **record-and-purge**, not prevention, because a naive env override that prevents writes also breaks auth and resume.
+
+Items:
+
+- **Q9a — record upstream session path/id in the run ledger** (landed 2026-05-29): persist the upstream session path/id (already captured by each adapter's `resolveSessionId`) on the run-ledger event. Zero runtime-behavior change; makes runs auditable and purgeable at near-zero risk.
+- **Q9b — `polycli sessions` / `polycli purge` command** (landed 2026-05-29): a manual, on-demand command that lists/deletes ONLY upstream session artifacts whose path appears in polycli's run ledger. No daemon; honest-default — never auto-deletes, requires an explicit purge invocation.
+- **Q9c — opt-in per-run session isolation** (deferred, needs design): scoped `HOME`/`XDG_CONFIG_HOME`/config-dir env at the `spawn.js` boundary, gated on `runtimePersistence==='session'`, default OFF. DEFERRED because a naive `HOME` override also hides credentials (breaks auth) and prior sessions (breaks `--resume`); needs a per-provider design that relocates only session state while preserving auth. `codex --ephemeral` exists but codex lives in the separate `polycli-codex` plugin.
+
 ---
 
 ## Explicit non-goals

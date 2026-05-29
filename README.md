@@ -29,16 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.18
+## Latest release: v0.6.19
 
-The latest patch fixes correctness issues in the `agy` provider found during a multi-round review:
+The latest patch adds upstream session-pollution control and provider-drift maintenance hardening (spec-driven, gated by two Codex review rounds):
 
-- `agy` no longer fabricates a session id by scanning its plain-text stdout for a UUID; `sessionId` is now always `null`, keeping the four-state timing schema honest.
-- The `agy` auth probe is hardened: it inspects stdout as well as stderr (catching a logged-out CLI that prints sign-in guidance and still exits 0) and no longer misreports an authenticated-but-empty probe as logged out.
-- `agy` removed from the `/review` and `/adversarial-review` provider hints (it is unsupported there), and the review-flow drift watcher now actively flags a future agy plan-mode flag.
-- No other provider, host command grammar, or timing schema changed.
+- New `polycli sessions [list | purge --confirm]` command cleans up the session/history files upstream CLIs leave under `$HOME`. Dry-run by default; deletion is driven only by ledger-recorded, re-validated realpaths — never a path guess or glob.
+- Run-ledger events now record the upstream `sessionId` + a verified `sessionArtifactPath`, so polycli-created sessions are auditable and purgeable.
+- `npm run check:fixture-freshness` flags fixtures pinned to a stale CLI version; `REVIEW_FLAG_EXPECTATIONS` is now the single source of review-flag truth (consistency-tested); `check:review-drift` is wired into the release gate.
+- No provider behavior, host command grammar, or timing schema changed.
 
-See [`docs/release-notes-v0.6.18.md`](./docs/release-notes-v0.6.18.md).
+See [`docs/release-notes-v0.6.19.md`](./docs/release-notes-v0.6.19.md).
 
 ## Why polycli?
 

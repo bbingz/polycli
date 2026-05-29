@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { runCommand } from "@bbingz/polycli-utils/process";
+import { REVIEW_FLAG_EXPECTATIONS } from "@bbingz/polycli-runtime";
 
 const DEFAULT_MAX_DIFF_BYTES = null;
 const REVIEW_SCOPES = new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
@@ -71,28 +72,21 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   if (extraArgs.length > 0) {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
-  if (provider === "gemini" && runtimeOptions.approvalMode && runtimeOptions.approvalMode !== "plan") {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-  }
-  if (provider === "opencode" && runtimeOptions.skipPermissions !== undefined && runtimeOptions.skipPermissions !== false) {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-  }
-  if (provider === "qwen" && runtimeOptions.approvalMode && runtimeOptions.approvalMode !== "plan") {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-  }
-  if (provider === "claude" && runtimeOptions.permissionMode && runtimeOptions.permissionMode !== "plan") {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-  }
-  if (provider === "copilot") {
-    for (const key of ["allowAllTools", "allowAllPaths", "allowAllUrls"]) {
-      if (runtimeOptions[key] !== undefined && runtimeOptions[key] !== false) {
-        throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-      }
+  // The per-provider read-only option key(s) are sourced from the shared
+  // REVIEW_FLAG_EXPECTATIONS map (single source of truth). readOnlyValue
+  // "plan" rejects any other truthy value; readOnlyValue null rejects any
+  // value other than `false`.
+  const spec = REVIEW_FLAG_EXPECTATIONS[provider];
+  if (!spec) return;
+  const keys = spec.readOnlyOptionKeys ?? (spec.readOnlyOptionKey ? [spec.readOnlyOptionKey] : []);
+  for (const key of keys) {
+    const value = runtimeOptions[key];
+    const overridden = spec.readOnlyValue
+      ? Boolean(value) && value !== spec.readOnlyValue
+      : value !== undefined && value !== false;
+    if (overridden) {
+      throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
     }
-  }
-  if ((provider === "kimi" || provider === "cmd")
-      && runtimeOptions.yolo !== undefined && runtimeOptions.yolo !== false) {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
 }
 

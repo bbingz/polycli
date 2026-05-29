@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import process from "node:process";
 
 import { terminateProcessTree } from "@bbingz/polycli-utils/process";
@@ -19,6 +20,10 @@ import {
   appendRunLedgerEvent,
   readRunLedgerEvents,
 } from "./run-ledger.mjs";
+import {
+  deriveSessionArtifactCandidate,
+  recordArtifactPath,
+} from "./sessions.mjs";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
@@ -80,6 +85,24 @@ function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason
   const decisionReason = result?.ok ? null : reason;
   const errorMessage = result?.ok ? null : (result?.error || job.error || "worker exited before writing a result envelope");
 
+  // Recovery path also records the verified upstream session artifact realpath
+  // (Q9a) so worker-recovered runs are purgeable too — same honest rules as the
+  // companion run site: derive ONE candidate, record only if it exists + is not a
+  // symlink + realpath stays under the provider store root, else null.
+  const recoveredSessionId = result?.sessionId ?? job.sessionId ?? null;
+  const recoveredCwd = config?.execution?.cwd ?? config?.workspaceRoot ?? workspaceRoot ?? null;
+  const sessionArtifactPath = recoveredSessionId && recoveredCwd
+    ? recordArtifactPath(
+        deriveSessionArtifactCandidate({
+          provider,
+          sessionId: recoveredSessionId,
+          workspaceRoot: recoveredCwd,
+          homedir: os.homedir(),
+        }),
+        { homedir: os.homedir() },
+      )
+    : null;
+
   const base = {
     runId: runContext.runId,
     command,
@@ -87,6 +110,8 @@ function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason
     kind,
     provider,
     jobId: job.jobId,
+    sessionId: recoveredSessionId,
+    sessionArtifactPath,
     model: result?.model || runContext.model || config?.execution?.model || job.model || null,
     defaultModel: result?.defaultModel || runContext.defaultModel || config?.execution?.defaultModel || null,
     hostSurface: runContext.hostSurface || "unknown",

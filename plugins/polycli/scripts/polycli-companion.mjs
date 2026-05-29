@@ -58,6 +58,15 @@ import {
   stripRunIdArgs,
   summarizeRunLedger,
 } from "./lib/run-ledger.mjs";
+import {
+  collectNonPurgeableSessions,
+  collectRecordedArtifacts,
+  defaultHomedir,
+  deriveSessionArtifactCandidate,
+  executePurge,
+  planPurge,
+  recordArtifactPath,
+} from "./lib/sessions.mjs";
 
 const COMPANION_PATH = fileURLToPath(import.meta.url);
 const JOB_PREFIXES = {
@@ -148,6 +157,21 @@ async function recordRunEvent(workspaceRoot, base = {}) {
   return recordRunEventForContext(workspaceRoot, buildCurrentRunContext(), base);
 }
 
+// Compute the verified realpath of the upstream session artifact this run just
+// created, or null. Never returns an unverified or fabricated path (invariant #6).
+function resolveSessionArtifactPath(provider, sessionId, cwd) {
+  if (!sessionId || !cwd) return null;
+  const homedir = defaultHomedir();
+  const candidate = deriveSessionArtifactCandidate({
+    provider,
+    sessionId,
+    workspaceRoot: cwd,
+    homedir,
+  });
+  if (!candidate.path) return null;
+  return recordArtifactPath(candidate, { homedir });
+}
+
 function printUsage() {
   console.log(
     [
@@ -166,6 +190,8 @@ function printUsage() {
       "  polycli-companion.mjs debug runs [--json]",
       "  polycli-companion.mjs debug show <run-id> [--json]",
       "  polycli-companion.mjs debug explain <run-id> [--json]",
+      "  polycli-companion.mjs sessions [list] [--json]",
+      "  polycli-companion.mjs sessions purge [--confirm] [--json]",
     ].join("\n")
   );
 }
@@ -455,6 +481,12 @@ async function runForegroundExecution(execution, asJson) {
   }
   cacheProviderModel(workspaceRoot, execution.provider, result.model);
 
+  const sessionArtifactPath = resolveSessionArtifactPath(
+    execution.provider,
+    result.sessionId,
+    execution.cwd,
+  );
+
   await recordRunEvent(workspaceRoot, {
     command: execution.kind,
     kind: execution.kind,
@@ -463,6 +495,8 @@ async function runForegroundExecution(execution, asJson) {
     status: result.ok ? "completed" : "failed",
     attempt: { ordinal: 1 },
     model: result.model || null,
+    sessionId: result.sessionId ?? null,
+    sessionArtifactPath,
     defaultModel: result.defaultModel || null,
     preview: result.response ? String(result.response).slice(0, 180) : null,
     stdoutBytes: result.stdoutBytes ?? null,
@@ -487,6 +521,8 @@ async function runForegroundExecution(execution, asJson) {
     phase: "provider_decision",
     status: result.ok ? "adopted" : "failed",
     reason: result.ok ? null : `${execution.kind}_failed`,
+    sessionId: result.sessionId ?? null,
+    sessionArtifactPath,
   });
 
   const envelope = buildExecutionEnvelope(execution, result);
@@ -1357,6 +1393,7 @@ async function runJobWorker(rawArgs) {
           status: "cancelled",
           attempt: { ordinal: 1 },
           jobId,
+          sessionId: result.sessionId ?? null,
           durationMs: Date.now() - startedAt,
         });
         await recordRunEventForContext(workspaceRoot, runContext, {
@@ -1367,6 +1404,7 @@ async function runJobWorker(rawArgs) {
           status: "cancelled",
           reason: "job_cancelled",
           jobId,
+          sessionId: result.sessionId ?? null,
         });
       }
       removeJobConfigFile(workspaceRoot, jobId);
@@ -1379,6 +1417,11 @@ async function runJobWorker(rawArgs) {
 
     if (runContext?.runId) {
       const compactResult = compactProviderResult(result);
+      const sessionArtifactPath = resolveSessionArtifactPath(
+        execution.provider,
+        result.sessionId,
+        execution.cwd,
+      );
       await recordRunEventForContext(workspaceRoot, runContext, {
         command: runContext.command || execution.kind,
         kind: execution.kind,
@@ -1388,6 +1431,8 @@ async function runJobWorker(rawArgs) {
         attempt: { ordinal: 1 },
         jobId,
         model: result.model || null,
+        sessionId: result.sessionId ?? null,
+        sessionArtifactPath,
         defaultModel: result.defaultModel || null,
         preview: result.response ? String(result.response).slice(0, 180) : null,
         stdoutBytes: compactResult.stdoutBytes ?? null,
@@ -1415,6 +1460,8 @@ async function runJobWorker(rawArgs) {
         status: result.ok ? "adopted" : "failed",
         reason: result.ok ? null : `${execution.kind}_failed`,
         jobId,
+        sessionId: result.sessionId ?? null,
+        sessionArtifactPath,
       });
     }
     removeJobConfigFile(workspaceRoot, jobId);
@@ -1560,6 +1607,99 @@ async function runDebugCommand(rawArgs) {
   throw new Error(`Unknown subcommand 'debug ${subcommand}'.`);
 }
 
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return "?";
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function renderSessionsList(recorded, nonPurgeable = []) {
+  const lines = [];
+  if (recorded.length === 0) {
+    lines.push("No polycli-recorded purgeable upstream sessions in this workspace.");
+  } else {
+    lines.push("Recorded upstream sessions (this workspace):");
+    for (const rec of recorded) {
+      const exists = fs.existsSync(rec.sessionArtifactPath);
+      let size = "";
+      if (exists) {
+        try {
+          size = ` ${formatBytes(fs.lstatSync(rec.sessionArtifactPath).size)}`;
+        } catch {
+          size = "";
+        }
+      }
+      lines.push(`- ${rec.provider} ${rec.sessionId} ${exists ? "exists" : "missing"}${size} ${rec.sessionArtifactPath}`);
+    }
+  }
+  if (nonPurgeable.length > 0) {
+    lines.push("Tracked but not purgeable (no recorded artifact path):");
+    for (const np of nonPurgeable) {
+      lines.push(`- ${np.provider} ${np.sessionId} (${np.reason})`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function renderPurgePlan(plan, summary, nonPurgeable = []) {
+  const lines = [];
+  if (summary.confirmed) {
+    lines.push(`Deleted ${summary.deleted} recorded upstream session artifact(s).`);
+  } else {
+    lines.push(`Dry run: ${plan.deletable.length} artifact(s) would be deleted. Re-run with --confirm to delete.`);
+  }
+  for (const entry of plan.deletable) {
+    lines.push(`  ${summary.confirmed ? "deleted" : "would delete"}: ${entry.provider} ${entry.sessionId} ${entry.path}`);
+  }
+  for (const entry of plan.skipped) {
+    lines.push(`  skipped: ${entry.path ?? entry.provider ?? "?"} (${entry.reason})`);
+  }
+  for (const np of nonPurgeable) {
+    lines.push(`  not purgeable: ${np.provider} ${np.sessionId} (${np.reason})`);
+  }
+  if (plan.deletable.length === 0 && plan.skipped.length === 0 && nonPurgeable.length === 0) {
+    lines.push("  nothing to purge.");
+  }
+  return lines.join("\n");
+}
+
+async function runSessionsCommand(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, {
+    booleanOptions: ["json", "confirm"],
+  });
+  const subcommand = positionals[0] || "list";
+  const workspaceRoot = resolveWorkspaceRoot(process.cwd());
+  const events = await readRunLedgerEvents(workspaceRoot);
+  const recorded = collectRecordedArtifacts(events);
+  const nonPurgeable = collectNonPurgeableSessions(events);
+  const asJson = Boolean(options.json);
+
+  if (subcommand === "list") {
+    if (asJson) {
+      output({ ok: true, recorded, nonPurgeable }, true);
+      return;
+    }
+    output(renderSessionsList(recorded, nonPurgeable), false);
+    return;
+  }
+
+  if (subcommand === "purge") {
+    const homedir = defaultHomedir();
+    const plan = planPurge({ recorded, homedir });
+    const confirm = Boolean(options.confirm);
+    const summary = executePurge(plan, { confirm });
+    if (asJson) {
+      output({ ok: true, confirmed: summary.confirmed, plan, nonPurgeable, summary }, true);
+      return;
+    }
+    output(renderPurgePlan(plan, summary, nonPurgeable), false);
+    return;
+  }
+
+  throw new Error(`Unknown subcommand 'sessions ${subcommand}'.`);
+}
+
 async function dispatchCommand(command, rawArgs) {
   if (command === "setup") return runSetup(rawArgs);
   if (command === "health") return runHealth(rawArgs);
@@ -1572,6 +1712,7 @@ async function dispatchCommand(command, rawArgs) {
   if (command === "cancel") return runCancel(rawArgs);
   if (command === "timing") return runTiming(rawArgs);
   if (command === "debug") return runDebugCommand(rawArgs);
+  if (command === "sessions") return runSessionsCommand(rawArgs);
   if (command === "_job-worker") return runJobWorker(rawArgs);
   throw new Error(`Unknown subcommand '${command}'.`);
 }

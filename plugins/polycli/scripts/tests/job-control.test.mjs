@@ -159,6 +159,64 @@ test("refreshJob records terminal ledger events when a worker exits before writi
   });
 });
 
+test("refreshJob records sessionArtifactPath on recovery when the claude artifact exists on disk", async () => {
+  const realHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "polycli-home-")));
+  const prevHome = process.env.HOME;
+  process.env.HOME = realHome;
+  try {
+    await withWorkspace(async (workspaceRoot) => {
+      const sessionId = "44444444-4444-4444-8444-444444444444";
+      // The artifact the claude run "created"; recovery must discover + record it.
+      const projDir = path.join(realHome, ".claude", "projects", workspaceRoot.replaceAll("/", "-"));
+      fs.mkdirSync(projDir, { recursive: true });
+      const artifact = path.join(projDir, `${sessionId}.jsonl`);
+      fs.writeFileSync(artifact, "{}\n");
+
+      const logFile = resolveJobLogFile(workspaceRoot, "job-artifact");
+      fs.writeFileSync(logFile, "progress\n");
+      upsertJob(workspaceRoot, {
+        jobId: "job-artifact",
+        provider: "claude",
+        kind: "ask",
+        status: "running",
+        pid: 999999,
+        logFile,
+      });
+      writeJobConfigFile(workspaceRoot, "job-artifact", {
+        workspaceRoot,
+        jobId: "job-artifact",
+        execution: { provider: "claude", kind: "ask", cwd: workspaceRoot },
+        runContext: {
+          runId: "run-artifact",
+          command: "ask",
+          hostSurface: "terminal",
+          jobId: "job-artifact",
+          provider: "claude",
+          kind: "ask",
+          logFile,
+        },
+      });
+      // Stored envelope carries the captured sessionId (reliable recovery path).
+      writeJobFile(workspaceRoot, "job-artifact", {
+        job: { jobId: "job-artifact", provider: "claude", kind: "ask", status: "completed" },
+        result: { ok: true, sessionId, response: "PONG" },
+      });
+
+      refreshJob(workspaceRoot, listJobs(workspaceRoot)[0]);
+      const events = (await readRunLedgerEvents(workspaceRoot)).filter((e) => e.runId === "run-artifact");
+      const attempt = events.find((e) => e.phase === "attempt_result");
+      assert.ok(attempt, "recovery wrote an attempt_result event");
+      assert.equal(attempt.sessionArtifactPath, fs.realpathSync(artifact));
+      const decision = events.find((e) => e.phase === "provider_decision");
+      assert.equal(decision.sessionArtifactPath, fs.realpathSync(artifact));
+    });
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    fs.rmSync(realHome, { recursive: true, force: true });
+  }
+});
+
 test("refreshJobsForLedgerRecovery is idempotent across multiple jobs", async () => {
   await withWorkspace(async (workspaceRoot) => {
     for (const jobId of ["job-one", "job-two"]) {

@@ -16,6 +16,7 @@ const EXPECTED_COMMANDS = [
   "cancel",
   "timing",
   "debug",
+  "sessions",
 ];
 
 function read(relativePath) {

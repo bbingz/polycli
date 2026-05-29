@@ -1,6 +1,6 @@
 # Host Command Map
 
-polycli ships four host plugins plus an optional standalone Terminal CLI. They expose the same eleven capabilities, but each host's invocation surface is shaped by what the host can express — slash-commands, skill subcommands, tool calls, or a PATH binary. This document is the Rosetta stone.
+polycli ships four host plugins plus an optional standalone Terminal CLI. They expose the same twelve capabilities, but each host's invocation surface is shaped by what the host can express — slash-commands, skill subcommands, tool calls, or a PATH binary. This document is the Rosetta stone.
 
 If you are switching between hosts, read the first two sections (identity + sample command) and ignore the rest. If you are maintaining a host adapter, read the whole thing.
 
@@ -8,7 +8,7 @@ If you are switching between hosts, read the first two sections (identity + samp
 
 | host plugin          | host           | invocation style                      | example                                      |
 |----------------------|----------------|---------------------------------------|----------------------------------------------|
-| `polycli`            | Claude Code    | 11 slash commands                     | `/polycli:health`                            |
+| `polycli`            | Claude Code    | 12 slash commands                     | `/polycli:health`                            |
 | `polycli-codex`      | Codex          | 1 installed skill with subcommands    | `Choose Polycli with @, then ask it to run: health` |
 | `polycli-copilot`    | GitHub Copilot CLI | skill with subcommands (top-level) | `polycli health`                             |
 | `polycli-opencode`   | OpenCode       | 2 tool functions                      | `polycli_run(["health", "--json"])`          |
@@ -35,6 +35,7 @@ All commands take the same flags regardless of host (see `node polycli-companion
 | cancel                | `/polycli:cancel`                     | `Choose Polycli with @, then ask it to run: cancel` | `polycli cancel`             | `polycli_run(["cancel", ...])`                                 | `polycli cancel ...`                     |
 | timing                | `/polycli:timing`                     | `Choose Polycli with @, then ask it to run: timing` | `polycli timing`             | `polycli_timing({provider, history, json})` **or** `polycli_run(["timing", ...])` | `polycli timing ...`                     |
 | debug                 | `/polycli:debug`                      | `Choose Polycli with @, then ask it to run: debug` | `polycli debug`              | `polycli_run(["debug", "runs"])`                              | `polycli debug runs`                     |
+| sessions              | `/polycli:sessions`                   | `Choose Polycli with @, then ask it to run: sessions` | `polycli sessions`           | `polycli_run(["sessions", "list"])`                           | `polycli sessions ...`                   |
 
 Notes:
 

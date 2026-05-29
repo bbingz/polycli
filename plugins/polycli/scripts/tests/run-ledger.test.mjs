@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   appendRunLedgerEvent,
   buildRunExplanation,
+  createRunLedgerEvent,
   groupRunLedgerEvents,
   readRunLedgerEvents,
   redactArgv,
@@ -92,6 +93,76 @@ test('redactArgv preserves non-sensitive control flags (provider/model/json/back
     redactArgv(['health', '--provider', 'cmd', '--json', '--run-id=run-keep'], { command: 'health' }),
     ['health', '--provider', 'cmd', '--json', '--run-id=run-keep'],
   );
+});
+
+test('createRunLedgerEvent records sessionId and defaults to null without fabrication', () => {
+  assert.equal(createRunLedgerEvent({ sessionId: 'abc' }).sessionId, 'abc');
+  assert.equal(createRunLedgerEvent({}).sessionId, null);
+  const keys = Object.keys(createRunLedgerEvent({ sessionId: 'abc' }));
+  assert.equal(keys[keys.indexOf('model') + 1], 'sessionId');
+  assert.equal(keys[keys.indexOf('sessionId') + 1], 'sessionArtifactPath');
+  assert.equal(keys[keys.indexOf('sessionArtifactPath') + 1], 'defaultModel');
+});
+
+test('createRunLedgerEvent records sessionArtifactPath after sessionId and defaults to null', () => {
+  assert.equal(createRunLedgerEvent({ sessionArtifactPath: '/abs/path.jsonl' }).sessionArtifactPath, '/abs/path.jsonl');
+  assert.equal(createRunLedgerEvent({}).sessionArtifactPath, null);
+  const keys = Object.keys(createRunLedgerEvent({ sessionArtifactPath: '/abs/path.jsonl' }));
+  assert.equal(keys[keys.indexOf('sessionId') + 1], 'sessionArtifactPath');
+});
+
+test('appendRunLedgerEvent round-trips sessionArtifactPath through NDJSON read-back', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-artifact',
+      command: 'ask',
+      phase: 'attempt_result',
+      provider: 'claude',
+      status: 'completed',
+      sessionId: 'sess-art',
+      sessionArtifactPath: '/home/u/.claude/projects/-x/sess-art.jsonl',
+      hostSurface: 'terminal',
+    });
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-artifact',
+      command: 'ask',
+      phase: 'attempt_result',
+      provider: 'gemini',
+      status: 'completed',
+      sessionId: 'g1',
+      hostSurface: 'terminal',
+    });
+    const events = await readRunLedgerEvents(workspaceRoot);
+    assert.equal(events.length, 2);
+    assert.equal(events[0].sessionArtifactPath, '/home/u/.claude/projects/-x/sess-art.jsonl');
+    assert.equal(events[1].sessionArtifactPath, null);
+  });
+});
+
+test('appendRunLedgerEvent round-trips sessionId through NDJSON read-back', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-session',
+      command: 'ask',
+      phase: 'attempt_result',
+      provider: 'qwen',
+      status: 'completed',
+      sessionId: 'sess-123',
+      hostSurface: 'terminal',
+    });
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-session',
+      command: 'ask',
+      phase: 'provider_decision',
+      provider: 'qwen',
+      status: 'adopted',
+      hostSurface: 'terminal',
+    });
+    const events = await readRunLedgerEvents(workspaceRoot);
+    assert.equal(events.length, 2);
+    assert.equal(events[0].sessionId, 'sess-123');
+    assert.equal(events[1].sessionId, null);
+  });
 });
 
 test('appendRunLedgerEvent stamps a stable non-null workspaceSlug', async () => {

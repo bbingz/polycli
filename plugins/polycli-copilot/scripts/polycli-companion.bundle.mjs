@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 // plugins/polycli/scripts/polycli-companion.mjs
-import fs8 from "node:fs";
-import path7 from "node:path";
+import fs9 from "node:fs";
+import path8 from "node:path";
 import process5 from "node:process";
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { spawn as spawn2 } from "node:child_process";
@@ -4071,8 +4071,92 @@ async function runProviderPromptStreaming({
   });
 }
 
+// packages/polycli-runtime/src/review-flags.js
+var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
+  claude: Object.freeze({
+    expectFlags: Object.freeze(["--tools", "--mcp-config", "--strict-mcp-config"]),
+    extraArgTokens: Object.freeze(["--tools", "--mcp-config", "--strict-mcp-config"]),
+    readOnlyOptionKey: "permissionMode",
+    readOnlyValue: "plan"
+  }),
+  gemini: Object.freeze({
+    expectFlags: Object.freeze(["--approval-mode", "--policy"]),
+    extraArgTokens: Object.freeze(["--extensions", "--allowed-mcp-server-names"]),
+    readOnlyOptionKey: "approvalMode",
+    readOnlyValue: "plan"
+  }),
+  qwen: Object.freeze({
+    expectFlags: Object.freeze(["--approval-mode", "--exclude-tools", "--max-session-turns"]),
+    extraArgTokens: Object.freeze(["--exclude-tools"]),
+    readOnlyOptionKey: "approvalMode",
+    readOnlyValue: "plan"
+  }),
+  copilot: Object.freeze({
+    expectFlags: Object.freeze([
+      "--excluded-tools",
+      "--allow-all-tools",
+      "--allow-all-paths",
+      "--allow-all-urls",
+      "--no-ask-user"
+    ]),
+    extraArgTokens: Object.freeze(["--excluded-tools"]),
+    readOnlyOptionKeys: Object.freeze(["allowAllTools", "allowAllPaths", "allowAllUrls"]),
+    readOnlyValue: null
+  }),
+  opencode: Object.freeze({
+    expectFlags: Object.freeze(["--agent"]),
+    extraArgTokens: Object.freeze(["--agent"]),
+    readOnlyOptionKey: "skipPermissions",
+    readOnlyValue: null
+  }),
+  pi: Object.freeze({
+    expectFlags: Object.freeze([
+      "--no-session",
+      "--no-tools",
+      "--no-extensions",
+      "--no-skills",
+      "--no-context-files"
+    ]),
+    extraArgTokens: Object.freeze([
+      "--no-tools",
+      "--no-extensions",
+      "--no-skills",
+      "--no-context-files"
+    ]),
+    readOnlyOptionKey: null,
+    readOnlyValue: null
+  }),
+  cmd: Object.freeze({
+    expectFlags: Object.freeze(["--permission-mode"]),
+    extraArgTokens: Object.freeze(["--permission-mode"]),
+    readOnlyOptionKey: "yolo",
+    readOnlyValue: null
+  }),
+  kimi: Object.freeze({
+    expectFlags: Object.freeze([]),
+    extraArgTokens: Object.freeze(["--no-thinking", "--max-steps-per-turn"]),
+    readOnlyOptionKey: "yolo",
+    readOnlyValue: null
+  }),
+  agy: Object.freeze({
+    expectFlags: Object.freeze([]),
+    extraArgTokens: Object.freeze([]),
+    forbidFlags: Object.freeze(["--approval-mode", "--permission-mode", "--policy", "--plan", "--agent"]),
+    reviewUnsupported: true
+  }),
+  minimax: Object.freeze({
+    expectFlags: Object.freeze([]),
+    extraArgTokens: Object.freeze([]),
+    probes: Object.freeze([
+      Object.freeze({ helpArgs: Object.freeze(["text", "chat", "--help"]), expect: Object.freeze(["--message"]) }),
+      Object.freeze({ helpArgs: Object.freeze(["--help"]), expect: Object.freeze(["--output", "--non-interactive"]) })
+    ])
+  })
+});
+
 // plugins/polycli/scripts/lib/job-control.mjs
-import fs5 from "node:fs";
+import fs6 from "node:fs";
+import os4 from "node:os";
 import process4 from "node:process";
 
 // plugins/polycli/scripts/lib/state.mjs
@@ -4786,6 +4870,8 @@ function createRunLedgerEvent(event = {}) {
     attempt: event.attempt ?? null,
     jobId: event.jobId ?? null,
     model: event.model ?? null,
+    sessionId: event.sessionId ?? null,
+    sessionArtifactPath: event.sessionArtifactPath ?? null,
     defaultModel: event.defaultModel ?? null,
     timingRef: event.timingRef ?? null,
     error: event.error ?? null,
@@ -4917,6 +5003,195 @@ function buildRunExplanation(events, runId) {
   return { runId, found: true, text: lines.join("\n"), events: group.events };
 }
 
+// plugins/polycli/scripts/lib/sessions.mjs
+import fs5 from "node:fs";
+import os3 from "node:os";
+import path5 from "node:path";
+import { createHash as createHash2 } from "node:crypto";
+function storeRoot(provider, homedir) {
+  switch (provider) {
+    case "claude":
+      return path5.join(homedir, ".claude", "projects");
+    case "kimi":
+      return path5.join(homedir, ".kimi", "sessions");
+    default:
+      return null;
+  }
+}
+function isUnder(root, target) {
+  if (!root) return false;
+  const rel = path5.relative(root, target);
+  return rel === "" || !rel.startsWith("..") && !path5.isAbsolute(rel);
+}
+function deriveSessionArtifactCandidate({ provider, sessionId, workspaceRoot, homedir } = {}) {
+  if (typeof sessionId !== "string" || sessionId.length === 0) {
+    return { path: null, reason: "no sessionId captured for this run" };
+  }
+  if (typeof workspaceRoot !== "string" || workspaceRoot.length === 0) {
+    return { path: null, reason: "no workspace root" };
+  }
+  switch (provider) {
+    case "claude": {
+      const encoded = workspaceRoot.replaceAll("/", "-");
+      return {
+        provider: "claude",
+        path: path5.join(homedir, ".claude", "projects", encoded, `${sessionId}.jsonl`),
+        kind: "file"
+      };
+    }
+    case "kimi": {
+      const cwdHash = createHash2("md5").update(workspaceRoot).digest("hex");
+      return {
+        provider: "kimi",
+        path: path5.join(homedir, ".kimi", "sessions", cwdHash, sessionId),
+        kind: "dir"
+      };
+    }
+    case "pi":
+      return { path: null, reason: "pi session files are timestamp-prefixed; exact path is not derivable without a directory scan" };
+    case "gemini":
+      return { path: null, reason: "per-project dir, no per-session artifact" };
+    case "codex":
+      return { path: null, reason: "separate polycli-codex plugin" };
+    case "minimax":
+    case "cmd":
+      return { path: null, reason: "ephemeral, no per-session store" };
+    default:
+      return { path: null, reason: `no artifact derivation for provider ${provider ?? "?"}` };
+  }
+}
+function recordArtifactPath(candidate, { homedir, lstatFn = fs5.lstatSync, realpathFn = fs5.realpathSync, existsFn = fs5.existsSync } = {}) {
+  if (!candidate || typeof candidate.path !== "string") return null;
+  const { path: candidatePath, provider } = candidate;
+  if (!existsFn(candidatePath)) return null;
+  let stat;
+  try {
+    stat = lstatFn(candidatePath);
+  } catch {
+    return null;
+  }
+  if (stat && typeof stat.isSymbolicLink === "function" && stat.isSymbolicLink()) return null;
+  let real;
+  try {
+    real = realpathFn(candidatePath);
+  } catch {
+    return null;
+  }
+  const root = storeRoot(provider, homedir);
+  if (!isUnder(root, real)) return null;
+  return real;
+}
+function collectRecordedArtifacts(events = []) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const event of events) {
+    const sessionArtifactPath = event?.sessionArtifactPath;
+    if (typeof sessionArtifactPath !== "string" || sessionArtifactPath.length === 0) continue;
+    const provider = event.provider ?? null;
+    const sessionId = event.sessionId ?? null;
+    const workspaceRoot = event.workspaceRoot ?? null;
+    const key = JSON.stringify([provider, sessionId, sessionArtifactPath, workspaceRoot]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ provider, sessionId, sessionArtifactPath, workspaceRoot });
+  }
+  return out;
+}
+function collectNonPurgeableSessions(events = [], { homedir = os3.homedir() } = {}) {
+  const withPath = /* @__PURE__ */ new Set();
+  for (const event of events) {
+    if (typeof event?.sessionArtifactPath === "string" && event.sessionArtifactPath.length > 0 && typeof event?.sessionId === "string") {
+      withPath.add(JSON.stringify([event.provider ?? null, event.sessionId, event.workspaceRoot ?? null]));
+    }
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const event of events) {
+    const sessionId = event?.sessionId;
+    if (typeof sessionId !== "string" || sessionId.length === 0) continue;
+    const provider = event.provider ?? null;
+    const workspaceRoot = event.workspaceRoot ?? null;
+    const key = JSON.stringify([provider, sessionId, workspaceRoot]);
+    if (withPath.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    const derived = deriveSessionArtifactCandidate({ provider, sessionId, workspaceRoot, homedir });
+    out.push({ provider, sessionId, reason: derived?.reason ?? "no recorded artifact path" });
+  }
+  return out;
+}
+function planPurge({ recorded = [], homedir, lstatFn = fs5.lstatSync, realpathFn = fs5.realpathSync, existsFn = fs5.existsSync, sizeFn } = {}) {
+  const deletable = [];
+  const skipped = [];
+  const defaultSizeFn = (p) => {
+    try {
+      return lstatFn(p).size ?? 0;
+    } catch {
+      return 0;
+    }
+  };
+  const resolveSize = typeof sizeFn === "function" ? sizeFn : defaultSizeFn;
+  for (const rec of recorded) {
+    const { provider, sessionId } = rec;
+    const candidatePath = rec.sessionArtifactPath;
+    if (typeof candidatePath !== "string" || candidatePath.length === 0) {
+      skipped.push({ provider, reason: "no recorded artifact path" });
+      continue;
+    }
+    if (!existsFn(candidatePath)) {
+      skipped.push({ path: candidatePath, reason: "artifact no longer exists" });
+      continue;
+    }
+    let stat;
+    try {
+      stat = lstatFn(candidatePath);
+    } catch {
+      skipped.push({ path: candidatePath, reason: "lstat failed" });
+      continue;
+    }
+    if (stat && typeof stat.isSymbolicLink === "function" && stat.isSymbolicLink()) {
+      skipped.push({ path: candidatePath, reason: "refused: path is a symlink" });
+      continue;
+    }
+    let real;
+    try {
+      real = realpathFn(candidatePath);
+    } catch {
+      skipped.push({ path: candidatePath, reason: "realpath failed" });
+      continue;
+    }
+    const root = storeRoot(provider, homedir);
+    if (!isUnder(root, real)) {
+      skipped.push({ path: candidatePath, reason: "refused: realpath escaped the provider store root" });
+      continue;
+    }
+    const base = path5.basename(candidatePath);
+    const fileMatch = base === `${sessionId}.jsonl`;
+    const dirMatch = base === sessionId;
+    if (!fileMatch && !dirMatch) {
+      skipped.push({ path: candidatePath, reason: "refused: basename no longer matches the recorded sessionId" });
+      continue;
+    }
+    deletable.push({ provider, sessionId, path: candidatePath, bytes: resolveSize(candidatePath) });
+  }
+  return { deletable, skipped };
+}
+function executePurge(plan, { confirm = false, rmFn = (p) => fs5.rmSync(p, { recursive: true, force: true }) } = {}) {
+  const deletable = plan?.deletable ?? [];
+  const skipped = plan?.skipped ?? [];
+  if (!confirm) {
+    return { confirmed: false, deleted: 0, wouldDelete: deletable.length, skipped: skipped.length };
+  }
+  let deleted = 0;
+  for (const entry of deletable) {
+    rmFn(entry.path);
+    deleted += 1;
+  }
+  return { confirmed: true, deleted, wouldDelete: deletable.length, skipped: skipped.length };
+}
+function defaultHomedir() {
+  return os3.homedir();
+}
+
 // plugins/polycli/scripts/lib/job-control.mjs
 var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["queued", "running"]);
 var TERMINAL_STATUSES = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
@@ -4936,7 +5211,7 @@ function sortJobsNewestFirst(jobs) {
 function readProgressPreview(logFile, maxLines = 4) {
   if (!logFile) return "";
   try {
-    const lines = fs5.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const lines = fs6.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return lines.slice(-maxLines).join("\n");
   } catch {
     return "";
@@ -4965,6 +5240,17 @@ function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason
   const decisionStatus = result?.ok ? "adopted" : "failed";
   const decisionReason = result?.ok ? null : reason;
   const errorMessage = result?.ok ? null : result?.error || job.error || "worker exited before writing a result envelope";
+  const recoveredSessionId = result?.sessionId ?? job.sessionId ?? null;
+  const recoveredCwd = config?.execution?.cwd ?? config?.workspaceRoot ?? workspaceRoot ?? null;
+  const sessionArtifactPath = recoveredSessionId && recoveredCwd ? recordArtifactPath(
+    deriveSessionArtifactCandidate({
+      provider,
+      sessionId: recoveredSessionId,
+      workspaceRoot: recoveredCwd,
+      homedir: os4.homedir()
+    }),
+    { homedir: os4.homedir() }
+  ) : null;
   const base = {
     runId: runContext.runId,
     command,
@@ -4972,6 +5258,8 @@ function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason
     kind,
     provider,
     jobId: job.jobId,
+    sessionId: recoveredSessionId,
+    sessionArtifactPath,
     model: result?.model || runContext.model || config?.execution?.model || job.model || null,
     defaultModel: result?.defaultModel || runContext.defaultModel || config?.execution?.defaultModel || null,
     hostSurface: runContext.hostSurface || "unknown",
@@ -5317,9 +5605,9 @@ function resolveProvider({ provider, positionals = [] } = {}) {
 }
 
 // plugins/polycli/scripts/lib/review.mjs
-import fs6 from "node:fs";
-import os3 from "node:os";
-import path5 from "node:path";
+import fs7 from "node:fs";
+import os5 from "node:os";
+import path6 from "node:path";
 var DEFAULT_MAX_DIFF_BYTES = null;
 var REVIEW_SCOPES = /* @__PURE__ */ new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
 var REVIEW_APPEND_SYSTEM = "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
@@ -5376,34 +5664,22 @@ function git(cwd, args) {
   return runCommand("git", args, { cwd });
 }
 function makeReviewTempDir(prefix) {
-  return fs6.mkdtempSync(path5.join(os3.tmpdir(), `polycli-review-${prefix}-`));
+  return fs7.mkdtempSync(path6.join(os5.tmpdir(), `polycli-review-${prefix}-`));
 }
 function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   const extraArgs = Array.isArray(runtimeOptions.extraArgs) ? runtimeOptions.extraArgs : [];
   if (extraArgs.length > 0) {
     throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
-  if (provider === "gemini" && runtimeOptions.approvalMode && runtimeOptions.approvalMode !== "plan") {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-  }
-  if (provider === "opencode" && runtimeOptions.skipPermissions !== void 0 && runtimeOptions.skipPermissions !== false) {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-  }
-  if (provider === "qwen" && runtimeOptions.approvalMode && runtimeOptions.approvalMode !== "plan") {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-  }
-  if (provider === "claude" && runtimeOptions.permissionMode && runtimeOptions.permissionMode !== "plan") {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-  }
-  if (provider === "copilot") {
-    for (const key of ["allowAllTools", "allowAllPaths", "allowAllUrls"]) {
-      if (runtimeOptions[key] !== void 0 && runtimeOptions[key] !== false) {
-        throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
-      }
+  const spec = REVIEW_FLAG_EXPECTATIONS[provider];
+  if (!spec) return;
+  const keys = spec.readOnlyOptionKeys ?? (spec.readOnlyOptionKey ? [spec.readOnlyOptionKey] : []);
+  for (const key of keys) {
+    const value = runtimeOptions[key];
+    const overridden = spec.readOnlyValue ? Boolean(value) && value !== spec.readOnlyValue : value !== void 0 && value !== false;
+    if (overridden) {
+      throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
     }
-  }
-  if ((provider === "kimi" || provider === "cmd") && runtimeOptions.yolo !== void 0 && runtimeOptions.yolo !== false) {
-    throw new Error(`Cannot override ${REVIEW_CONSTRAINT_ERROR} for provider '${provider}'.`);
   }
 }
 function assertReviewProviderSupported(provider) {
@@ -5615,11 +5891,11 @@ function buildReviewPrompt({
 }
 
 // plugins/polycli/scripts/lib/timing.mjs
-import path6 from "node:path";
+import path7 from "node:path";
 var TIMING_FILE_NAME = "timings.ndjson";
 var MAX_TIMING_BYTES = 2e6;
 function resolveTimingHistoryFile(workspaceRoot) {
-  return path6.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
+  return path7.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
 }
 function describeTimingStore(workspaceRoot) {
   const root = describeStateRoot();
@@ -5656,7 +5932,7 @@ function summarizeTimingRecords(records) {
 }
 
 // plugins/polycli/scripts/lib/preview.mjs
-import fs7 from "node:fs";
+import fs8 from "node:fs";
 var PREVIEW_MAX_LINES = 10;
 var PREVIEW_TAIL_CACHE = /* @__PURE__ */ new Map();
 function collapseWhitespace(text) {
@@ -5744,7 +6020,7 @@ function summarizeEventText(provider, event) {
   }
   return "";
 }
-function appendPreview(logFile, provider, event, { fsImpl = fs7, tailCache = PREVIEW_TAIL_CACHE } = {}) {
+function appendPreview(logFile, provider, event, { fsImpl = fs8, tailCache = PREVIEW_TAIL_CACHE } = {}) {
   const text = summarizeEventText(provider, event);
   if (!text) return;
   const lines = String(text).split(/\r?\n/).map((line) => collapseWhitespace(line)).filter(Boolean).slice(0, PREVIEW_MAX_LINES);
@@ -5839,6 +6115,18 @@ async function recordRunEventForContext(workspaceRoot, runContext, base = {}) {
 async function recordRunEvent(workspaceRoot, base = {}) {
   return recordRunEventForContext(workspaceRoot, buildCurrentRunContext(), base);
 }
+function resolveSessionArtifactPath(provider, sessionId, cwd) {
+  if (!sessionId || !cwd) return null;
+  const homedir = defaultHomedir();
+  const candidate = deriveSessionArtifactCandidate({
+    provider,
+    sessionId,
+    workspaceRoot: cwd,
+    homedir
+  });
+  if (!candidate.path) return null;
+  return recordArtifactPath(candidate, { homedir });
+}
 function printUsage() {
   console.log(
     [
@@ -5856,7 +6144,9 @@ function printUsage() {
       "  polycli-companion.mjs timing [--provider <provider>] [--history <count|all>] [--all] [--json]",
       "  polycli-companion.mjs debug runs [--json]",
       "  polycli-companion.mjs debug show <run-id> [--json]",
-      "  polycli-companion.mjs debug explain <run-id> [--json]"
+      "  polycli-companion.mjs debug explain <run-id> [--json]",
+      "  polycli-companion.mjs sessions [list] [--json]",
+      "  polycli-companion.mjs sessions purge [--confirm] [--json]"
     ].join("\n")
   );
 }
@@ -5900,11 +6190,11 @@ function output(value, asJson) {
 `);
 }
 function resolveProviderModelCacheFile(workspaceRoot) {
-  return path7.join(resolveStateDir(workspaceRoot), "provider-models.json");
+  return path8.join(resolveStateDir(workspaceRoot), "provider-models.json");
 }
 function readProviderModelCache(workspaceRoot) {
   try {
-    const parsed = JSON.parse(fs8.readFileSync(resolveProviderModelCacheFile(workspaceRoot), "utf8"));
+    const parsed = JSON.parse(fs9.readFileSync(resolveProviderModelCacheFile(workspaceRoot), "utf8"));
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
@@ -5917,8 +6207,8 @@ function readCachedProviderModel(workspaceRoot, provider) {
 function cacheProviderModel(workspaceRoot, provider, model) {
   if (typeof model !== "string" || !model.trim()) return;
   const cacheFile = resolveProviderModelCacheFile(workspaceRoot);
-  fs8.mkdirSync(path7.dirname(cacheFile), { recursive: true });
-  fs8.writeFileSync(
+  fs9.mkdirSync(path8.dirname(cacheFile), { recursive: true });
+  fs9.writeFileSync(
     cacheFile,
     `${JSON.stringify({ ...readProviderModelCache(workspaceRoot), [provider]: model }, null, 2)}
 `,
@@ -6076,7 +6366,7 @@ function cleanupRuntimeOptions(runtimeOptions = {}) {
   for (const cleanupPath of cleanupPaths) {
     if (typeof cleanupPath !== "string" || cleanupPath.trim() === "") continue;
     try {
-      fs8.rmSync(cleanupPath, { recursive: true, force: true });
+      fs9.rmSync(cleanupPath, { recursive: true, force: true });
     } catch {
     }
   }
@@ -6124,6 +6414,11 @@ async function runForegroundExecution(execution, asJson) {
     appendTimingRecord(workspaceRoot, result.timing);
   }
   cacheProviderModel(workspaceRoot, execution.provider, result.model);
+  const sessionArtifactPath = resolveSessionArtifactPath(
+    execution.provider,
+    result.sessionId,
+    execution.cwd
+  );
   await recordRunEvent(workspaceRoot, {
     command: execution.kind,
     kind: execution.kind,
@@ -6132,6 +6427,8 @@ async function runForegroundExecution(execution, asJson) {
     status: result.ok ? "completed" : "failed",
     attempt: { ordinal: 1 },
     model: result.model || null,
+    sessionId: result.sessionId ?? null,
+    sessionArtifactPath,
     defaultModel: result.defaultModel || null,
     preview: result.response ? String(result.response).slice(0, 180) : null,
     stdoutBytes: result.stdoutBytes ?? null,
@@ -6151,7 +6448,9 @@ async function runForegroundExecution(execution, asJson) {
     provider: execution.provider,
     phase: "provider_decision",
     status: result.ok ? "adopted" : "failed",
-    reason: result.ok ? null : `${execution.kind}_failed`
+    reason: result.ok ? null : `${execution.kind}_failed`,
+    sessionId: result.sessionId ?? null,
+    sessionArtifactPath
   });
   const envelope = buildExecutionEnvelope(execution, result);
   if (asJson) {
@@ -6307,9 +6606,9 @@ async function startBackgroundExecution(execution, asJson) {
     jobId: job.jobId,
     runContext
   });
-  fs8.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
+  fs9.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
 `, "utf8");
-  const logFd = fs8.openSync(job.logFile, "a");
+  const logFd = fs9.openSync(job.logFile, "a");
   const child = spawn2(process5.execPath, [COMPANION_PATH, "_job-worker", resolveJobConfigFile(workspaceRoot, job.jobId)], {
     cwd: execution.cwd,
     env: { ...process5.env },
@@ -6317,7 +6616,7 @@ async function startBackgroundExecution(execution, asJson) {
     detached: true
   });
   child.unref();
-  fs8.closeSync(logFd);
+  fs9.closeSync(logFd);
   const runningJob = upsertJob(workspaceRoot, {
     ...job,
     status: "running",
@@ -6943,6 +7242,7 @@ async function runJobWorker(rawArgs) {
           status: "cancelled",
           attempt: { ordinal: 1 },
           jobId,
+          sessionId: result.sessionId ?? null,
           durationMs: Date.now() - startedAt
         });
         await recordRunEventForContext(workspaceRoot, runContext, {
@@ -6952,7 +7252,8 @@ async function runJobWorker(rawArgs) {
           phase: "provider_decision",
           status: "cancelled",
           reason: "job_cancelled",
-          jobId
+          jobId,
+          sessionId: result.sessionId ?? null
         });
       }
       removeJobConfigFile(workspaceRoot, jobId);
@@ -6964,6 +7265,11 @@ async function runJobWorker(rawArgs) {
     cacheProviderModel(workspaceRoot, execution.provider, result.model);
     if (runContext?.runId) {
       const compactResult = compactProviderResult(result);
+      const sessionArtifactPath = resolveSessionArtifactPath(
+        execution.provider,
+        result.sessionId,
+        execution.cwd
+      );
       await recordRunEventForContext(workspaceRoot, runContext, {
         command: runContext.command || execution.kind,
         kind: execution.kind,
@@ -6973,6 +7279,8 @@ async function runJobWorker(rawArgs) {
         attempt: { ordinal: 1 },
         jobId,
         model: result.model || null,
+        sessionId: result.sessionId ?? null,
+        sessionArtifactPath,
         defaultModel: result.defaultModel || null,
         preview: result.response ? String(result.response).slice(0, 180) : null,
         stdoutBytes: compactResult.stdoutBytes ?? null,
@@ -6995,7 +7303,9 @@ async function runJobWorker(rawArgs) {
         phase: "provider_decision",
         status: result.ok ? "adopted" : "failed",
         reason: result.ok ? null : `${execution.kind}_failed`,
-        jobId
+        jobId,
+        sessionId: result.sessionId ?? null,
+        sessionArtifactPath
       });
     }
     removeJobConfigFile(workspaceRoot, jobId);
@@ -7134,6 +7444,92 @@ async function runDebugCommand(rawArgs) {
   }
   throw new Error(`Unknown subcommand 'debug ${subcommand}'.`);
 }
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return "?";
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+function renderSessionsList(recorded, nonPurgeable = []) {
+  const lines = [];
+  if (recorded.length === 0) {
+    lines.push("No polycli-recorded purgeable upstream sessions in this workspace.");
+  } else {
+    lines.push("Recorded upstream sessions (this workspace):");
+    for (const rec of recorded) {
+      const exists = fs9.existsSync(rec.sessionArtifactPath);
+      let size = "";
+      if (exists) {
+        try {
+          size = ` ${formatBytes(fs9.lstatSync(rec.sessionArtifactPath).size)}`;
+        } catch {
+          size = "";
+        }
+      }
+      lines.push(`- ${rec.provider} ${rec.sessionId} ${exists ? "exists" : "missing"}${size} ${rec.sessionArtifactPath}`);
+    }
+  }
+  if (nonPurgeable.length > 0) {
+    lines.push("Tracked but not purgeable (no recorded artifact path):");
+    for (const np of nonPurgeable) {
+      lines.push(`- ${np.provider} ${np.sessionId} (${np.reason})`);
+    }
+  }
+  return lines.join("\n");
+}
+function renderPurgePlan(plan, summary, nonPurgeable = []) {
+  const lines = [];
+  if (summary.confirmed) {
+    lines.push(`Deleted ${summary.deleted} recorded upstream session artifact(s).`);
+  } else {
+    lines.push(`Dry run: ${plan.deletable.length} artifact(s) would be deleted. Re-run with --confirm to delete.`);
+  }
+  for (const entry of plan.deletable) {
+    lines.push(`  ${summary.confirmed ? "deleted" : "would delete"}: ${entry.provider} ${entry.sessionId} ${entry.path}`);
+  }
+  for (const entry of plan.skipped) {
+    lines.push(`  skipped: ${entry.path ?? entry.provider ?? "?"} (${entry.reason})`);
+  }
+  for (const np of nonPurgeable) {
+    lines.push(`  not purgeable: ${np.provider} ${np.sessionId} (${np.reason})`);
+  }
+  if (plan.deletable.length === 0 && plan.skipped.length === 0 && nonPurgeable.length === 0) {
+    lines.push("  nothing to purge.");
+  }
+  return lines.join("\n");
+}
+async function runSessionsCommand(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, {
+    booleanOptions: ["json", "confirm"]
+  });
+  const subcommand = positionals[0] || "list";
+  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const events = await readRunLedgerEvents(workspaceRoot);
+  const recorded = collectRecordedArtifacts(events);
+  const nonPurgeable = collectNonPurgeableSessions(events);
+  const asJson = Boolean(options.json);
+  if (subcommand === "list") {
+    if (asJson) {
+      output({ ok: true, recorded, nonPurgeable }, true);
+      return;
+    }
+    output(renderSessionsList(recorded, nonPurgeable), false);
+    return;
+  }
+  if (subcommand === "purge") {
+    const homedir = defaultHomedir();
+    const plan = planPurge({ recorded, homedir });
+    const confirm = Boolean(options.confirm);
+    const summary = executePurge(plan, { confirm });
+    if (asJson) {
+      output({ ok: true, confirmed: summary.confirmed, plan, nonPurgeable, summary }, true);
+      return;
+    }
+    output(renderPurgePlan(plan, summary, nonPurgeable), false);
+    return;
+  }
+  throw new Error(`Unknown subcommand 'sessions ${subcommand}'.`);
+}
 async function dispatchCommand(command, rawArgs) {
   if (command === "setup") return runSetup(rawArgs);
   if (command === "health") return runHealth(rawArgs);
@@ -7146,6 +7542,7 @@ async function dispatchCommand(command, rawArgs) {
   if (command === "cancel") return runCancel(rawArgs);
   if (command === "timing") return runTiming(rawArgs);
   if (command === "debug") return runDebugCommand(rawArgs);
+  if (command === "sessions") return runSessionsCommand(rawArgs);
   if (command === "_job-worker") return runJobWorker(rawArgs);
   throw new Error(`Unknown subcommand '${command}'.`);
 }

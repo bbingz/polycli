@@ -170,6 +170,8 @@ export function createRunLedgerEvent(event = {}) {
     attempt: event.attempt ?? null,
     jobId: event.jobId ?? null,
     model: event.model ?? null,
+    sessionId: event.sessionId ?? null,
+    sessionArtifactPath: event.sessionArtifactPath ?? null,
     defaultModel: event.defaultModel ?? null,
     timingRef: event.timingRef ?? null,
     error: event.error ?? null,
