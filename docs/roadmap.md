@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-10 (v0.6.15 published: shared observability state root, full timing history, timing outcome diagnostics, and provider/run-ledger failure classification).
+Snapshot: 2026-05-30 (v0.6.19 published: provider-drift maintenance hardening plus upstream session-pollution record/list/purge controls).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,8 +10,8 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.15** — see `docs/release-notes-v0.6.15.md`. Published 2026-05-10: GitHub release + `@bbingz/polycli-opencode@0.6.15` + `@bbingz/polycli@0.6.15` all on the registry. Patch on top of v0.6.14 fixes split timing stores with `POLYCLI_STATE_ROOT`, adds `timing --all`/metadata, records timing outcome diagnostics, and classifies run-ledger/provider failures.
-- 9 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd).
+- Latest public release: **v0.6.19** — see `docs/release-notes-v0.6.19.md`. Published 2026-05-29: GitHub release + `@bbingz/polycli-opencode@0.6.19` + `@bbingz/polycli@0.6.19` all on the registry. Patch on top of v0.6.18 adds fixture/review drift guardrails and records upstream session artifacts for explicit `polycli sessions` list/purge cleanup.
+- 10 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy).
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
 
@@ -50,6 +50,7 @@ Current guardrails:
 - `scripts/tests/open-source-packaging.test.mjs` verifies public package export targets, license files, and explicit publish surfaces.
 - GitHub Actions runs Node 20 install, audit, tests, generated-bundle validation, fixture metadata validation, release manifest validation, host-map validation, Codex adapter validation, and tarball dry-runs.
 - `npm run check:review-drift` watches provider review hard-constraint flags that can be checked from local CLI help.
+- `npm run check:fixture-freshness` warns when version-pinned fixtures lag locally installed provider CLIs; it is intentionally warn-only by default.
 - `npm run check:provider-paths` is the periodic provider-path review command; keep it aligned with `docs/provider-paths.md`.
 
 Watch items:

@@ -4,7 +4,7 @@ Single-snapshot handoff (sibling of `session-memory-2026-04-22.md`). Captures th
 
 ## Release state (current)
 
-- **v0.6.19 is fully published.** GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.19 (tag → `65ae843`); npm `@bbingz/polycli@0.6.19` and `@bbingz/polycli-opencode@0.6.19` (both `latest`, verified via `npm view`). `main` HEAD = `84621b1`, tree clean.
+- **v0.6.19 is fully published.** GitHub release https://github.com/bbingz/polycli/releases/tag/v0.6.19 (tag → `65ae843`); npm `@bbingz/polycli@0.6.19` and `@bbingz/polycli-opencode@0.6.19` (both `latest`, verified via `npm view`). Publish closeout commit = `84621b1`; later docs handoff commits may sit on top of it.
 - Release commits: `65ae843` prepare → `3816d1b` (GitHub published, npm pending) → `84621b1` (npm published).
 - Utility packages unchanged on the v1.x line (`@bbingz/polycli-utils@1.0.1`, `@bbingz/polycli-timing@1.0.1`).
 

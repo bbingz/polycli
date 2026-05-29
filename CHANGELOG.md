@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-05-30 — Codex — review v0.6.19 upgrade docs for current-state drift
+
+- Reviewed the v0.6.19 upgrade range (`v0.6.18..HEAD`) after Claude's maintenance/session-pollution increment. No code-level regressions were found in the new review-flag, session-artifact, bundle, or release-check paths under current verification.
+- Fixed two durable documentation facts that had drifted after the release closeout: `docs/roadmap.md` now reports v0.6.19 / 10 providers as current state and lists the new fixture-freshness guardrail; `docs/archive/session-memory-2026-05-30.md` now records `84621b1` as the publish closeout commit instead of a permanently current `main HEAD`.
+- Verification: `npm test` exit 0 (453/453); focused new-area tests exit 0 (69/69); `npm run validate:bundles`, `validate:fixtures`, `validate:manifests`, `validate:host-map`, and `validate:codex-adapter` exit 0; `npm run check:review-drift` exit 0 (all installed CLI flag probes ok); `npm run check:fixture-freshness` exit 0 with 16 expected STALE warnings; `claude plugin validate` passed for both Claude manifests; `git diff --check v0.6.18..HEAD` exit 0.
+
 ## 2026-05-29 — Claude — v0.6.19: Q8a/b/c maintenance hardening + Q9a/b upstream session-pollution control
 
 Spec-driven increment (`docs/superpowers/specs/2026-05-29-maintenance-and-pollution-design.md`) from the 2026-05-29 strategy recon (memory `project_competitive_landscape_and_moat`, roadmap Q8/Q9). Two Codex review gates: spec → CHANGES_REQUESTED → rev2 (review `019e73b4`); implementation → CHANGES_REQUESTED → fixes → APPROVE (`aeec4314`). Implemented by parallel sub-agent waves, integrated + verified by Claude. Published 2026-05-29: GitHub release `v0.6.19` (https://github.com/bbingz/polycli/releases/tag/v0.6.19) + npm `@bbingz/polycli-opencode@0.6.19` and `@bbingz/polycli@0.6.19` (both `latest`, verified via `npm view`).
