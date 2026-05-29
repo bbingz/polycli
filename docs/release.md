@@ -42,6 +42,7 @@ Current runtime scope in-repo:
 - `kimi`
 - `qwen`
 - `minimax`
+- `agy`
 
 Current host scope:
 
