@@ -8,11 +8,11 @@ This repository publishes in three different ways:
 
 ## Current Release State
 
-As of `2026-05-29`, the current public patch release is:
+As of `2026-05-30`, the current public patch release is:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
 - Last published GitHub release: `v0.6.19` — https://github.com/bbingz/polycli/releases/tag/v0.6.19
-- Published npm packages: `@bbingz/polycli-opencode@0.6.19` and `@bbingz/polycli@0.6.19`
+- npm packages: publish of `0.6.19` is **PENDING `npm login`** (registry was logged out at release time). Last npm-published version: `@bbingz/polycli-opencode@0.6.18` and `@bbingz/polycli@0.6.18`. After `npm login`, run `npm publish ./plugins/polycli-opencode --access public` and `npm publish ./packages/polycli-terminal --access public`, then flip this line.
 - Utility packages remain `@bbingz/polycli-utils@1.0.1` and `@bbingz/polycli-timing@1.0.1` (independent v1.x cadence; unchanged in v0.6.19).
 
 Verified release paths:
