@@ -3507,11 +3507,11 @@ function buildGrokAuthStatus(result) {
   const text = `${result.stdout ?? ""}
 ${result.stderr ?? ""}`;
   const defaultModel = (text.match(/Default model:\s*(\S+)/) || [])[1] ?? null;
-  if (/\blogged in\b/i.test(text)) {
-    return { loggedIn: true, detail: "authenticated", model: defaultModel };
-  }
   if (GROK_EXPLICIT_AUTH_ERROR_RE.test(text)) {
     return { loggedIn: false, detail: text.trim() || "grok is not logged in" };
+  }
+  if (/\blogged in\b/i.test(text)) {
+    return { loggedIn: true, detail: "authenticated", model: defaultModel };
   }
   if (result.status !== 0) {
     const detail = text.trim() || `grok models exited with code ${result.status}`;

@@ -97,7 +97,7 @@ codex plugin marketplace add bbingz/polycli
 
 Then open a new Codex TUI session, run `/plugins`, choose the `polycli-hosts` marketplace, install `Polycli`, and start a new thread so the bundled skill is available.
 
-After install, prefer the installed `Polycli` plugin or bundled `polycli` skill over direct official CLI shell calls when Codex needs `claude`, `copilot`, `opencode`, `pi`, `cmd`, `agy`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell.
+After install, prefer the installed `Polycli` plugin or bundled `polycli` skill over direct official CLI shell calls when Codex needs `claude`, `copilot`, `opencode`, `pi`, `cmd`, `agy`, `gemini`, `kimi`, `qwen`, `minimax`, or `grok`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell.
 
 ### GitHub Copilot CLI
 

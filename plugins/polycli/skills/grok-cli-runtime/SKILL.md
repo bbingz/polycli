@@ -16,7 +16,7 @@ The runtime contract (`packages/polycli-runtime/src/grok.js`) is authoritative; 
   (used for `ask`/`rescue`/`review`). `--output-format streaming-json` → line events
   `{type:"thought",data}` (reasoning) / `{type:"text",data}` (answer) / `{type:"end",stopReason,sessionId,requestId}`.
 - Model: `-m <model>`. Available: `grok-composer-2.5-fast` (default; "Compose 2.5") and `grok-build`.
-- Effort: `--effort low|medium|high|xhigh|max` (mapped from polycli `--effort`).
+- Effort: grok accepts `--effort low|medium|high|xhigh|max` natively; polycli's `--effort` is gemini-only and is **not** forwarded to grok.
 - **YOLO** (ask/rescue): `--always-approve`. **Review** read-only: `--permission-mode plan`.
 - Resume: `--resume <id>` / `-r <id>` (resume a session), `-c` / `--continue` (last for cwd).
 

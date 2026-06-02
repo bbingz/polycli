@@ -118,6 +118,15 @@ test("getGrokAuthStatus infers login state from `grok models` without spending a
   assert.equal(loggedOut.loggedIn, false);
 });
 
+test("getGrokAuthStatus reads `not logged in` as logged out (banner substring must not win)", () => {
+  // "not logged in" contains the substring "logged in"; the explicit auth-error check must run
+  // before the generic "logged in" banner test, or this logged-out state flips to loggedIn:true.
+  const auth = getGrokAuthStatus(process.cwd(), {
+    runner: () => ({ error: null, status: 1, stdout: "You are not logged in. Run `grok login`.\n", stderr: "" }),
+  });
+  assert.equal(auth.loggedIn, false);
+});
+
 test("getGrokAuthStatus keeps loggedIn=true for a transient probe timeout", () => {
   const auth = getGrokAuthStatus(process.cwd(), {
     runner: () => ({ error: { code: "ETIMEDOUT", message: "spawnSync grok ETIMEDOUT" }, status: null, stdout: "", stderr: "" }),
