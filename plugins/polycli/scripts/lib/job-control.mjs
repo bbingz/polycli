@@ -3,6 +3,7 @@ import os from "node:os";
 import process from "node:process";
 
 import { terminateProcessTree } from "@bbingz/polycli-utils/process";
+import { withLockfile } from "@bbingz/polycli-utils/atomic-save";
 
 import {
   getJob,
@@ -19,6 +20,7 @@ import {
 import {
   appendRunLedgerEvent,
   readRunLedgerEvents,
+  resolveRunLedgerFile,
 } from "./run-ledger.mjs";
 import {
   deriveSessionArtifactCandidate,
@@ -76,6 +78,16 @@ function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason
   const runContext = config?.runContext;
   if (!runContext?.runId) return;
 
+  // Serialize the whole read -> hasLedgerPhase -> append -> removeConfig across processes.
+  // appendRunLedgerEvent only locks its own single append, so two concurrent refreshJob() callers
+  // could both observe "no terminal events yet" and each append, double-counting the run. The
+  // recover lock is a distinct path from the ndjson append lock, so there is no deadlock.
+  const recoverLock = `${resolveRunLedgerFile(workspaceRoot)}.recover.lock`;
+  withLockfile(recoverLock, () =>
+    writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result, reason }));
+}
+
+function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited" } = {}) {
   const events = readRunLedgerEvents(workspaceRoot);
   const command = runContext.command || config?.execution?.kind || job.kind || null;
   const provider = runContext.provider || config?.execution?.provider || job.provider || null;
@@ -246,38 +258,13 @@ export async function waitForJob(workspaceRoot, jobId, { timeoutMs = 240_000, po
 }
 
 export async function cancelJob(workspaceRoot, jobId) {
-  const job = getJob(workspaceRoot, jobId);
-  if (!job) {
-    return { cancelled: false, reason: "not_found", jobId };
-  }
-  if (!ACTIVE_STATUSES.has(job.status)) {
-    return { cancelled: false, reason: "not_cancellable", jobId };
-  }
-
-  try {
-    if (job.pid) {
-      await terminateProcessTree(job.pid, {
-        signal: "SIGINT",
-        forceSignal: "SIGKILL",
-        forceAfterMs: 2_000,
-      });
-    }
-  } catch (error) {
-    return {
-      cancelled: false,
-      reason: "cancel_failed",
-      jobId,
-      error: error.message,
-    };
-  }
-
-  const cancelledJob = {
-    ...job,
-    status: "cancelled",
-    pid: null,
-    finishedAt: new Date().toISOString(),
-  };
+  // Flip the job to cancelled and capture its pid atomically under the state lock FIRST, then
+  // signal that pid. Previously cancelJob read the job WITHOUT a lock and killed job.pid before
+  // re-validating, so a stale pre-lock snapshot could signal a pid the worker had already freed
+  // (and the OS reused). The pid we kill below was confirmed ACTIVE at lock time.
+  let pidToKill = null;
   let reason = null;
+  const finishedAt = new Date().toISOString();
   const write = updateJobAtomically(workspaceRoot, jobId, (current) => {
     if (!current) {
       reason = "not_found";
@@ -287,11 +274,12 @@ export async function cancelJob(workspaceRoot, jobId) {
       reason = "not_cancellable";
       return null;
     }
+    pidToKill = current.pid ?? null;
     const nextJob = {
       ...current,
       status: "cancelled",
       pid: null,
-      finishedAt: cancelledJob.finishedAt,
+      finishedAt,
     };
     return {
       job: nextJob,
@@ -306,6 +294,19 @@ export async function cancelJob(workspaceRoot, jobId) {
   });
   if (!write.written) {
     return { cancelled: false, reason: reason || "not_cancellable", jobId };
+  }
+
+  if (pidToKill) {
+    try {
+      await terminateProcessTree(pidToKill, {
+        signal: "SIGINT",
+        forceSignal: "SIGKILL",
+        forceAfterMs: 2_000,
+      });
+    } catch (error) {
+      // The job is already recorded as cancelled; surface the kill problem without un-cancelling.
+      return { cancelled: true, jobId, killWarning: error.message };
+    }
   }
   return { cancelled: true, jobId };
 }

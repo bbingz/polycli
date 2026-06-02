@@ -84,6 +84,170 @@ function parseArgs(argv, config = {}) {
   return { options, positionals };
 }
 
+// packages/polycli-utils/src/atomic-save.js
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import process2 from "node:process";
+var LockfileTimeoutError = class extends Error {
+  constructor(lockPath, timeoutMs) {
+    super(`Timed out acquiring lockfile ${lockPath} after ${timeoutMs}ms`);
+    this.code = "ELOCKTIMEOUT";
+    this.lockPath = lockPath;
+    this.timeoutMs = timeoutMs;
+  }
+};
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function ensureParentDir(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+function normalizeWriteOptions(options) {
+  if (typeof options === "string") {
+    return {
+      flag: "w",
+      mode: 438,
+      writeOptions: options
+    };
+  }
+  if (options && typeof options === "object") {
+    const { flag = "w", mode = 438, ...writeOptions } = options;
+    return {
+      flag,
+      mode,
+      writeOptions: Object.keys(writeOptions).length > 0 ? writeOptions : void 0
+    };
+  }
+  return {
+    flag: "w",
+    mode: 438,
+    writeOptions: void 0
+  };
+}
+function writeFileAtomicSync(filePath, contents, options = {}) {
+  ensureParentDir(filePath);
+  const tmpPath = `${filePath}.tmp.${process2.pid}.${Date.now()}.${crypto.randomUUID()}`;
+  const { flag, mode, writeOptions } = normalizeWriteOptions(options);
+  const fd = fs.openSync(tmpPath, flag, mode);
+  try {
+    fs.writeFileSync(fd, contents, writeOptions);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tmpPath, filePath);
+  const dirFd = fs.openSync(path.dirname(filePath), "r");
+  try {
+    fs.fsyncSync(dirFd);
+  } catch (error) {
+    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
+      throw error;
+    }
+  } finally {
+    fs.closeSync(dirFd);
+  }
+}
+function writeFileAtomic(filePath, contents, options = {}) {
+  writeFileAtomicSync(filePath, contents, options);
+  return filePath;
+}
+function writeJsonAtomic(filePath, value, { spaces = 2, finalNewline = true } = {}) {
+  const text = JSON.stringify(value, null, spaces) + (finalNewline ? "\n" : "");
+  return writeFileAtomic(filePath, text, "utf8");
+}
+function unlinkIfExists(filePath) {
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+  }
+}
+function tryReclaimStaleLock(lockPath, staleMs) {
+  let raw;
+  try {
+    raw = fs.readFileSync(lockPath, "utf8");
+  } catch {
+    return true;
+  }
+  let lock = null;
+  try {
+    lock = JSON.parse(raw);
+  } catch {
+    lock = null;
+  }
+  const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
+  const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
+  if (pid != null) {
+    try {
+      process2.kill(pid, 0);
+    } catch (killError) {
+      if (killError.code === "ESRCH") {
+        unlinkIfExists(lockPath);
+        return true;
+      }
+      if (killError.code !== "EPERM") {
+        throw killError;
+      }
+    }
+    const ageMs2 = acquiredAt == null ? null : Date.now() - acquiredAt;
+    if (ageMs2 != null && ageMs2 > staleMs) {
+      unlinkIfExists(lockPath);
+      return true;
+    }
+    return false;
+  }
+  let ageMs = acquiredAt == null ? null : Date.now() - acquiredAt;
+  if (ageMs == null) {
+    try {
+      ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+    } catch {
+      return true;
+    }
+  }
+  if (ageMs != null && ageMs > staleMs) {
+    unlinkIfExists(lockPath);
+    return true;
+  }
+  return false;
+}
+function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 25 } = {}) {
+  ensureParentDir(lockPath);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const fd = fs.openSync(
+        lockPath,
+        fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+        384
+      );
+      try {
+        fs.writeFileSync(fd, JSON.stringify({ pid: process2.pid, acquiredAt: Date.now() }), "utf8");
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      try {
+        return fn();
+      } finally {
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+        }
+      }
+    } catch (error) {
+      if (error.code !== "EEXIST") {
+        throw error;
+      }
+      if (tryReclaimStaleLock(lockPath, staleMs)) {
+        continue;
+      }
+      sleepSync(pollMs);
+    }
+  }
+  throw new LockfileTimeoutError(lockPath, timeoutMs);
+}
+
 // packages/polycli-runtime/src/constants.js
 var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd", "agy"];
 var PROVIDER_OPERATION_NAMES = ["prompt"];
@@ -142,7 +306,7 @@ function parseStreamJsonLine(raw, { allowPrefix = true } = {}) {
 
 // packages/polycli-utils/src/process.js
 import { spawnSync } from "node:child_process";
-import process2 from "node:process";
+import process3 from "node:process";
 function runCommand(command, args = [], options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd,
@@ -217,7 +381,7 @@ async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SI
     throw new Error(`Invalid pid: ${pid}`);
   }
   const killOnce = (targetSignal) => {
-    if (process2.platform === "win32") {
+    if (process3.platform === "win32") {
       const args = ["/PID", String(pid), "/T"];
       if (targetSignal === "SIGKILL") {
         args.push("/F");
@@ -236,7 +400,7 @@ async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SI
       return true;
     }
     try {
-      process2.kill(-pid, targetSignal);
+      process3.kill(-pid, targetSignal);
       return true;
     } catch (error) {
       if (error.code === "ESRCH") {
@@ -246,7 +410,7 @@ async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SI
       if (error.code === "EINVAL") {
         throw error;
       }
-      process2.kill(pid, targetSignal);
+      process3.kill(pid, targetSignal);
       return true;
     }
   };
@@ -1492,9 +1656,9 @@ function runGeminiPromptStreaming({
 }
 
 // packages/polycli-runtime/src/kimi.js
-import fs from "node:fs";
+import fs2 from "node:fs";
 import os from "node:os";
-import path from "node:path";
+import path2 from "node:path";
 import { createHash } from "node:crypto";
 var KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
 var DEFAULT_TIMEOUT_MS4 = 9e5;
@@ -1505,24 +1669,24 @@ var KIMI_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 var TRANSIENT_PROBE_ERROR_PATTERNS4 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
-var KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path.join(os.homedir(), ".kimi", "config.toml");
+var KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path2.join(os.homedir(), ".kimi", "config.toml");
 function isKimiResumeFooter(text) {
   return /^To resume:\s*kimi\s+-r\s+/im.test(String(text ?? "").trim());
 }
 function kimiJsonPath() {
-  return path.join(os.homedir(), ".kimi", "kimi.json");
+  return path2.join(os.homedir(), ".kimi", "kimi.json");
 }
 function kimiSessionsDir() {
-  return path.join(os.homedir(), ".kimi", "sessions");
+  return path2.join(os.homedir(), ".kimi", "sessions");
 }
 function resolveRealCwd(cwd) {
-  return fs.realpathSync(cwd || process.cwd());
+  return fs2.realpathSync(cwd || process.cwd());
 }
 function md5CwdPath(realCwd) {
   return createHash("md5").update(realCwd).digest("hex");
 }
 function formatKimiResumeError(reason, { sessionId, cwd, errCode } = {}) {
-  const cwdBase = cwd ? path.basename(cwd) : "?";
+  const cwdBase = cwd ? path2.basename(cwd) : "?";
   if (reason === "invalid-uuid") return "invalid sessionId format; expected UUID.";
   if (reason === "no-prior-session") return `no prior kimi session for this directory (${cwdBase}). Use /polycli:ask --provider kimi to start one.`;
   if (reason === "kimi-json-malformed") return "~/.kimi/kimi.json is malformed; cannot resolve last session.";
@@ -1534,7 +1698,7 @@ function formatKimiResumeError(reason, { sessionId, cwd, errCode } = {}) {
 function readKimiLastSession(realCwd) {
   let raw;
   try {
-    raw = fs.readFileSync(kimiJsonPath(), "utf8");
+    raw = fs2.readFileSync(kimiJsonPath(), "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return { ok: false, reason: "no-prior-session" };
     return { ok: false, reason: "fs-error", errCode: error.code };
@@ -1558,14 +1722,14 @@ function validateKimiResumeTarget({ realCwd, cwdHash, sessionId }) {
   if (typeof sessionId !== "string" || !KIMI_UUID_RE.test(sessionId)) {
     return { ok: false, reason: "invalid-uuid" };
   }
-  const sessionDir = path.join(kimiSessionsDir(), cwdHash, sessionId);
-  const contextPath = path.join(sessionDir, "context.jsonl");
+  const sessionDir = path2.join(kimiSessionsDir(), cwdHash, sessionId);
+  const contextPath = path2.join(sessionDir, "context.jsonl");
   try {
-    const dirStat = fs.statSync(sessionDir);
+    const dirStat = fs2.statSync(sessionDir);
     if (!dirStat.isDirectory()) {
       return { ok: false, reason: "session-not-found" };
     }
-    const contextStat = fs.statSync(contextPath);
+    const contextStat = fs2.statSync(contextPath);
     if (!contextStat.isFile() || contextStat.size === 0) {
       return { ok: false, reason: "session-empty" };
     }
@@ -1574,7 +1738,7 @@ function validateKimiResumeTarget({ realCwd, cwdHash, sessionId }) {
     if (error.code === "ENOENT") {
       return {
         ok: false,
-        reason: fs.existsSync(sessionDir) ? "session-empty" : "session-not-found"
+        reason: fs2.existsSync(sessionDir) ? "session-empty" : "session-not-found"
       };
     }
     return { ok: false, reason: "fs-error", errCode: error.code, realCwd };
@@ -1647,7 +1811,7 @@ function resolveKimiResumeSession({
 }
 function readKimiDefaultModel() {
   try {
-    const text = fs.readFileSync(KIMI_CONFIG_PATH, "utf8");
+    const text = fs2.readFileSync(KIMI_CONFIG_PATH, "utf8");
     const match = text.match(/^default_model\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/m);
     return match ? match[1] ?? match[2] ?? match[3] ?? null : null;
   } catch {
@@ -4208,10 +4372,10 @@ import os4 from "node:os";
 import process4 from "node:process";
 
 // plugins/polycli/scripts/lib/state.mjs
-import crypto from "node:crypto";
-import fs2 from "node:fs";
+import crypto2 from "node:crypto";
+import fs3 from "node:fs";
 import os2 from "node:os";
-import path2 from "node:path";
+import path3 from "node:path";
 import { spawnSync as spawnSync2 } from "node:child_process";
 var STATE_VERSION = 1;
 var STATE_FILE_NAME = "state.json";
@@ -4219,99 +4383,7 @@ var JOBS_DIR_NAME = "jobs";
 var MAX_JOBS = 100;
 var POLYCLI_STATE_ROOT_ENV = "POLYCLI_STATE_ROOT";
 var PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
-var FALLBACK_STATE_ROOT = path2.join(os2.tmpdir(), "polycli-companion");
-function sleepSync(ms) {
-  if (ms <= 0) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-function writeJsonAtomic(filePath, value) {
-  fs2.mkdirSync(path2.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${crypto.randomUUID()}`;
-  const fd = fs2.openSync(tmpPath, "w", 438);
-  try {
-    fs2.writeFileSync(fd, `${JSON.stringify(value, null, 2)}
-`, "utf8");
-    fs2.fsyncSync(fd);
-  } finally {
-    fs2.closeSync(fd);
-  }
-  fs2.renameSync(tmpPath, filePath);
-  try {
-    const dirFd = fs2.openSync(path2.dirname(filePath), "r");
-    try {
-      fs2.fsyncSync(dirFd);
-    } finally {
-      fs2.closeSync(dirFd);
-    }
-  } catch (error) {
-    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
-      throw error;
-    }
-  }
-}
-function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 25 } = {}) {
-  fs2.mkdirSync(path2.dirname(lockPath), { recursive: true });
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const fd = fs2.openSync(
-        lockPath,
-        fs2.constants.O_CREAT | fs2.constants.O_EXCL | fs2.constants.O_WRONLY,
-        384
-      );
-      try {
-        fs2.writeFileSync(fd, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), "utf8");
-        fs2.fsyncSync(fd);
-      } finally {
-        fs2.closeSync(fd);
-      }
-      try {
-        return fn();
-      } finally {
-        try {
-          fs2.unlinkSync(lockPath);
-        } catch {
-        }
-      }
-    } catch (error2) {
-      if (error2.code !== "EEXIST") {
-        throw error2;
-      }
-      try {
-        const lock = JSON.parse(fs2.readFileSync(lockPath, "utf8"));
-        const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
-        const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
-        const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
-        let ownerAlive = false;
-        if (pid != null) {
-          try {
-            process.kill(pid, 0);
-            ownerAlive = true;
-          } catch (killError) {
-            if (killError.code === "ESRCH") {
-              fs2.unlinkSync(lockPath);
-              continue;
-            }
-            if (killError.code !== "EPERM") {
-              throw killError;
-            }
-            ownerAlive = true;
-          }
-        }
-        if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
-          fs2.unlinkSync(lockPath);
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      sleepSync(pollMs);
-    }
-  }
-  const error = new Error(`Timed out acquiring lockfile ${lockPath} after ${timeoutMs}ms`);
-  error.code = "ELOCKTIMEOUT";
-  throw error;
-}
+var FALLBACK_STATE_ROOT = path3.join(os2.tmpdir(), "polycli-companion");
 function runCommand2(command, args = [], options = {}) {
   const result = spawnSync2(command, args, {
     cwd: options.cwd,
@@ -4332,8 +4404,8 @@ function runCommand2(command, args = [], options = {}) {
   };
 }
 function computeWorkspaceSlug(workspaceRoot) {
-  const base = path2.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
-  const hash = crypto.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
+  const base = path3.basename(workspaceRoot).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "workspace";
+  const hash = crypto2.createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
   return `${base}-${hash}`;
 }
 function defaultState() {
@@ -4349,7 +4421,7 @@ function buildCorruptBackupPath(stateFile) {
 }
 function backupCorruptStateFile(stateFile) {
   try {
-    fs2.renameSync(stateFile, buildCorruptBackupPath(stateFile));
+    fs3.renameSync(stateFile, buildCorruptBackupPath(stateFile));
   } catch {
   }
 }
@@ -4357,14 +4429,14 @@ function describeStateRoot() {
   const polycliStateRoot = process.env[POLYCLI_STATE_ROOT_ENV];
   if (polycliStateRoot) {
     return {
-      stateRoot: path2.resolve(polycliStateRoot),
+      stateRoot: path3.resolve(polycliStateRoot),
       source: POLYCLI_STATE_ROOT_ENV
     };
   }
   const pluginData = process.env[PLUGIN_DATA_ENV];
   if (pluginData) {
     return {
-      stateRoot: path2.join(pluginData, "state"),
+      stateRoot: path3.join(pluginData, "state"),
       source: PLUGIN_DATA_ENV
     };
   }
@@ -4379,36 +4451,36 @@ function stateRootDir() {
 function resolveWorkspaceRoot(cwd = process.cwd()) {
   const result = runCommand2("git", ["rev-parse", "--show-toplevel"], { cwd });
   if (result.status === 0 && result.stdout.trim()) {
-    return path2.resolve(result.stdout.trim());
+    return path3.resolve(result.stdout.trim());
   }
-  return path2.resolve(cwd);
+  return path3.resolve(cwd);
 }
 function resolveStateDir(workspaceRoot) {
-  return path2.join(stateRootDir(), computeWorkspaceSlug(workspaceRoot));
+  return path3.join(stateRootDir(), computeWorkspaceSlug(workspaceRoot));
 }
 function resolveStateFile(workspaceRoot) {
-  return path2.join(resolveStateDir(workspaceRoot), STATE_FILE_NAME);
+  return path3.join(resolveStateDir(workspaceRoot), STATE_FILE_NAME);
 }
 function resolveJobsDir(workspaceRoot) {
-  return path2.join(resolveStateDir(workspaceRoot), JOBS_DIR_NAME);
+  return path3.join(resolveStateDir(workspaceRoot), JOBS_DIR_NAME);
 }
 function resolveJobFile(workspaceRoot, jobId) {
-  return path2.join(resolveJobsDir(workspaceRoot), `${jobId}.json`);
+  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.json`);
 }
 function resolveJobLogFile(workspaceRoot, jobId) {
-  return path2.join(resolveJobsDir(workspaceRoot), `${jobId}.log`);
+  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.log`);
 }
 function resolveJobConfigFile(workspaceRoot, jobId) {
-  return path2.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
+  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
 }
 function ensureStateDir(workspaceRoot) {
-  fs2.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
+  fs3.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
 }
 function loadState(workspaceRoot) {
   const stateFile = resolveStateFile(workspaceRoot);
   let raw;
   try {
-    raw = fs2.readFileSync(stateFile, "utf8");
+    raw = fs3.readFileSync(stateFile, "utf8");
   } catch {
     return defaultState();
   }
@@ -4527,7 +4599,7 @@ function writeJobFile(workspaceRoot, jobId, payload) {
 }
 function readJobFile(jobFile) {
   try {
-    return JSON.parse(fs2.readFileSync(jobFile, "utf8"));
+    return JSON.parse(fs3.readFileSync(jobFile, "utf8"));
   } catch {
     return null;
   }
@@ -4539,14 +4611,14 @@ function writeJobConfigFile(workspaceRoot, jobId, payload) {
 }
 function readJobConfigFile(configFile) {
   try {
-    return JSON.parse(fs2.readFileSync(configFile, "utf8"));
+    return JSON.parse(fs3.readFileSync(configFile, "utf8"));
   } catch {
     return null;
   }
 }
 function removeJobConfigFile(workspaceRoot, jobId) {
   try {
-    fs2.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
+    fs3.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
   } catch {
   }
 }
@@ -4557,168 +4629,6 @@ import path4 from "node:path";
 
 // packages/polycli-utils/src/ndjson.js
 import fs4 from "node:fs";
-
-// packages/polycli-utils/src/atomic-save.js
-import crypto2 from "node:crypto";
-import fs3 from "node:fs";
-import path3 from "node:path";
-import process3 from "node:process";
-var LockfileTimeoutError = class extends Error {
-  constructor(lockPath, timeoutMs) {
-    super(`Timed out acquiring lockfile ${lockPath} after ${timeoutMs}ms`);
-    this.code = "ELOCKTIMEOUT";
-    this.lockPath = lockPath;
-    this.timeoutMs = timeoutMs;
-  }
-};
-function sleepSync2(ms) {
-  if (ms <= 0) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-function ensureParentDir(filePath) {
-  fs3.mkdirSync(path3.dirname(filePath), { recursive: true });
-}
-function normalizeWriteOptions(options) {
-  if (typeof options === "string") {
-    return {
-      flag: "w",
-      mode: 438,
-      writeOptions: options
-    };
-  }
-  if (options && typeof options === "object") {
-    const { flag = "w", mode = 438, ...writeOptions } = options;
-    return {
-      flag,
-      mode,
-      writeOptions: Object.keys(writeOptions).length > 0 ? writeOptions : void 0
-    };
-  }
-  return {
-    flag: "w",
-    mode: 438,
-    writeOptions: void 0
-  };
-}
-function writeFileAtomicSync(filePath, contents, options = {}) {
-  ensureParentDir(filePath);
-  const tmpPath = `${filePath}.tmp.${process3.pid}.${Date.now()}.${crypto2.randomUUID()}`;
-  const { flag, mode, writeOptions } = normalizeWriteOptions(options);
-  const fd = fs3.openSync(tmpPath, flag, mode);
-  try {
-    fs3.writeFileSync(fd, contents, writeOptions);
-    fs3.fsyncSync(fd);
-  } finally {
-    fs3.closeSync(fd);
-  }
-  fs3.renameSync(tmpPath, filePath);
-  const dirFd = fs3.openSync(path3.dirname(filePath), "r");
-  try {
-    fs3.fsyncSync(dirFd);
-  } catch (error) {
-    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
-      throw error;
-    }
-  } finally {
-    fs3.closeSync(dirFd);
-  }
-}
-function writeFileAtomic(filePath, contents, options = {}) {
-  writeFileAtomicSync(filePath, contents, options);
-  return filePath;
-}
-function unlinkIfExists(filePath) {
-  try {
-    fs3.unlinkSync(filePath);
-  } catch {
-  }
-}
-function tryReclaimStaleLock(lockPath, staleMs) {
-  let raw;
-  try {
-    raw = fs3.readFileSync(lockPath, "utf8");
-  } catch {
-    return true;
-  }
-  let lock = null;
-  try {
-    lock = JSON.parse(raw);
-  } catch {
-    lock = null;
-  }
-  const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
-  const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
-  if (pid != null) {
-    try {
-      process3.kill(pid, 0);
-    } catch (killError) {
-      if (killError.code === "ESRCH") {
-        unlinkIfExists(lockPath);
-        return true;
-      }
-      if (killError.code !== "EPERM") {
-        throw killError;
-      }
-    }
-    const ageMs2 = acquiredAt == null ? null : Date.now() - acquiredAt;
-    if (ageMs2 != null && ageMs2 > staleMs) {
-      unlinkIfExists(lockPath);
-      return true;
-    }
-    return false;
-  }
-  let ageMs = acquiredAt == null ? null : Date.now() - acquiredAt;
-  if (ageMs == null) {
-    try {
-      ageMs = Date.now() - fs3.statSync(lockPath).mtimeMs;
-    } catch {
-      return true;
-    }
-  }
-  if (ageMs != null && ageMs > staleMs) {
-    unlinkIfExists(lockPath);
-    return true;
-  }
-  return false;
-}
-function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 25 } = {}) {
-  ensureParentDir(lockPath);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const fd = fs3.openSync(
-        lockPath,
-        fs3.constants.O_CREAT | fs3.constants.O_EXCL | fs3.constants.O_WRONLY,
-        384
-      );
-      try {
-        fs3.writeFileSync(fd, JSON.stringify({ pid: process3.pid, acquiredAt: Date.now() }), "utf8");
-        fs3.fsyncSync(fd);
-      } finally {
-        fs3.closeSync(fd);
-      }
-      try {
-        return fn();
-      } finally {
-        try {
-          fs3.unlinkSync(lockPath);
-        } catch {
-        }
-      }
-    } catch (error) {
-      if (error.code !== "EEXIST") {
-        throw error;
-      }
-      if (tryReclaimStaleLock(lockPath, staleMs)) {
-        continue;
-      }
-      sleepSync2(pollMs);
-    }
-  }
-  throw new LockfileTimeoutError(lockPath, timeoutMs);
-}
-
-// packages/polycli-utils/src/ndjson.js
 function safeParseLine(line) {
   try {
     return JSON.parse(line);
@@ -4752,7 +4662,7 @@ function readNdjson(filePath) {
 }
 function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs = 25, maxBytes = null, keepRatio = 0.5 } = {}) {
   const lockPath = `${filePath}.lock`;
-  return withLockfile2(lockPath, () => {
+  return withLockfile(lockPath, () => {
     ensureParentDir(filePath);
     let needsLeadingNewline = false;
     try {
@@ -5309,6 +5219,10 @@ function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason
   const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
   const runContext = config?.runContext;
   if (!runContext?.runId) return;
+  const recoverLock = `${resolveRunLedgerFile(workspaceRoot)}.recover.lock`;
+  withLockfile(recoverLock, () => writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result, reason }));
+}
+function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited" } = {}) {
   const events = readRunLedgerEvents(workspaceRoot);
   const command = runContext.command || config?.execution?.kind || job.kind || null;
   const provider = runContext.provider || config?.execution?.provider || job.provider || null;
@@ -5454,36 +5368,9 @@ async function waitForJob(workspaceRoot, jobId, { timeoutMs = 24e4, pollInterval
   return { job: timed ? refreshJob(workspaceRoot, timed) : null, waitTimedOut: true };
 }
 async function cancelJob(workspaceRoot, jobId) {
-  const job = getJob(workspaceRoot, jobId);
-  if (!job) {
-    return { cancelled: false, reason: "not_found", jobId };
-  }
-  if (!ACTIVE_STATUSES.has(job.status)) {
-    return { cancelled: false, reason: "not_cancellable", jobId };
-  }
-  try {
-    if (job.pid) {
-      await terminateProcessTree(job.pid, {
-        signal: "SIGINT",
-        forceSignal: "SIGKILL",
-        forceAfterMs: 2e3
-      });
-    }
-  } catch (error) {
-    return {
-      cancelled: false,
-      reason: "cancel_failed",
-      jobId,
-      error: error.message
-    };
-  }
-  const cancelledJob = {
-    ...job,
-    status: "cancelled",
-    pid: null,
-    finishedAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
+  let pidToKill = null;
   let reason = null;
+  const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
   const write = updateJobAtomically(workspaceRoot, jobId, (current) => {
     if (!current) {
       reason = "not_found";
@@ -5493,11 +5380,12 @@ async function cancelJob(workspaceRoot, jobId) {
       reason = "not_cancellable";
       return null;
     }
+    pidToKill = current.pid ?? null;
     const nextJob = {
       ...current,
       status: "cancelled",
       pid: null,
-      finishedAt: cancelledJob.finishedAt
+      finishedAt
     };
     return {
       job: nextJob,
@@ -5512,6 +5400,17 @@ async function cancelJob(workspaceRoot, jobId) {
   });
   if (!write.written) {
     return { cancelled: false, reason: reason || "not_cancellable", jobId };
+  }
+  if (pidToKill) {
+    try {
+      await terminateProcessTree(pidToKill, {
+        signal: "SIGINT",
+        forceSignal: "SIGKILL",
+        forceAfterMs: 2e3
+      });
+    } catch (error) {
+      return { cancelled: true, jobId, killWarning: error.message };
+    }
   }
   return { cancelled: true, jobId };
 }
@@ -6285,12 +6184,9 @@ function cacheProviderModel(workspaceRoot, provider, model) {
   if (typeof model !== "string" || !model.trim()) return;
   const cacheFile = resolveProviderModelCacheFile(workspaceRoot);
   fs9.mkdirSync(path8.dirname(cacheFile), { recursive: true });
-  fs9.writeFileSync(
-    cacheFile,
-    `${JSON.stringify({ ...readProviderModelCache(workspaceRoot), [provider]: model }, null, 2)}
-`,
-    "utf8"
-  );
+  withLockfile(`${cacheFile}.lock`, () => {
+    writeJsonAtomic(cacheFile, { ...readProviderModelCache(workspaceRoot), [provider]: model });
+  });
 }
 async function inspectProvider(provider) {
   const runtime = getProviderRuntime(provider);

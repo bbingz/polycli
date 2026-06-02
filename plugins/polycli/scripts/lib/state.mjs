@@ -4,6 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+// Single hardened implementation of the atomic-write + lockfile primitives. state.mjs used to
+// carry byte-for-byte copies of these; importing the shared utils version keeps the two in
+// lockstep (so e.g. the no-pid stale-lock reclaim fix lands here too) instead of silently drifting.
+import { withLockfile, writeJsonAtomic } from "@bbingz/polycli-utils/atomic-save";
+
 const STATE_VERSION = 1;
 const STATE_FILE_NAME = "state.json";
 const JOBS_DIR_NAME = "jobs";
@@ -11,105 +16,6 @@ const MAX_JOBS = 100;
 const POLYCLI_STATE_ROOT_ENV = "POLYCLI_STATE_ROOT";
 const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
 const FALLBACK_STATE_ROOT = path.join(os.tmpdir(), "polycli-companion");
-
-function sleepSync(ms) {
-  if (ms <= 0) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function writeJsonAtomic(filePath, value) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${crypto.randomUUID()}`;
-  const fd = fs.openSync(tmpPath, "w", 0o666);
-  try {
-    fs.writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  fs.renameSync(tmpPath, filePath);
-  try {
-    const dirFd = fs.openSync(path.dirname(filePath), "r");
-    try {
-      fs.fsyncSync(dirFd);
-    } finally {
-      fs.closeSync(dirFd);
-    }
-  } catch (error) {
-    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
-      throw error;
-    }
-  }
-}
-
-function withLockfile(lockPath, fn, { timeoutMs = 10_000, staleMs = 600_000, pollMs = 25 } = {}) {
-  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    try {
-      const fd = fs.openSync(
-        lockPath,
-        fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
-        0o600
-      );
-      try {
-        fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), "utf8");
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-      try {
-        return fn();
-      } finally {
-        try {
-          fs.unlinkSync(lockPath);
-        } catch {
-          // ignore
-        }
-      }
-    } catch (error) {
-      if (error.code !== "EEXIST") {
-        throw error;
-      }
-      try {
-        const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-        const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
-        const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
-        const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
-        let ownerAlive = false;
-
-        if (pid != null) {
-          try {
-            process.kill(pid, 0);
-            ownerAlive = true;
-          } catch (killError) {
-            if (killError.code === "ESRCH") {
-              fs.unlinkSync(lockPath);
-              continue;
-            }
-            if (killError.code !== "EPERM") {
-              throw killError;
-            }
-            ownerAlive = true;
-          }
-        }
-
-        if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
-          fs.unlinkSync(lockPath);
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      sleepSync(pollMs);
-    }
-  }
-
-  const error = new Error(`Timed out acquiring lockfile ${lockPath} after ${timeoutMs}ms`);
-  error.code = "ELOCKTIMEOUT";
-  throw error;
-}
 
 function runCommand(command, args = [], options = {}) {
   const result = spawnSync(command, args, {
