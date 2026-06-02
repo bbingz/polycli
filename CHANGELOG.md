@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-02 — Claude — repo cleanup: removed stale R8 worktrees + `release/v0.6.19` branch
+
+- After the v0.6.20 release, deleted the merged `release/v0.6.19` branch and the 3 abandoned `worktree-agent-*` git worktrees + their branches (all local-only — none on origin). Verified safe first: each branch had 0 commits not in `main` (so `git branch -d` succeeded, git-confirming they were merged); the worktrees' only uncommitted content was an identical, obsolete 2026-04-24 path-rewrite (`/home/user/…`→`/Users/bing/…`) on a snapshot ~41k lines behind `main`, locked by a dead pid (96484).
+- The single (identical across all 3) staged diff was saved to `/tmp/r8-worktree-staged-pathrewrite.patch` as insurance, but applying it is NOT advised: active files (README/docs) no longer carry those paths, and the remaining `/home/user/` references on `main` are historical records (CHANGELOG, `docs/archive/*`, `release-notes-v0.6.1`) that should not be rewritten.
+- Repo now has a single `main` branch, synced with origin, at v0.6.20.
+
 ## 2026-06-02 — Claude — docs: kimi-code v0.6.0 skill/docs refresh + README 11 providers (PR #8)
 
 - Closed the doc-debt deferred through v0.6.20 (merged via PR #8). The kimi skill prose + reference docs still described the legacy Python kimi-cli, contradicting the kimi-code v0.6.0 adapter: rewrote `kimi-cli-runtime/SKILL.md` (`-p` one-shot, structured `session.resume_hint` id, `--session`/`-C` resume, `~/.kimi-code/`, prompt-only review); fixed `kimi-prompting/SKILL.md` rule 4 (`--max-steps-per-turn` is config-level now), and the kimi rows in `docs/provider-paths.md` + `docs/polycli-v1-public-surface.md`.
