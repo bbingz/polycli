@@ -1066,16 +1066,16 @@ test("integration: kimi ask parses --resume-last, --resume, and --fresh", async 
     assert.equal(resumeLast.code, 0, resumeLast.stderr);
     let logged = readJsonLine(argLog);
     assert.equal(logged.argv.includes("-C"), true);
-    assert.equal(logged.argv.includes("-r"), false);
+    assert.equal(logged.argv.includes("--session"), false);
 
-    // --resume <id> -> -r <id> passed straight through to the CLI.
+    // --resume <id> -> --session <id> passed straight through to the CLI.
     const explicitResume = await runCompanion(
       ["rescue", "--provider", "kimi", "--resume", sessionId, "--json", "__reply=IGNORED"],
       { cwd, env }
     );
     assert.equal(explicitResume.code, 0, explicitResume.stderr);
     logged = readJsonLine(argLog);
-    assert.deepEqual(logged.argv.slice(logged.argv.indexOf("-r"), logged.argv.indexOf("-r") + 2), ["-r", sessionId]);
+    assert.deepEqual(logged.argv.slice(logged.argv.indexOf("--session"), logged.argv.indexOf("--session") + 2), ["--session", sessionId]);
 
     const fresh = await runCompanion(
       ["ask", "--provider", "kimi", "--fresh", "--json", "__reply=IGNORED"],
@@ -1083,7 +1083,7 @@ test("integration: kimi ask parses --resume-last, --resume, and --fresh", async 
     );
     assert.equal(fresh.code, 0, fresh.stderr);
     logged = readJsonLine(argLog);
-    assert.equal(logged.argv.includes("-r"), false);
+    assert.equal(logged.argv.includes("--session"), false);
     assert.equal(logged.argv.includes("-C"), false);
   } finally {
     fake.cleanup();
@@ -1276,7 +1276,13 @@ test("integration: review constrains kimi to one non-thinking turn", async () =>
 
     const logged = JSON.parse(fs.readFileSync(argLog, "utf8").trim());
     assert.match(logged.argv.join(" "), /--output-format stream-json/);
-    assert.doesNotMatch(logged.argv.join(" "), /--no-thinking|--max-steps-per-turn/);
+    // Check the legacy flags as discrete argv tokens, NOT as substrings of the joined string:
+    // the reviewed diff is embedded inside the single `-p <prompt>` element and can legitimately
+    // mention `--no-thinking`/`--max-steps-per-turn` as removed-code text (e.g. this very migration).
+    assert.ok(
+      !logged.argv.includes("--no-thinking") && !logged.argv.includes("--max-steps-per-turn"),
+      `kimi review must not pass legacy python kimi-cli flags as arguments; argv: ${logged.argv.join(" ")}`
+    );
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
@@ -1316,7 +1322,13 @@ test("integration: review --background preserves kimi runtime options and stored
 
     const logged = JSON.parse(fs.readFileSync(argLog, "utf8").trim());
     assert.match(logged.argv.join(" "), /--output-format stream-json/);
-    assert.doesNotMatch(logged.argv.join(" "), /--no-thinking|--max-steps-per-turn/);
+    // Check the legacy flags as discrete argv tokens, NOT as substrings of the joined string:
+    // the reviewed diff is embedded inside the single `-p <prompt>` element and can legitimately
+    // mention `--no-thinking`/`--max-steps-per-turn` as removed-code text (e.g. this very migration).
+    assert.ok(
+      !logged.argv.includes("--no-thinking") && !logged.argv.includes("--max-steps-per-turn"),
+      `kimi review must not pass legacy python kimi-cli flags as arguments; argv: ${logged.argv.join(" ")}`
+    );
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });

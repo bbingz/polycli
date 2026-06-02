@@ -1486,7 +1486,7 @@ function buildKimiInvocation({
   if (resumeLast) {
     args.push("-C");
   } else if (resumeSessionId) {
-    args.push("-r", resumeSessionId);
+    args.push("--session", resumeSessionId);
   }
   if (extraArgs.length > 0) args.push(...extraArgs);
   return { bin, args };
@@ -1523,7 +1523,7 @@ function parseKimiStreamText(text) {
     if (!event) continue;
     events.push(event);
     if (event.role === "tool") toolEvents.push(event);
-    if (!sessionId && event.role === "meta" && typeof event.session_id === "string" && event.session_id.length > 0) {
+    if (!sessionId && event.role === "meta" && event.type === "session.resume_hint" && typeof event.session_id === "string" && event.session_id.length > 0) {
       sessionId = event.session_id;
     }
     if (!model && typeof event.model === "string") model = event.model;

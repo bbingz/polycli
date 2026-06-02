@@ -39,13 +39,15 @@ export function buildKimiInvocation({
   // kimi-code one-shot mode: `-p <prompt> --output-format stream-json`. NOTE: `-p` cannot be
   // combined with `--yolo`, `--auto`, or `--plan` (the CLI rejects them) — `-p` is itself the
   // non-interactive headless runner, so no approval flag is passed. Resume is delegated to the
-  // CLI: `-r <id>` (per the CLI's own session.resume_hint) or `-C` to continue the last session.
+  // CLI: `--session <id>` (kimi-code v0.6.0's `-S, --session [id]`, per its own
+  // session.resume_hint) or `-C` to continue the last session. NOTE: the legacy python
+  // kimi-cli used `-r`; kimi-code v0.6.0 has no `-r` flag and rejects it.
   const args = ["-p", String(prompt ?? ""), "--output-format", "stream-json"];
   if (model) args.push("-m", model);
   if (resumeLast) {
     args.push("-C");
   } else if (resumeSessionId) {
-    args.push("-r", resumeSessionId);
+    args.push("--session", resumeSessionId);
   }
   if (extraArgs.length > 0) args.push(...extraArgs);
   return { bin, args };
@@ -96,6 +98,7 @@ export function parseKimiStreamText(text) {
     // fabricate an id from a UUID the user asked about).
     if (!sessionId
       && event.role === "meta"
+      && event.type === "session.resume_hint"
       && typeof event.session_id === "string"
       && event.session_id.length > 0) {
       sessionId = event.session_id;

@@ -29,7 +29,7 @@ function withFakeKimiBin(source, fn) {
 }
 
 const RESUME_HINT = (id) =>
-  JSON.stringify({ role: "meta", type: "session.resume_hint", session_id: id, command: `kimi -r ${id}` });
+  JSON.stringify({ role: "meta", type: "session.resume_hint", session_id: id, command: `kimi --session ${id}` });
 
 test("buildKimiInvocation targets kimi-code one-shot -p + stream-json (no --yolo/--print/--input-format)", () => {
   const invocation = buildKimiInvocation({
@@ -45,7 +45,7 @@ test("buildKimiInvocation targets kimi-code one-shot -p + stream-json (no --yolo
     "stream-json",
     "-m",
     "kimi-for-coding",
-    "-r",
+    "--session",
     "session_123e4567-e89b-42d3-a456-426614174000",
   ]);
 });
@@ -77,6 +77,20 @@ test("parseKimiStreamText keeps assistant text, tool events, and reads the struc
   assert.equal(parsed.toolEvents.length, 1);
   // The full `session_<uuid>` id is preserved (not the bare UUID a prose scan would yield).
   assert.equal(parsed.sessionId, "session_a3e525ea-0ad2-49b0-9feb-477ebd05a9ac");
+});
+
+test("parseKimiStreamText only adopts session_id from a session.resume_hint meta event", () => {
+  // A meta event of a different type that happens to carry a session_id must NOT be promoted —
+  // sessionId comes solely from the documented session.resume_hint event.
+  const parsed = parseKimiStreamText(
+    [
+      '{"role":"meta","type":"session.start","session_id":"session_should-not-be-used"}',
+      '{"role":"assistant","content":"hi"}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "hi");
+  assert.equal(parsed.sessionId, null);
 });
 
 test("extractKimiText supports both string and array assistant content", () => {
