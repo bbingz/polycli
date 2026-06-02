@@ -98,7 +98,10 @@ export function assertReviewProviderSupported(provider) {
 
 const REVIEW_HARD_CONSTRAINTS = {
   kimi() {
-    return { yolo: false, extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] };
+    // kimi-code v0.6.0 dropped --no-thinking/--max-steps-per-turn and its -p one-shot mode rejects
+    // --plan/--auto, so there is no flag-based read-only lever. Review is prompt-only (the review
+    // prompt forbids tools/edits), matching the minimax tier. No extra flags are emitted.
+    return {};
   },
   qwen() {
     return {

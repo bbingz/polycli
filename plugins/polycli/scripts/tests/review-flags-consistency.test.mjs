@@ -54,8 +54,9 @@ test("assertNoReviewConstraintOverride rejects a bad value on the declared readO
       `${provider} should reject ${key}=yolo`
     );
   }
-  // false-only guards (opencode/cmd/kimi): a non-false value is rejected.
-  for (const provider of ["opencode", "cmd", "kimi"]) {
+  // false-only guards (opencode/cmd): a non-false value is rejected. (kimi review is prompt-only
+  // under kimi-code, like minimax — it has no readOnlyOptionKey to guard.)
+  for (const provider of ["opencode", "cmd"]) {
     const key = REVIEW_FLAG_EXPECTATIONS[provider].readOnlyOptionKey;
     assert.throws(
       () => buildReviewRuntimeOptions({ provider, runtimeOptions: { [key]: true } }),

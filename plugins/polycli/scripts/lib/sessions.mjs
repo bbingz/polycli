@@ -19,7 +19,7 @@ function storeRoot(provider, homedir) {
     case "claude":
       return path.join(homedir, ".claude", "projects");
     case "kimi":
-      return path.join(homedir, ".kimi", "sessions");
+      return path.join(homedir, ".kimi-code", "sessions");
     default:
       return null;
   }
@@ -55,12 +55,21 @@ export function deriveSessionArtifactCandidate({ provider, sessionId, workspaceR
       };
     }
     case "kimi": {
-      // Reuses the exact derivation from polycli-runtime/src/kimi.js:39-41,86:
-      // ~/.kimi/sessions/<md5(realCwd)>/<sessionId>/ — a per-session DIR.
-      const cwdHash = createHash("md5").update(workspaceRoot).digest("hex");
+      // kimi-code v0.6.0 store (verified on disk): ~/.kimi-code/sessions/
+      // wd_<basename>_<sha256(realCwd)[:12]>/<sessionId>/ — a per-session DIR. sessionId is the
+      // structured `session_<uuid>` captured from the stream-json resume_hint event, which is
+      // also the exact dir name. Use the realpath of the cwd (the store keys by realpath).
+      let realCwd = workspaceRoot;
+      try {
+        realCwd = fs.realpathSync(workspaceRoot);
+      } catch {
+        // workspace dir gone — fall back to the given path; recordArtifactPath will reject it
+        // if it does not resolve under the store root.
+      }
+      const slug = `wd_${path.basename(realCwd)}_${createHash("sha256").update(realCwd).digest("hex").slice(0, 12)}`;
       return {
         provider: "kimi",
-        path: path.join(homedir, ".kimi", "sessions", cwdHash, sessionId),
+        path: path.join(homedir, ".kimi-code", "sessions", slug, sessionId),
         kind: "dir",
       };
     }

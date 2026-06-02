@@ -1659,156 +1659,14 @@ function runGeminiPromptStreaming({
 import fs2 from "node:fs";
 import os from "node:os";
 import path2 from "node:path";
-import { createHash } from "node:crypto";
 var KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
 var DEFAULT_TIMEOUT_MS4 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS4 = 3e4;
-var PROMPT_STDIN_THRESHOLD_BYTES = 1e5;
 var KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var KIMI_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var TRANSIENT_PROBE_ERROR_PATTERNS4 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
-var KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path2.join(os.homedir(), ".kimi", "config.toml");
-function isKimiResumeFooter(text) {
-  return /^To resume:\s*kimi\s+-r\s+/im.test(String(text ?? "").trim());
-}
-function kimiJsonPath() {
-  return path2.join(os.homedir(), ".kimi", "kimi.json");
-}
-function kimiSessionsDir() {
-  return path2.join(os.homedir(), ".kimi", "sessions");
-}
-function resolveRealCwd(cwd) {
-  return fs2.realpathSync(cwd || process.cwd());
-}
-function md5CwdPath(realCwd) {
-  return createHash("md5").update(realCwd).digest("hex");
-}
-function formatKimiResumeError(reason, { sessionId, cwd, errCode } = {}) {
-  const cwdBase = cwd ? path2.basename(cwd) : "?";
-  if (reason === "invalid-uuid") return "invalid sessionId format; expected UUID.";
-  if (reason === "no-prior-session") return `no prior kimi session for this directory (${cwdBase}). Use /polycli:ask --provider kimi to start one.`;
-  if (reason === "kimi-json-malformed") return "~/.kimi/kimi.json is malformed; cannot resolve last session.";
-  if (reason === "session-not-found") return `session ${sessionId} not found for this directory (${cwdBase}).`;
-  if (reason === "session-empty") return `session ${sessionId} has no stored messages; cannot resume.`;
-  if (reason === "fs-error") return `filesystem access failed${errCode ? ` \u2014 ${errCode}` : ""}. Check permissions on ~/.kimi/.`;
-  return `kimi resume validation failed: ${reason}`;
-}
-function readKimiLastSession(realCwd) {
-  let raw;
-  try {
-    raw = fs2.readFileSync(kimiJsonPath(), "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") return { ok: false, reason: "no-prior-session" };
-    return { ok: false, reason: "fs-error", errCode: error.code };
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ok: false, reason: "kimi-json-malformed" };
-  }
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.work_dirs)) {
-    return { ok: false, reason: "kimi-json-malformed" };
-  }
-  const entry = parsed.work_dirs.find((item) => item && item.path === realCwd && item.kaos === "local");
-  if (!entry || typeof entry.last_session_id !== "string" || entry.last_session_id.length === 0) {
-    return { ok: false, reason: "no-prior-session" };
-  }
-  return { ok: true, sessionId: entry.last_session_id };
-}
-function validateKimiResumeTarget({ realCwd, cwdHash, sessionId }) {
-  if (typeof sessionId !== "string" || !KIMI_UUID_RE.test(sessionId)) {
-    return { ok: false, reason: "invalid-uuid" };
-  }
-  const sessionDir = path2.join(kimiSessionsDir(), cwdHash, sessionId);
-  const contextPath = path2.join(sessionDir, "context.jsonl");
-  try {
-    const dirStat = fs2.statSync(sessionDir);
-    if (!dirStat.isDirectory()) {
-      return { ok: false, reason: "session-not-found" };
-    }
-    const contextStat = fs2.statSync(contextPath);
-    if (!contextStat.isFile() || contextStat.size === 0) {
-      return { ok: false, reason: "session-empty" };
-    }
-    return { ok: true };
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return {
-        ok: false,
-        reason: fs2.existsSync(sessionDir) ? "session-empty" : "session-not-found"
-      };
-    }
-    return { ok: false, reason: "fs-error", errCode: error.code, realCwd };
-  }
-}
-function resolveKimiResumeSession({
-  cwd,
-  resumeSessionId = null,
-  resumeLast = false,
-  fresh = false
-} = {}) {
-  let realCwd;
-  try {
-    realCwd = resolveRealCwd(cwd);
-  } catch (error) {
-    return {
-      ok: false,
-      status: 1,
-      error: formatKimiResumeError("fs-error", { errCode: error.code }),
-      reason: "fs-error",
-      cwdHash: null,
-      realCwd: null
-    };
-  }
-  const cwdHash = md5CwdPath(realCwd);
-  if (fresh || !resumeSessionId && !resumeLast) {
-    return { ok: true, sessionId: null, cwdHash, realCwd };
-  }
-  if (resumeSessionId && resumeLast) {
-    return {
-      ok: false,
-      status: 2,
-      error: "Choose only one of --resume-last, --resume, or --fresh.",
-      reason: "mutually-exclusive-resume-flags",
-      cwdHash,
-      realCwd
-    };
-  }
-  let sessionId = resumeSessionId;
-  if (resumeLast) {
-    const last = readKimiLastSession(realCwd);
-    if (!last.ok) {
-      return {
-        ok: false,
-        status: last.reason === "invalid-uuid" ? 2 : 1,
-        error: formatKimiResumeError(last.reason, { cwd: realCwd, errCode: last.errCode }),
-        reason: last.reason,
-        cwdHash,
-        realCwd
-      };
-    }
-    sessionId = last.sessionId;
-  }
-  const validation = validateKimiResumeTarget({ realCwd, cwdHash, sessionId });
-  if (!validation.ok) {
-    return {
-      ok: false,
-      status: validation.reason === "invalid-uuid" ? 2 : 1,
-      error: formatKimiResumeError(validation.reason, {
-        sessionId,
-        cwd: realCwd,
-        errCode: validation.errCode
-      }),
-      reason: validation.reason,
-      cwdHash,
-      realCwd
-    };
-  }
-  return { ok: true, sessionId, cwdHash, realCwd };
-}
+var KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path2.join(os.homedir(), ".kimi-code", "config.toml");
 function readKimiDefaultModel() {
   try {
     const text = fs2.readFileSync(KIMI_CONFIG_PATH, "utf8");
@@ -1822,28 +1680,19 @@ function buildKimiInvocation({
   prompt,
   model = null,
   resumeSessionId = null,
-  yolo = true,
+  resumeLast = false,
   extraArgs = [],
   bin = KIMI_BIN
 } = {}) {
-  const promptText = String(prompt ?? "");
-  const useStdin = Buffer.byteLength(promptText, "utf8") >= PROMPT_STDIN_THRESHOLD_BYTES;
-  const args = ["--print", "--output-format", "stream-json"];
-  if (useStdin) {
-    args.push("--input-format", "text");
-  } else {
-    args.unshift("-p", promptText);
-  }
-  if (yolo) args.push("--yolo");
+  const args = ["-p", String(prompt ?? ""), "--output-format", "stream-json"];
   if (model) args.push("-m", model);
-  if (resumeSessionId) args.push("-r", resumeSessionId);
+  if (resumeLast) {
+    args.push("-C");
+  } else if (resumeSessionId) {
+    args.push("--session", resumeSessionId);
+  }
   if (extraArgs.length > 0) args.push(...extraArgs);
-  return {
-    bin,
-    args,
-    input: useStdin ? promptText : void 0,
-    useStdin
-  };
+  return { bin, args };
 }
 function parseKimiEventLine(line) {
   const trimmed = String(line ?? "").trim();
@@ -1871,16 +1720,20 @@ function parseKimiStreamText(text) {
   const toolEvents = [];
   let response = "";
   let model = null;
+  let sessionId = null;
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
     const event = parseKimiEventLine(rawLine);
     if (!event) continue;
     events.push(event);
     if (event.role === "tool") toolEvents.push(event);
+    if (!sessionId && event.role === "meta" && event.type === "session.resume_hint" && typeof event.session_id === "string" && event.session_id.length > 0) {
+      sessionId = event.session_id;
+    }
     if (!model && typeof event.model === "string") model = event.model;
     if (!model && typeof event.message?.model === "string") model = event.message.model;
     response += extractKimiText(event);
   }
-  return { events, toolEvents, response, model };
+  return { events, toolEvents, response, model, sessionId };
 }
 function getKimiAvailability(cwd) {
   return binaryAvailable(KIMI_BIN, ["-V"], { cwd });
@@ -1907,8 +1760,7 @@ function getKimiAuthStatus(cwd, { promptRunner = runKimiPrompt } = {}) {
   const result = promptRunner({
     prompt: "ping",
     cwd,
-    timeout: AUTH_CHECK_TIMEOUT_MS4,
-    extraArgs: ["--max-steps-per-turn", "1"]
+    timeout: AUTH_CHECK_TIMEOUT_MS4
   });
   return buildKimiAuthStatus(result);
 }
@@ -1920,30 +1772,13 @@ function runKimiPrompt({
   extraArgs = [],
   resumeSessionId = null,
   resumeLast = false,
-  fresh = false,
-  yolo = true,
   defaultModel = null,
   bin = KIMI_BIN
 } = {}) {
-  const resume = resolveKimiResumeSession({ cwd, resumeSessionId, resumeLast, fresh });
-  if (!resume.ok) {
-    return { ok: false, error: resume.error, status: resume.status };
-  }
-  const invocation = buildKimiInvocation({
-    prompt,
-    model,
-    resumeSessionId: resume.sessionId,
-    yolo,
-    extraArgs,
-    bin
-  });
-  const result = runCommand(invocation.bin, invocation.args, {
-    cwd,
-    timeout,
-    input: invocation.input
-  });
+  const invocation = buildKimiInvocation({ prompt, model, resumeSessionId, resumeLast, extraArgs, bin });
+  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
   if (result.error) {
-    const error2 = result.error.message;
+    const error2 = result.error.code === "ETIMEDOUT" ? `kimi timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
     return { ok: false, error: error2, errorCode: classifyProviderFailure(error2, { provider: "kimi" }) };
   }
   if (result.status !== 0) {
@@ -1956,22 +1791,18 @@ function runKimiPrompt({
     };
   }
   const parsed = parseKimiStreamText(result.stdout);
-  const session = resolveSessionId({
-    stdout: result.stdout,
-    stderr: result.stderr,
-    priority: ["stdout", "stderr", "file"]
-  });
   const error = parsed.response.trim() ? null : "kimi produced no visible text";
-  return withKimiResumeWarnings({
+  return {
     ok: Boolean(parsed.response.trim()),
     response: parsed.response,
     events: parsed.events,
     toolEvents: parsed.toolEvents,
-    sessionId: session.sessionId,
+    sessionId: parsed.sessionId,
     model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
     error,
-    errorCode: classifyProviderFailure(error, { provider: "kimi" })
-  }, resume.sessionId);
+    errorCode: classifyProviderFailure(error, { provider: "kimi" }),
+    status: result.status
+  };
 }
 function runKimiPromptStreaming({
   prompt,
@@ -1981,32 +1812,18 @@ function runKimiPromptStreaming({
   extraArgs = [],
   resumeSessionId = null,
   resumeLast = false,
-  fresh = false,
-  yolo = true,
   defaultModel = null,
   onEvent = () => {
   },
   bin = KIMI_BIN,
   spawnImpl
 } = {}) {
-  const resume = resolveKimiResumeSession({ cwd, resumeSessionId, resumeLast, fresh });
-  if (!resume.ok) {
-    return Promise.resolve({ ok: false, error: resume.error, status: resume.status });
-  }
-  const invocation = buildKimiInvocation({
-    prompt,
-    model,
-    resumeSessionId: resume.sessionId,
-    yolo,
-    extraArgs,
-    bin
-  });
+  const invocation = buildKimiInvocation({ prompt, model, resumeSessionId, resumeLast, extraArgs, bin });
   return spawnStreamingCommand({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
     env: { ...process.env },
-    input: invocation.input,
     timeout,
     spawnImpl,
     onStdoutLine(line) {
@@ -2020,36 +1837,19 @@ function runKimiPromptStreaming({
     }
   }).then((result) => {
     const parsed = parseKimiStreamText(result.stdout);
-    const session = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"]
-    });
     const hasVisibleText = Boolean(parsed.response.trim());
-    const resumeFooterOnly = hasVisibleText && !result.ok && isKimiResumeFooter(result.error);
-    const ok = (result.ok || resumeFooterOnly) && hasVisibleText;
+    const ok = result.ok && hasVisibleText;
     const error = ok ? null : result.ok ? "kimi produced no visible text" : result.error;
-    return withKimiResumeWarnings({
+    return {
       ...result,
       ...parsed,
-      sessionId: session.sessionId,
+      sessionId: parsed.sessionId,
       model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
       ok,
       error,
       errorCode: classifyProviderFailure(error, { provider: "kimi" })
-    }, resume.sessionId);
+    };
   });
-}
-function withKimiResumeWarnings(result, requestedSessionId) {
-  if (!requestedSessionId || !result.ok || !result.sessionId || result.sessionId === requestedSessionId) {
-    return result;
-  }
-  const warning = `Warning: requested --resume ${requestedSessionId} did not match returned session ${result.sessionId}`;
-  return {
-    ...result,
-    resumeMismatched: true,
-    warnings: [...result.warnings || [], warning]
-  };
 }
 
 // packages/polycli-runtime/src/qwen.js
@@ -4345,10 +4145,12 @@ var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     readOnlyValue: null
   }),
   kimi: Object.freeze({
-    expectFlags: Object.freeze([]),
-    extraArgTokens: Object.freeze(["--no-thinking", "--max-steps-per-turn"]),
-    readOnlyOptionKey: "yolo",
-    readOnlyValue: null
+    // kimi-code v0.6.0: the legacy --no-thinking/--max-steps-per-turn review levers were removed
+    // upstream and -p one-shot mode rejects --plan/--auto, so review is prompt-only (extraArgTokens
+    // empty, like minimax). expectFlags are the load-bearing INVOCATION flags the runtime depends on
+    // (-p/--prompt + --output-format), so the drift check warns if kimi-code renames or drops them.
+    expectFlags: Object.freeze(["--prompt", "--output-format"]),
+    extraArgTokens: Object.freeze([])
   }),
   agy: Object.freeze({
     expectFlags: Object.freeze([]),
@@ -4994,13 +4796,13 @@ function buildRunExplanation(events, runId) {
 import fs5 from "node:fs";
 import os3 from "node:os";
 import path5 from "node:path";
-import { createHash as createHash2 } from "node:crypto";
+import { createHash } from "node:crypto";
 function storeRoot(provider, homedir) {
   switch (provider) {
     case "claude":
       return path5.join(homedir, ".claude", "projects");
     case "kimi":
-      return path5.join(homedir, ".kimi", "sessions");
+      return path5.join(homedir, ".kimi-code", "sessions");
     default:
       return null;
   }
@@ -5027,10 +4829,15 @@ function deriveSessionArtifactCandidate({ provider, sessionId, workspaceRoot, ho
       };
     }
     case "kimi": {
-      const cwdHash = createHash2("md5").update(workspaceRoot).digest("hex");
+      let realCwd = workspaceRoot;
+      try {
+        realCwd = fs5.realpathSync(workspaceRoot);
+      } catch {
+      }
+      const slug = `wd_${path5.basename(realCwd)}_${createHash("sha256").update(realCwd).digest("hex").slice(0, 12)}`;
       return {
         provider: "kimi",
-        path: path5.join(homedir, ".kimi", "sessions", cwdHash, sessionId),
+        path: path5.join(homedir, ".kimi-code", "sessions", slug, sessionId),
         kind: "dir"
       };
     }
@@ -5470,13 +5277,6 @@ function buildPromptRuntimeOptions({
       yolo: true
     };
   }
-  if (kind === "ask" && provider === "kimi") {
-    return {
-      ...runtimeOptions,
-      yolo: false,
-      extraArgs: mergeExtraArgs(runtimeOptions, ["--plan", "--no-thinking", "--max-steps-per-turn", "1"])
-    };
-  }
   if (kind === "ask" && provider === "claude") {
     return {
       ...runtimeOptions,
@@ -5665,7 +5465,7 @@ function assertReviewProviderSupported(provider) {
 }
 var REVIEW_HARD_CONSTRAINTS = {
   kimi() {
-    return { yolo: false, extraArgs: ["--no-thinking", "--max-steps-per-turn", "1"] };
+    return {};
   },
   qwen() {
     return {

@@ -24,7 +24,7 @@ test("every provider declares expectFlags + extraArgTokens as `--`-flag arrays (
   // extraArgs carry --extensions/--allowed-mcp-server-names while its help/drift
   // flags are --approval-mode/--policy.
   assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.gemini.extraArgTokens, ["--extensions", "--allowed-mcp-server-names"]);
-  assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.kimi.extraArgTokens, ["--no-thinking", "--max-steps-per-turn"]);
+  assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.kimi.extraArgTokens, []);
 });
 
 test("claude/gemini/qwen carry the exact drift expect tokens", () => {
@@ -50,7 +50,8 @@ test("read-only option keys mirror assertNoReviewConstraintOverride", () => {
   assert.equal(REVIEW_FLAG_EXPECTATIONS.opencode.readOnlyOptionKey, "skipPermissions");
   assert.equal(REVIEW_FLAG_EXPECTATIONS.opencode.readOnlyValue, null);
   assert.equal(REVIEW_FLAG_EXPECTATIONS.cmd.readOnlyOptionKey, "yolo");
-  assert.equal(REVIEW_FLAG_EXPECTATIONS.kimi.readOnlyOptionKey, "yolo");
+  // kimi review is prompt-only under kimi-code (no flag-based read-only lever), like minimax.
+  assert.equal(REVIEW_FLAG_EXPECTATIONS.kimi.readOnlyOptionKey, undefined);
   assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.copilot.readOnlyOptionKeys, [
     "allowAllTools",
     "allowAllPaths",

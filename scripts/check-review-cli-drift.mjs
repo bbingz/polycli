@@ -131,6 +131,13 @@ const CHECKS = [
     notes: "Review hard constraint uses --permission-mode plan.",
   },
   {
+    provider: "kimi",
+    bin: process.env.KIMI_CLI_BIN || "kimi",
+    helpArgs: ["--help"],
+    expect: REVIEW_FLAG_EXPECTATIONS.kimi.expectFlags,
+    notes: "kimi-code one-shot uses -p/--prompt + --output-format stream-json (review is prompt-only; -p mode rejects --plan/--auto). Drift here means the runtime invocation contract changed.",
+  },
+  {
     provider: "agy",
     bin: process.env.AGY_CLI_BIN || "agy",
     helpArgs: ["--help"],
