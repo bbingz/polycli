@@ -7,6 +7,10 @@ import { spawnStreamingCommand } from "./spawn.js";
 const COPILOT_BIN = process.env.COPILOT_CLI_BIN || "copilot";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const COPILOT_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+export const TRANSIENT_PROBE_ERROR_PATTERNS = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
+];
 
 function collectCopilotContentText(content) {
   if (typeof content === "string") {
@@ -179,22 +183,30 @@ export function getCopilotAvailability(cwd) {
   return binaryAvailable(COPILOT_BIN, ["--version"], { cwd });
 }
 
-export function getCopilotAuthStatus(cwd) {
-  const result = runCopilotPrompt({
+export function getCopilotAuthStatus(cwd, { promptRunner = runCopilotPrompt } = {}) {
+  const result = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS,
   });
 
-  if (!result.ok) {
-    return { loggedIn: false, detail: result.error };
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: result.model ?? null,
+    };
   }
 
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: result.model ?? null,
-  };
+  // A timeout / 429 / transient probe failure must NOT regress to loggedIn:false.
+  const detail = String(result.error ?? "").trim() || "copilot auth probe failed";
+  if (COPILOT_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (TRANSIENT_PROBE_ERROR_PATTERNS.some((pattern) => pattern.test(detail))) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+  }
+  return { loggedIn: false, detail };
 }
 
 export function runCopilotPrompt({

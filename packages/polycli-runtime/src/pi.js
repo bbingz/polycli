@@ -232,7 +232,7 @@ export function runPiPrompt({
 
   const parsed = parsePiStreamText(result.stdout);
   const resolvedSession = resolveSessionId({
-    stdout: result.stdout,
+    stdout: "",
     stderr: result.stderr,
     priority: ["stdout", "stderr", "file"],
   });
@@ -246,7 +246,9 @@ export function runPiPrompt({
     ok: result.status === 0 && !resultError && !providerError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+    // pi's session id comes from its structured `session` event; stdout is blanked so a UUID
+    // in the answer prose can never be promoted to a fabricated id (stderr/file still allowed).
+    sessionId: parsed.sessionId ?? resolvedSession.sessionId ?? null,
     model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
     error: result.status === 0
       ? (resultError || providerError || (hasVisibleText ? null : "pi produced no visible text"))
@@ -297,7 +299,7 @@ export function runPiPromptStreaming({
   }).then((result) => {
     const parsed = parsePiStreamText(result.stdout);
     const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
+      stdout: "",
       stderr: result.stderr,
       priority: ["stdout", "stderr", "file"],
     });
@@ -309,7 +311,8 @@ export function runPiPromptStreaming({
     return {
       ...result,
       ...parsed,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      // stdout blanked so a UUID in the answer prose is never promoted to a fabricated id.
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId ?? null,
       model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
       ok: result.ok && !resultError && !providerError && hasVisibleText,
       error: result.ok

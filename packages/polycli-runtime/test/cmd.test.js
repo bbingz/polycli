@@ -165,3 +165,45 @@ test("runCmdPromptStreaming emits text events for plain stdout lines", async () 
     { type: "text_delta", delta: "world" },
   ]);
 });
+
+test("runCmdPrompt never fabricates a sessionId from a UUID in prose stdout", () => {
+  withFakeCmdBin(
+    `#!/usr/bin/env node
+process.stdout.write("Sure, here is a uuid: 123e4567-e89b-42d3-a456-426614174000\\n");
+`,
+    ({ root, bin }) => {
+      const result = runCmdPrompt({ prompt: "give me a uuid", cwd: root, bin });
+
+      assert.equal(result.ok, true);
+      assert.match(result.response, /123e4567-e89b-42d3-a456-426614174000/);
+      assert.equal(result.sessionId, null);
+    }
+  );
+});
+
+test("runCmdPromptStreaming never fabricates a sessionId from prose", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+  child.unref = () => {};
+
+  const result = await runCmdPromptStreaming({
+    prompt: "give me a uuid",
+    cwd: process.cwd(),
+    timeout: 5_000,
+    onEvent() {},
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", "here is one: 123e4567-e89b-42d3-a456-426614174000\n");
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.response, /123e4567-e89b-42d3-a456-426614174000/);
+  assert.equal(result.sessionId, null);
+});

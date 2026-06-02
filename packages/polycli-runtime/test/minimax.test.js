@@ -7,6 +7,7 @@ import {
   buildMiniMaxInvocation,
   extractMiniMaxLogPath,
   extractMiniMaxResponseFromLogText,
+  getMiniMaxAuthStatus,
   parseMiniMaxResponseBlocks,
   runMiniMaxPrompt,
   stripAnsiSgr,
@@ -181,4 +182,35 @@ test("minimax helpers replay a captured real cli fixture", () => {
 
   assert.ok(extractMiniMaxLogPath(stream));
   assert.deepEqual(extractMiniMaxResponseFromLogText(logText), meta.expected);
+});
+
+test("getMiniMaxAuthStatus stays inconclusive (loggedIn:true) on a probe timeout", async () => {
+  const auth = await getMiniMaxAuthStatus(process.cwd(), {
+    runner: () => ({
+      error: { code: "ETIMEDOUT", message: "spawnSync mmx ETIMEDOUT" },
+      status: null,
+      stdout: "",
+      stderr: "",
+    }),
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /inconclusive/i);
+});
+
+test("getMiniMaxAuthStatus stays inconclusive on a transient non-zero exit", async () => {
+  const auth = await getMiniMaxAuthStatus(process.cwd(), {
+    runner: () => ({ error: null, status: 1, stdout: "", stderr: "503 service unavailable, try again" }),
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /inconclusive/i);
+});
+
+test("getMiniMaxAuthStatus reports loggedIn=false on an explicit auth failure", async () => {
+  const auth = await getMiniMaxAuthStatus(process.cwd(), {
+    runner: () => ({ error: null, status: 1, stdout: "", stderr: "401 unauthorized: invalid api key" }),
+  });
+
+  assert.equal(auth.loggedIn, false);
 });

@@ -9,6 +9,10 @@ const CLAUDE_BIN = process.env.CLAUDE_CLI_BIN || "claude";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const PROMPT_STDIN_THRESHOLD = 100_000;
+const CLAUDE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+export const TRANSIENT_PROBE_ERROR_PATTERNS = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
+];
 
 function collectTextFromContent(content) {
   if (typeof content === "string") {
@@ -213,22 +217,31 @@ export function getClaudeAvailability(cwd) {
   return binaryAvailable(CLAUDE_BIN, ["--version"], { cwd });
 }
 
-export function getClaudeAuthStatus(cwd) {
-  const result = runClaudePrompt({
+export function getClaudeAuthStatus(cwd, { promptRunner = runClaudePrompt } = {}) {
+  const result = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS,
   });
 
-  if (!result.ok) {
-    return { loggedIn: false, detail: result.error };
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: result.model ?? null,
+    };
   }
 
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: null,
-  };
+  // A timeout / 429 / transient probe failure must NOT regress to loggedIn:false
+  // (the probe is inconclusive, not proof of logout).
+  const detail = String(result.error ?? "").trim() || "claude auth probe failed";
+  if (CLAUDE_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (TRANSIENT_PROBE_ERROR_PATTERNS.some((pattern) => pattern.test(detail))) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+  }
+  return { loggedIn: false, detail };
 }
 
 export function runClaudePrompt({

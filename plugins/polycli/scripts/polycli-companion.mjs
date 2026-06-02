@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { parseArgs } from "@bbingz/polycli-utils/args";
+import { withLockfile, writeJsonAtomic } from "@bbingz/polycli-utils/atomic-save";
 import { getProviderRuntime, listProviderRuntimes, runProviderPromptStreaming } from "@bbingz/polycli-runtime";
 
 import {
@@ -260,11 +261,12 @@ function cacheProviderModel(workspaceRoot, provider, model) {
   if (typeof model !== "string" || !model.trim()) return;
   const cacheFile = resolveProviderModelCacheFile(workspaceRoot);
   fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-  fs.writeFileSync(
-    cacheFile,
-    `${JSON.stringify({ ...readProviderModelCache(workspaceRoot), [provider]: model }, null, 2)}\n`,
-    "utf8"
-  );
+  // Serialize the read-modify-write under a lock and write atomically. A bare writeFileSync RMW
+  // let two concurrent invocations against the same workspace each read the old cache, add only
+  // their own provider, and last-writer-wins — silently dropping the other's freshly-cached model.
+  withLockfile(`${cacheFile}.lock`, () => {
+    writeJsonAtomic(cacheFile, { ...readProviderModelCache(workspaceRoot), [provider]: model });
+  });
 }
 
 async function inspectProvider(provider) {

@@ -5,6 +5,10 @@ import { spawnStreamingCommand } from "./spawn.js";
 const MMX_BIN = process.env.MMX_CLI_BIN || process.env.MINIMAX_CLI_BIN || "mmx";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const MINIMAX_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+export const TRANSIENT_PROBE_ERROR_PATTERNS = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
+];
 
 export function stripAnsiSgr(text) {
   return String(text ?? "").replace(/\x1b\[[0-9;]*m/g, "");
@@ -136,17 +140,30 @@ export function getMiniMaxAvailability(cwd) {
   return binaryAvailable(MMX_BIN, ["--version"], { cwd });
 }
 
-export async function getMiniMaxAuthStatus(cwd) {
-  const result = runCommand(MMX_BIN, ["auth", "status", "--output", "json", "--non-interactive"], {
+export async function getMiniMaxAuthStatus(cwd, { runner = runCommand } = {}) {
+  const result = runner(MMX_BIN, ["auth", "status", "--output", "json", "--non-interactive"], {
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS,
   });
 
+  // A timeout / 429 / transient failure of the auth-status subcommand is inconclusive,
+  // not proof of logout — it must NOT regress to loggedIn:false.
   if (result.error) {
-    return { loggedIn: false, detail: result.error.message };
+    const detail = result.error.code === "ETIMEDOUT"
+      ? `mmx auth probe timed out after ${Math.round(AUTH_CHECK_TIMEOUT_MS / 1000)}s`
+      : result.error.message;
+    if (TRANSIENT_PROBE_ERROR_PATTERNS.some((pattern) => pattern.test(detail))) {
+      return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: null };
+    }
+    return { loggedIn: false, detail };
   }
   if (result.status !== 0) {
-    return { loggedIn: false, detail: result.stderr.trim() || `mmx auth status exited with code ${result.status}` };
+    const detail = result.stderr.trim() || `mmx auth status exited with code ${result.status}`;
+    if (!MINIMAX_EXPLICIT_AUTH_ERROR_RE.test(detail)
+      && TRANSIENT_PROBE_ERROR_PATTERNS.some((pattern) => pattern.test(detail))) {
+      return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: null };
+    }
+    return { loggedIn: false, detail };
   }
 
   const text = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();

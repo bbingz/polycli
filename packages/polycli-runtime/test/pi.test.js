@@ -215,6 +215,22 @@ process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: "hello 
   );
 });
 
+test("runPiPrompt never fabricates a sessionId from a UUID in the answer prose", () => {
+  withFakePiBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "your uuid is 123e4567-e89b-42d3-a456-426614174000" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "agent_end", result: { text: "your uuid is 123e4567-e89b-42d3-a456-426614174000" } }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runPiPrompt({ prompt: "give me a uuid", cwd: root, bin });
+
+      assert.equal(result.ok, true);
+      assert.match(result.response, /123e4567-e89b-42d3-a456-426614174000/);
+      assert.equal(result.sessionId, null);
+    }
+  );
+});
+
 test("runPiPrompt leaves model null when neither caller nor pi reports a model", () => {
   withFakePiBin(
     `#!/usr/bin/env node

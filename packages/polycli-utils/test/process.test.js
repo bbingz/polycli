@@ -19,6 +19,17 @@ test("runCommand can preserve null status for signaled children", () => {
   assert.equal(result.signal, "SIGTERM");
 });
 
+test("runCommand surfaces a signal kill as an error so it is not read as success", () => {
+  const result = runCommand(
+    process.execPath,
+    ["-e", "process.stdout.write('partial'); process.kill(process.pid, 'SIGKILL')"]
+  );
+  // status is coerced to 0 by default, but the synthetic error prevents a false success.
+  assert.equal(result.signal, "SIGKILL");
+  assert.ok(result.error, "a signal-killed child must surface an error");
+  assert.match(result.error.message, /signal/i);
+});
+
 test("binaryAvailable reports missing binaries as unavailable", () => {
   const result = binaryAvailable("__polycli_missing_binary__");
   assert.equal(result.available, false);

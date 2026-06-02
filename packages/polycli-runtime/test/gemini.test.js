@@ -268,3 +268,33 @@ test("parseGeminiStreamText replays a captured real cli fixture", () => {
     "gemini ask result must carry a non-empty model"
   );
 });
+
+test("runGeminiPrompt reports failure on a non-zero exit even when stdout has valid JSON", () => {
+  withFakeGeminiBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ response: "partial answer" }) + "\\n");
+process.exit(2);
+`,
+    ({ root, bin }) => {
+      const result = runGeminiPrompt({ prompt: "ping", cwd: root, bin });
+
+      assert.equal(result.ok, false);
+      assert.match(result.error, /exited with code 2/i);
+    }
+  );
+});
+
+test("runGeminiPrompt never fabricates a sessionId from a UUID in the answer prose", () => {
+  withFakeGeminiBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ response: "your uuid is 123e4567-e89b-42d3-a456-426614174000" }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runGeminiPrompt({ prompt: "give me a uuid", cwd: root, bin });
+
+      assert.equal(result.ok, true);
+      assert.match(result.response, /123e4567-e89b-42d3-a456-426614174000/);
+      assert.equal(result.sessionId, null);
+    }
+  );
+});
