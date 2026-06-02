@@ -61,6 +61,12 @@ import {
   runAgyPrompt,
   runAgyPromptStreaming,
 } from "./agy.js";
+import {
+  getGrokAvailability,
+  getGrokAuthStatus,
+  runGrokPrompt,
+  runGrokPromptStreaming,
+} from "./grok.js";
 import { attachPromptTiming, extractProviderEventText } from "./timing.js";
 
 const TIMING_SUPPORT = {
@@ -74,6 +80,7 @@ const TIMING_SUPPORT = {
   pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   cmd: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "ephemeral" },
   agy: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
+  grok: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
 };
 
 const RUNTIMES = Object.freeze({
@@ -207,6 +214,19 @@ const RUNTIMES = Object.freeze({
     runPrompt: runAgyPrompt,
     runPromptStreaming: runAgyPromptStreaming,
   },
+  grok: {
+    id: "grok",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      operations: PROVIDER_OPERATION_NAMES,
+    },
+    getAvailability: getGrokAvailability,
+    getAuthStatus: getGrokAuthStatus,
+    runPrompt: runGrokPrompt,
+    runPromptStreaming: runGrokPromptStreaming,
+  },
 });
 
 for (const runtime of Object.values(RUNTIMES)) {
@@ -275,6 +295,9 @@ function isTerminalSummaryEvent(provider, event) {
   }
   if (provider === "pi") {
     return event.type === "agent_end";
+  }
+  if (provider === "grok") {
+    return event.type === "end";
   }
   return false;
 }

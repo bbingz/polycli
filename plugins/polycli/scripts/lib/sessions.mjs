@@ -77,6 +77,11 @@ export function deriveSessionArtifactCandidate({ provider, sessionId, workspaceR
     case "minimax":
     case "cmd":
       return { path: null, reason: "ephemeral, no per-session store" };
+    case "grok":
+      // grok stores sessions under ~/.grok/sessions/<urlencoded(cwd)>/ keyed by a per-session
+      // file whose exact name is not derivable from the sessionId alone; per the NO-glob rule
+      // (invariant #6) skip rather than wildcard-scan.
+      return { path: null, reason: "grok session files live under a url-encoded cwd dir; exact path is not derivable without a scan" };
     default:
       return { path: null, reason: `no artifact derivation for provider ${provider ?? "?"}` };
   }

@@ -11,8 +11,8 @@ import {
   runProviderPromptStreaming,
 } from "../src/index.js";
 
-test("provider registry exposes the ten integrated runtimes", () => {
-  assert.deepEqual(PROVIDER_IDS, ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd", "agy"]);
+test("provider registry exposes the eleven integrated runtimes", () => {
+  assert.deepEqual(PROVIDER_IDS, ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd", "agy", "grok"]);
   assert.deepEqual(PROVIDER_OPERATION_NAMES, ["prompt"]);
 
   const runtimes = listProviderRuntimes();

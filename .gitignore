@@ -11,3 +11,6 @@ dist/
 
 # Claude Code worktree state (agent isolation runs)
 .claude/
+
+# CodeGraph local index (not committed)
+.codegraph/

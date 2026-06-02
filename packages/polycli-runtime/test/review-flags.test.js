@@ -7,12 +7,12 @@ test("REVIEW_FLAG_EXPECTATIONS is frozen and keyed by every constrained provider
   assert.equal(Object.isFrozen(REVIEW_FLAG_EXPECTATIONS), true);
   assert.deepEqual(
     Object.keys(REVIEW_FLAG_EXPECTATIONS).sort(),
-    ["agy", "claude", "cmd", "copilot", "gemini", "kimi", "minimax", "opencode", "pi", "qwen"]
+    ["agy", "claude", "cmd", "copilot", "gemini", "grok", "kimi", "minimax", "opencode", "pi", "qwen"]
   );
 });
 
 test("every provider declares expectFlags + extraArgTokens as `--`-flag arrays (exact-match vs review.mjs lives in the host consistency test)", () => {
-  for (const provider of ["claude", "gemini", "qwen", "copilot", "opencode", "pi", "cmd", "kimi", "agy", "minimax"]) {
+  for (const provider of ["claude", "gemini", "qwen", "copilot", "opencode", "pi", "cmd", "kimi", "agy", "minimax", "grok"]) {
     const entry = REVIEW_FLAG_EXPECTATIONS[provider];
     assert.ok(Array.isArray(entry.expectFlags), `${provider} expectFlags is an array`);
     assert.ok(Array.isArray(entry.extraArgTokens), `${provider} extraArgTokens is an array`);

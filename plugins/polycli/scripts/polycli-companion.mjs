@@ -385,6 +385,22 @@ function buildProviderFlagRuntimeOptions(provider, options) {
     return { runtimeOptions, notes };
   }
 
+  if (provider === "grok") {
+    if (resumeFlags.length > 1) {
+      throw new Error("Choose only one of --resume-last, --resume, or --fresh.");
+    }
+    if (options["resume-last"]) runtimeOptions.continueLast = true;
+    if (options.resume) runtimeOptions.resumeSessionId = options.resume;
+    if (options.fresh) {
+      notes.push("--fresh is already grok's default for non-resumed -p runs.");
+    }
+    if (options.effort) runtimeOptions.effort = options.effort;
+    if (options.write) {
+      notes.push("--write is gemini-specific; grok will proceed without it.");
+    }
+    return { runtimeOptions, notes };
+  }
+
   if (options.write) {
     notes.push(`--write is gemini-specific; ${provider} will proceed without it.`);
   }
