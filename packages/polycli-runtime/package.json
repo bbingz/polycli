@@ -5,7 +5,7 @@
   "type": "module",
   "dependencies": {
     "@bbingz/polycli-timing": "1.0.1",
-    "@bbingz/polycli-utils": "1.0.1"
+    "@bbingz/polycli-utils": "1.0.2"
   },
   "exports": {
     ".": "./src/index.js"

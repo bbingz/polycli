@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-02 — Codex — baseline GitHub branch protection for public non-fork repos
+
+- Configured minimal default-branch protection for all `bbingz` public, non-fork repositories that currently have a default branch: `polycli`, `engram`, `Rules`, `kimi-plugin-cc`, `gemini-plugin-cc`, `minimax-plugin-cc`, `qwen-plugin-cc`, `tech-microgpt-cn`, `ZhaoShengList`, `feishu-chatgpt`, `bbingz.github.io`, and `gfw`.
+- The protection baseline blocks force pushes and branch deletion, and applies to admins (`protected=true`, `allow_force_pushes=false`, `allow_deletions=false`, `enforce_admins=true`). It intentionally does not require status checks or PR reviews, so normal push/merge behavior is not gated by this change.
+- Verification: listed public repos with `gh repo list bbingz --visibility public --limit 1000`, wrote branch protection with `gh api --method PUT repos/{repo}/branches/{default}/protection`, and read back each default branch plus protection object. `bbingz/bingz` has no default branch, so it was not applicable; public forks were not modified.
+
 ## 2026-06-02 — Claude — Codex review-gate on PRs #5/#6/#7, then merge all three to main (11th provider grok; unreleased)
 
 Three independent PRs (deep-review hardening, kimi→kimi-code v0.6.0 migration, grok provider) went through a pre-merge Codex review gate, were fixed where findings were real, and were merged to `main` in order #5→#6→#7. NOT released — latest published release is still v0.6.19; this work accumulates for a future release.

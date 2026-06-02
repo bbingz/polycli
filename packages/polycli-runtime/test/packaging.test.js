@@ -7,7 +7,7 @@ const PACKAGE_ROOT = path.resolve(import.meta.dirname, "..");
 
 test("runtime package declares a dependency on polycli-utils", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf8"));
-  assert.equal(packageJson.dependencies?.["@bbingz/polycli-utils"], "1.0.1");
+  assert.equal(packageJson.dependencies?.["@bbingz/polycli-utils"], "1.0.2");
 });
 
 test("runtime package declares a dependency on polycli-timing", () => {
