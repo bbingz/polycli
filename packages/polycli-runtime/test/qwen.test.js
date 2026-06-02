@@ -402,6 +402,29 @@ test("parseQwenStreamText replays a captured real cli fixture", () => {
   assert.equal(parsed.sessionId, meta.expected.sessionId);
 });
 
+test("runQwenPrompt normalizes a real spawn timeout so the auth probe stays inconclusive", () => {
+  withFakeQwenBin(
+    `#!/usr/bin/env node
+setTimeout(() => {}, 5000);
+`,
+    ({ root, env }) => {
+      const result = runQwenPrompt({ prompt: "ping", cwd: root, env, timeout: 200 });
+
+      assert.equal(result.ok, false);
+      assert.match(result.error, /qwen timed out after/i);
+
+      // The normalized message must classify as transient so auth stays inconclusive,
+      // never regressing a timeout to loggedIn:false.
+      const auth = getQwenAuthStatus(root, {
+        envBuilder: () => env,
+        promptRunner: () => result,
+      });
+      assert.equal(auth.loggedIn, true);
+      assert.match(auth.detail, /inconclusive/i);
+    }
+  );
+});
+
 test("runQwenPromptStreaming returns a structured failure on spawn error", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();

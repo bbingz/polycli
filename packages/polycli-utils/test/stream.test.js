@@ -17,11 +17,22 @@ test("createLineDecoder preserves UTF-8 characters split across chunks", () => {
   assert.deepEqual(finalPass, ["second"]);
 });
 
-test("createLineDecoder rejects an overlong line buffer", () => {
+test("createLineDecoder rejects an overlong unterminated line buffer", () => {
   const decoder = createLineDecoder({ maxBufferBytes: 4 });
 
   assert.throws(
     () => decoder.push(Buffer.from("hello")),
     /Line buffer exceeded maxBufferBytes/
   );
+});
+
+test("createLineDecoder drains a burst of complete lines that exceeds the buffer limit", () => {
+  const decoder = createLineDecoder({ maxBufferBytes: 16 });
+  // 10 complete 3-byte lines = 30 bytes, well over the 16-byte limit, but every line is
+  // newline-terminated and therefore drainable — the limit only guards an unterminated line.
+  const lines = decoder.push(Buffer.from("ab\n".repeat(10)));
+
+  assert.equal(lines.length, 10);
+  assert.ok(lines.every((line) => line === "ab"));
+  assert.deepEqual(decoder.end(), []);
 });

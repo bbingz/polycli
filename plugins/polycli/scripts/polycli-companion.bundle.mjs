@@ -154,14 +154,22 @@ function runCommand(command, args = [], options = {}) {
     detached: options.detached ?? false
   });
   const preserveNullStatus = options.preserveNullStatus ?? false;
+  const status = result.status ?? (preserveNullStatus ? null : 0);
+  let error = result.error ?? null;
+  if (!error && result.status == null && result.signal && !preserveNullStatus) {
+    error = Object.assign(
+      new Error(`process terminated by signal ${result.signal}`),
+      { code: result.signal }
+    );
+  }
   return {
     command,
     args,
-    status: result.status ?? (preserveNullStatus ? null : 0),
+    status,
     signal: result.signal ?? null,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
-    error: result.error ?? null
+    error
   };
 }
 function firstNonEmptyLine(text) {
@@ -367,13 +375,14 @@ function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true, maxB
     push(chunk) {
       if (chunk == null) return [];
       buffer += decoder.write(chunk);
+      const lines = drain();
       assertBufferLimit();
-      return drain();
+      return lines;
     },
     end() {
       buffer += decoder.end();
-      assertBufferLimit();
       const lines = drain();
+      assertBufferLimit();
       if (buffer.length > 0) {
         lines.push(normalize(buffer));
         buffer = "";
@@ -612,6 +621,10 @@ var CLAUDE_BIN = process.env.CLAUDE_CLI_BIN || "claude";
 var DEFAULT_TIMEOUT_MS = 9e5;
 var AUTH_CHECK_TIMEOUT_MS = 3e4;
 var PROMPT_STDIN_THRESHOLD = 1e5;
+var CLAUDE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
 function collectTextFromContent(content) {
   if (typeof content === "string") {
     return content;
@@ -780,20 +793,27 @@ function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = null } =
 function getClaudeAvailability(cwd) {
   return binaryAvailable(CLAUDE_BIN, ["--version"], { cwd });
 }
-function getClaudeAuthStatus(cwd) {
-  const result = runClaudePrompt({
+function getClaudeAuthStatus(cwd, { promptRunner = runClaudePrompt } = {}) {
+  const result = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS
   });
-  if (!result.ok) {
-    return { loggedIn: false, detail: result.error };
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: result.model ?? null
+    };
   }
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: null
-  };
+  const detail = String(result.error ?? "").trim() || "claude auth probe failed";
+  if (CLAUDE_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (TRANSIENT_PROBE_ERROR_PATTERNS.some((pattern) => pattern.test(detail))) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+  }
+  return { loggedIn: false, detail };
 }
 function runClaudePrompt({
   prompt,
@@ -903,6 +923,10 @@ function runClaudePromptStreaming({
 var COPILOT_BIN = process.env.COPILOT_CLI_BIN || "copilot";
 var DEFAULT_TIMEOUT_MS2 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS2 = 3e4;
+var COPILOT_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS2 = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
 function collectCopilotContentText(content) {
   if (typeof content === "string") {
     return content;
@@ -1051,20 +1075,27 @@ ${event.data.content}`;
 function getCopilotAvailability(cwd) {
   return binaryAvailable(COPILOT_BIN, ["--version"], { cwd });
 }
-function getCopilotAuthStatus(cwd) {
-  const result = runCopilotPrompt({
+function getCopilotAuthStatus(cwd, { promptRunner = runCopilotPrompt } = {}) {
+  const result = promptRunner({
     prompt: "ping",
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS2
   });
-  if (!result.ok) {
-    return { loggedIn: false, detail: result.error };
+  if (result.ok) {
+    return {
+      loggedIn: true,
+      detail: "authenticated",
+      model: result.model ?? null
+    };
   }
-  return {
-    loggedIn: true,
-    detail: "authenticated",
-    model: result.model ?? null
-  };
+  const detail = String(result.error ?? "").trim() || "copilot auth probe failed";
+  if (COPILOT_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
+    return { loggedIn: false, detail };
+  }
+  if (TRANSIENT_PROBE_ERROR_PATTERNS2.some((pattern) => pattern.test(detail))) {
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+  }
+  return { loggedIn: false, detail };
 }
 function runCopilotPrompt({
   prompt,
@@ -1191,7 +1222,7 @@ var AUTH_CHECK_TIMEOUT_MS3 = 3e4;
 var PROMPT_STDIN_THRESHOLD2 = 1e5;
 var GEMINI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var VALID_GEMINI_EFFORTS = /* @__PURE__ */ new Set(["low", "medium", "high"]);
-var TRANSIENT_PROBE_ERROR_PATTERNS = [
+var TRANSIENT_PROBE_ERROR_PATTERNS3 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
 function buildGeminiEnv(parentEnv = process.env) {
@@ -1295,11 +1326,6 @@ function parseGeminiJsonResult(stdout, stderr, status, { defaultModel = null } =
   }
   try {
     const parsed = JSON.parse(text.slice(jsonStart));
-    const resolvedSession = resolveSessionId({
-      stdout,
-      stderr,
-      priority: ["stdout", "stderr", "file"]
-    });
     if (parsed.error) {
       return {
         ok: false,
@@ -1308,6 +1334,18 @@ function parseGeminiJsonResult(stdout, stderr, status, { defaultModel = null } =
         status
       };
     }
+    if (status !== 0) {
+      return {
+        ok: false,
+        error: String(stderr ?? "").trim() || formatProviderExitError("gemini", status),
+        status
+      };
+    }
+    const resolvedSession = resolveSessionId({
+      stdout: "",
+      stderr,
+      priority: ["stdout", "stderr", "file"]
+    });
     return {
       ok: true,
       response: parsed.response ?? "",
@@ -1335,7 +1373,7 @@ function buildGeminiAuthStatus(test) {
   if (GEMINI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (TRANSIENT_PROBE_ERROR_PATTERNS.some((pattern) => pattern.test(detail))) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS3.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: null };
   }
   return { loggedIn: false, detail };
@@ -1435,7 +1473,7 @@ function runGeminiPromptStreaming({
   }).then((result) => {
     const parsed = parseGeminiStreamText(result.stdout);
     const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
+      stdout: "",
       stderr: result.stderr,
       priority: ["stdout", "stderr", "file"]
     });
@@ -1444,7 +1482,8 @@ function runGeminiPromptStreaming({
     return {
       ...result,
       ...parsed,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      // stdout blanked so a UUID in the answer prose is never promoted to a fabricated id.
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId ?? null,
       model: parsed.model ?? model ?? defaultModel,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok ? resultError || (hasVisibleText ? null : "gemini produced no visible text") : result.error
@@ -1463,7 +1502,7 @@ var AUTH_CHECK_TIMEOUT_MS4 = 3e4;
 var PROMPT_STDIN_THRESHOLD_BYTES = 1e5;
 var KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var KIMI_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-var TRANSIENT_PROBE_ERROR_PATTERNS2 = [
+var TRANSIENT_PROBE_ERROR_PATTERNS4 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
 var KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path.join(os.homedir(), ".kimi", "config.toml");
@@ -1695,7 +1734,7 @@ function buildKimiAuthStatus(result) {
   if (KIMI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (TRANSIENT_PROBE_ERROR_PATTERNS2.some((pattern) => pattern.test(detail))) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS4.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? configModel };
   }
   return { loggedIn: false, detail };
@@ -1857,7 +1896,7 @@ var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PROXY_KEYS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
 var NO_PROXY_DEFAULTS = ["localhost", "127.0.0.1"];
 var QWEN_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var TRANSIENT_PROBE_ERROR_PATTERNS3 = [
+var TRANSIENT_PROBE_ERROR_PATTERNS5 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
 var ENV_ALLOW_EXACT = /* @__PURE__ */ new Set([
@@ -2066,7 +2105,7 @@ function buildQwenAuthStatus(pingResult) {
   if (QWEN_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (TRANSIENT_PROBE_ERROR_PATTERNS3.some((pattern) => pattern.test(detail))) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS5.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: pingResult.model ?? null };
   }
   return { loggedIn: false, detail };
@@ -2119,7 +2158,7 @@ function runQwenPrompt({
     timeout
   });
   if (result.error) {
-    const error2 = result.error.message;
+    const error2 = result.error.code === "ETIMEDOUT" ? `qwen timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
     return { ok: false, error: error2, errorCode: classifyProviderFailure(error2, { provider: "qwen" }) };
   }
   const parsed = parseQwenStreamText(result.stdout);
@@ -2218,6 +2257,10 @@ function runQwenPromptStreaming({
 var MMX_BIN = process.env.MMX_CLI_BIN || process.env.MINIMAX_CLI_BIN || "mmx";
 var DEFAULT_TIMEOUT_MS6 = 12e4;
 var AUTH_CHECK_TIMEOUT_MS6 = 3e4;
+var MINIMAX_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS6 = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
 function stripAnsiSgr(text) {
   return String(text ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 }
@@ -2256,16 +2299,24 @@ function extractMiniMaxEventText(event) {
 function getMiniMaxAvailability(cwd) {
   return binaryAvailable(MMX_BIN, ["--version"], { cwd });
 }
-async function getMiniMaxAuthStatus(cwd) {
-  const result = runCommand(MMX_BIN, ["auth", "status", "--output", "json", "--non-interactive"], {
+async function getMiniMaxAuthStatus(cwd, { runner = runCommand } = {}) {
+  const result = runner(MMX_BIN, ["auth", "status", "--output", "json", "--non-interactive"], {
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS6
   });
   if (result.error) {
-    return { loggedIn: false, detail: result.error.message };
+    const detail = result.error.code === "ETIMEDOUT" ? `mmx auth probe timed out after ${Math.round(AUTH_CHECK_TIMEOUT_MS6 / 1e3)}s` : result.error.message;
+    if (TRANSIENT_PROBE_ERROR_PATTERNS6.some((pattern) => pattern.test(detail))) {
+      return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: null };
+    }
+    return { loggedIn: false, detail };
   }
   if (result.status !== 0) {
-    return { loggedIn: false, detail: result.stderr.trim() || `mmx auth status exited with code ${result.status}` };
+    const detail = result.stderr.trim() || `mmx auth status exited with code ${result.status}`;
+    if (!MINIMAX_EXPLICIT_AUTH_ERROR_RE.test(detail) && TRANSIENT_PROBE_ERROR_PATTERNS6.some((pattern) => pattern.test(detail))) {
+      return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: null };
+    }
+    return { loggedIn: false, detail };
   }
   const text = `${result.stdout ?? ""}
 ${result.stderr ?? ""}`.trim();
@@ -2422,7 +2473,7 @@ var DEFAULT_TIMEOUT_MS7 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS7 = 3e4;
 var SESSION_EXPORT_TIMEOUT_MS = 3e4;
 var OPENCODE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var TRANSIENT_PROBE_ERROR_PATTERNS4 = [
+var TRANSIENT_PROBE_ERROR_PATTERNS7 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
 function collectOpenCodeContentText(content) {
@@ -2628,7 +2679,7 @@ function buildOpenCodeAuthStatus(result) {
   if (OPENCODE_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (TRANSIENT_PROBE_ERROR_PATTERNS4.some((pattern) => pattern.test(detail))) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS7.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
   }
   return { loggedIn: false, detail };
@@ -2764,7 +2815,7 @@ var DEFAULT_PI_MODEL = null;
 var DEFAULT_TIMEOUT_MS8 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS8 = 3e4;
 var PI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var TRANSIENT_PROBE_ERROR_PATTERNS5 = [
+var TRANSIENT_PROBE_ERROR_PATTERNS8 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
 function collectPiContentText(content) {
@@ -2905,7 +2956,7 @@ function buildPiAuthStatus(result) {
   if (PI_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
-  if (TRANSIENT_PROBE_ERROR_PATTERNS5.some((pattern) => pattern.test(detail))) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS8.some((pattern) => pattern.test(detail))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? DEFAULT_PI_MODEL };
   }
   return { loggedIn: false, detail };
@@ -2949,7 +3000,7 @@ function runPiPrompt({
   }
   const parsed = parsePiStreamText(result.stdout);
   const resolvedSession = resolveSessionId({
-    stdout: result.stdout,
+    stdout: "",
     stderr: result.stderr,
     priority: ["stdout", "stderr", "file"]
   });
@@ -2960,7 +3011,9 @@ function runPiPrompt({
     ok: result.status === 0 && !resultError && !providerError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+    // pi's session id comes from its structured `session` event; stdout is blanked so a UUID
+    // in the answer prose can never be promoted to a fabricated id (stderr/file still allowed).
+    sessionId: parsed.sessionId ?? resolvedSession.sessionId ?? null,
     model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
     error: result.status === 0 ? resultError || providerError || (hasVisibleText ? null : "pi produced no visible text") : result.stderr.trim() || formatProviderExitError("pi", result.status),
     status: result.status
@@ -3009,7 +3062,7 @@ function runPiPromptStreaming({
   }).then((result) => {
     const parsed = parsePiStreamText(result.stdout);
     const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
+      stdout: "",
       stderr: result.stderr,
       priority: ["stdout", "stderr", "file"]
     });
@@ -3019,7 +3072,8 @@ function runPiPromptStreaming({
     return {
       ...result,
       ...parsed,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      // stdout blanked so a UUID in the answer prose is never promoted to a fabricated id.
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId ?? null,
       model: parsed.model ?? model ?? defaultModel ?? DEFAULT_PI_MODEL,
       ok: result.ok && !resultError && !providerError && hasVisibleText,
       error: result.ok ? resultError || providerError || (hasVisibleText ? null : "pi produced no visible text") : result.error
@@ -3033,7 +3087,7 @@ var DEFAULT_CMD_MODEL = "deepseek";
 var DEFAULT_TIMEOUT_MS9 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS9 = 3e4;
 var CMD_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var TRANSIENT_PROBE_ERROR_PATTERNS6 = [
+var TRANSIENT_PROBE_ERROR_PATTERNS9 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
 function buildCmdInvocation({
@@ -3085,7 +3139,7 @@ ${result.stderr ?? ""}`.trim();
   }
   if (result.error) {
     const message = result.error.code === "ETIMEDOUT" ? `cmd auth probe timed out after ${Math.round(AUTH_CHECK_TIMEOUT_MS9 / 1e3)}s` : result.error.message;
-    if (TRANSIENT_PROBE_ERROR_PATTERNS6.some((pattern) => pattern.test(message))) {
+    if (TRANSIENT_PROBE_ERROR_PATTERNS9.some((pattern) => pattern.test(message))) {
       return { loggedIn: true, detail: `auth probe inconclusive: ${message}`, model: DEFAULT_CMD_MODEL };
     }
     return { loggedIn: false, detail: message };
@@ -3094,7 +3148,7 @@ ${result.stderr ?? ""}`.trim();
   if (CMD_EXPLICIT_AUTH_ERROR_RE.test(fallback)) {
     return { loggedIn: false, detail: fallback };
   }
-  if (TRANSIENT_PROBE_ERROR_PATTERNS6.some((pattern) => pattern.test(fallback))) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS9.some((pattern) => pattern.test(fallback))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${fallback}`, model: DEFAULT_CMD_MODEL };
   }
   return { loggedIn: false, detail: fallback };
@@ -3130,18 +3184,15 @@ function runCmdPrompt({
     };
   }
   const parsed = parseCmdTextResult(result.stdout);
-  const resolvedSession = resolveSessionId({
-    stdout: result.stdout,
-    stderr: result.stderr,
-    priority: ["stdout", "stderr", "file"]
-  });
   const hasVisibleText = Boolean(parsed.response.trim());
   const error = result.status === 0 ? hasVisibleText ? null : "cmd produced no visible text" : result.stderr.trim() || formatProviderExitError("cmd", result.status);
   return {
     ok: result.status === 0 && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: resolvedSession.sessionId,
+    // cmd stdout is pure assistant prose with no session-id field; never scan it for a
+    // UUID, which would fabricate a sessionId from any UUID in the answer (cf. agy v0.6.18).
+    sessionId: null,
     model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
     error,
     errorCode: classifyProviderFailure(error, { provider: "cmd" }),
@@ -3182,17 +3233,14 @@ function runCmdPromptStreaming({
     }
   }).then((result) => {
     const parsed = parseCmdTextResult(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"]
-    });
     const hasVisibleText = Boolean(parsed.response.trim());
     const error = result.ok ? hasVisibleText ? null : "cmd produced no visible text" : result.error;
     return {
       ...result,
       ...parsed,
-      sessionId: resolvedSession.sessionId,
+      // cmd stdout is pure assistant prose with no session-id field; never scan it for a
+      // UUID, which would fabricate a sessionId from any UUID in the answer (cf. agy v0.6.18).
+      sessionId: null,
       model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
       ok: result.ok && hasVisibleText,
       error,
@@ -3207,7 +3255,7 @@ var DEFAULT_AGY_MODEL = null;
 var DEFAULT_TIMEOUT_MS10 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS10 = 3e4;
 var AGY_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var TRANSIENT_PROBE_ERROR_PATTERNS7 = [
+var TRANSIENT_PROBE_ERROR_PATTERNS10 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
 var AGY_BENIGN_STDERR_RE = /^Shell cwd was reset/i;
@@ -3272,7 +3320,7 @@ ${String(result.response ?? "")}`.trim();
   if (AGY_EXPLICIT_AUTH_ERROR_RE.test(probeText)) {
     return { loggedIn: false, detail: probeText };
   }
-  if (TRANSIENT_PROBE_ERROR_PATTERNS7.some((pattern) => pattern.test(probeText))) {
+  if (TRANSIENT_PROBE_ERROR_PATTERNS10.some((pattern) => pattern.test(probeText))) {
     return { loggedIn: true, detail: `auth probe inconclusive: ${probeText}`, model: DEFAULT_AGY_MODEL };
   }
   if (result.ok || result.status === 0) {
@@ -4579,6 +4627,60 @@ function writeFileAtomic(filePath, contents, options = {}) {
   writeFileAtomicSync(filePath, contents, options);
   return filePath;
 }
+function unlinkIfExists(filePath) {
+  try {
+    fs3.unlinkSync(filePath);
+  } catch {
+  }
+}
+function tryReclaimStaleLock(lockPath, staleMs) {
+  let raw;
+  try {
+    raw = fs3.readFileSync(lockPath, "utf8");
+  } catch {
+    return true;
+  }
+  let lock = null;
+  try {
+    lock = JSON.parse(raw);
+  } catch {
+    lock = null;
+  }
+  const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
+  const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
+  if (pid != null) {
+    try {
+      process3.kill(pid, 0);
+    } catch (killError) {
+      if (killError.code === "ESRCH") {
+        unlinkIfExists(lockPath);
+        return true;
+      }
+      if (killError.code !== "EPERM") {
+        throw killError;
+      }
+    }
+    const ageMs2 = acquiredAt == null ? null : Date.now() - acquiredAt;
+    if (ageMs2 != null && ageMs2 > staleMs) {
+      unlinkIfExists(lockPath);
+      return true;
+    }
+    return false;
+  }
+  let ageMs = acquiredAt == null ? null : Date.now() - acquiredAt;
+  if (ageMs == null) {
+    try {
+      ageMs = Date.now() - fs3.statSync(lockPath).mtimeMs;
+    } catch {
+      return true;
+    }
+  }
+  if (ageMs != null && ageMs > staleMs) {
+    unlinkIfExists(lockPath);
+    return true;
+  }
+  return false;
+}
 function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 25 } = {}) {
   ensureParentDir(lockPath);
   const deadline = Date.now() + timeoutMs;
@@ -4607,32 +4709,7 @@ function withLockfile2(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 
       if (error.code !== "EEXIST") {
         throw error;
       }
-      try {
-        const lock = JSON.parse(fs3.readFileSync(lockPath, "utf8"));
-        const pid = Number.isInteger(lock?.pid) && lock.pid > 0 ? lock.pid : null;
-        const acquiredAt = Number.isFinite(lock?.acquiredAt) ? lock.acquiredAt : null;
-        const lockAgeMs = acquiredAt == null ? null : Date.now() - acquiredAt;
-        let ownerAlive = false;
-        if (pid != null) {
-          try {
-            process3.kill(pid, 0);
-            ownerAlive = true;
-          } catch (killError) {
-            if (killError.code === "ESRCH") {
-              fs3.unlinkSync(lockPath);
-              continue;
-            }
-            if (killError.code !== "EPERM") {
-              throw killError;
-            }
-            ownerAlive = true;
-          }
-        }
-        if (ownerAlive && lockAgeMs != null && lockAgeMs > staleMs) {
-          fs3.unlinkSync(lockPath);
-          continue;
-        }
-      } catch {
+      if (tryReclaimStaleLock(lockPath, staleMs)) {
         continue;
       }
       sleepSync2(pollMs);

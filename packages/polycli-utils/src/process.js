@@ -12,15 +12,29 @@ export function runCommand(command, args = [], options = {}) {
     detached: options.detached ?? false,
   });
   const preserveNullStatus = options.preserveNullStatus ?? false;
+  const status = result.status ?? (preserveNullStatus ? null : 0);
+
+  // A child terminated by a signal (e.g. SIGKILL/OOM, SIGTERM, Ctrl-C) reports status:null
+  // with no spawn error. When we coerce that null to 0 (the default), callers that gate on
+  // `status === 0` would misread a signal kill as a SUCCESSFUL run. Surface a synthetic error
+  // so the existing `if (result.error)` failure branch in every sync provider catches it.
+  // (A timeout already sets result.error=ETIMEDOUT, so this only fires on a pure signal kill.)
+  let error = result.error ?? null;
+  if (!error && result.status == null && result.signal && !preserveNullStatus) {
+    error = Object.assign(
+      new Error(`process terminated by signal ${result.signal}`),
+      { code: result.signal }
+    );
+  }
 
   return {
     command,
     args,
-    status: result.status ?? (preserveNullStatus ? null : 0),
+    status,
     signal: result.signal ?? null,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
-    error: result.error ?? null,
+    error,
   };
 }
 

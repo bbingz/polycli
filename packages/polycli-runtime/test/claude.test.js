@@ -9,6 +9,7 @@ import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildClaudeInvocation,
   extractClaudeText,
+  getClaudeAuthStatus,
   parseClaudeJsonResult,
   parseClaudeStreamText,
   runClaudePrompt,
@@ -324,4 +325,22 @@ test("parseClaudeStreamText replays a captured real cli fixture", () => {
     parsed.model && typeof parsed.model === "string" && parsed.model.length > 0,
     "claude ask result must carry a non-empty model"
   );
+});
+
+test("getClaudeAuthStatus keeps loggedIn=true for a transient/timeout probe failure", () => {
+  const auth = getClaudeAuthStatus(process.cwd(), {
+    promptRunner: () => ({ ok: false, error: "claude timed out after 30s" }),
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /inconclusive/i);
+});
+
+test("getClaudeAuthStatus reports loggedIn=false only on an explicit auth error", () => {
+  const auth = getClaudeAuthStatus(process.cwd(), {
+    promptRunner: () => ({ ok: false, error: "401 Unauthorized: invalid api key" }),
+  });
+
+  assert.equal(auth.loggedIn, false);
+  assert.match(auth.detail, /unauthorized/i);
 });

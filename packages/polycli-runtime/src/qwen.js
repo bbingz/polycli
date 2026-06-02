@@ -288,7 +288,9 @@ export function runQwenPrompt({
   });
 
   if (result.error) {
-    const error = result.error.message;
+    const error = result.error.code === "ETIMEDOUT"
+      ? `qwen timed out after ${Math.round(timeout / 1000)}s`
+      : result.error.message;
     return { ok: false, error, errorCode: classifyProviderFailure(error, { provider: "qwen" }) };
   }
 

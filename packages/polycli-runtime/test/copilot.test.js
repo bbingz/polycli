@@ -9,6 +9,7 @@ import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildCopilotInvocation,
   extractCopilotText,
+  getCopilotAuthStatus,
   parseCopilotStreamText,
   runCopilotPrompt,
   runCopilotPromptStreaming,
@@ -262,4 +263,22 @@ test("parseCopilotStreamText replays a captured real cli fixture", () => {
 
   assert.equal(parsed.response, meta.expected.response);
   assert.equal(parsed.sessionId, meta.expected.sessionId);
+});
+
+test("getCopilotAuthStatus keeps loggedIn=true for a transient/timeout probe failure", () => {
+  const auth = getCopilotAuthStatus(process.cwd(), {
+    promptRunner: () => ({ ok: false, error: "copilot timed out after 30s" }),
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /inconclusive/i);
+});
+
+test("getCopilotAuthStatus reports loggedIn=false only on an explicit auth error", () => {
+  const auth = getCopilotAuthStatus(process.cwd(), {
+    promptRunner: () => ({ ok: false, error: "Not authenticated: please sign in" }),
+  });
+
+  assert.equal(auth.loggedIn, false);
+  assert.match(auth.detail, /sign in/i);
 });

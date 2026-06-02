@@ -160,3 +160,50 @@ test("aggregateTimingRecords preserves unsupported-only metrics without fake per
   assert.equal(ttft.capability, "unsupported");
   assert.equal(ttft.p50, null);
 });
+
+test("aggregateTimingRecords labels a metric 'mixed' when unsupported in one record and supported in another", () => {
+  const summary = aggregateTimingRecords([
+    {
+      version: 1,
+      provider: "qwen",
+      runtimePersistence: "session",
+      measurementScope: "request",
+      completedAt: "2026-04-21T10:00:00.000Z",
+      metrics: {
+        cold: { status: "unsupported", ms: null },
+        ttft: { status: "unsupported", ms: null },
+        gen: { status: "measured", ms: 100 },
+        tool: { status: "unsupported", ms: null },
+        retry: { status: "unsupported", ms: null },
+        tail: { status: "measured", ms: 10 },
+        total: { status: "measured", ms: 110 },
+      },
+    },
+    {
+      version: 1,
+      provider: "qwen",
+      runtimePersistence: "session",
+      measurementScope: "request",
+      completedAt: "2026-04-21T10:01:00.000Z",
+      metrics: {
+        cold: { status: "unsupported", ms: null },
+        ttft: { status: "measured", ms: 200 },
+        gen: { status: "measured", ms: 120 },
+        tool: { status: "zero", ms: 0 },
+        retry: { status: "unsupported", ms: null },
+        tail: { status: "measured", ms: 12 },
+        total: { status: "measured", ms: 332 },
+      },
+    },
+  ]);
+
+  const ttft = summary.byProvider.qwen.metrics.ttft;
+  assert.equal(ttft.capability, "mixed");
+  assert.equal(ttft.unsupportedCount, 1);
+  assert.equal(ttft.measuredCount, 1);
+  // the four states stay distinct, never collapsed into one another
+  assert.equal(ttft.zeroCount, 0);
+  assert.equal(ttft.missingCount, 0);
+  // a metric unsupported in BOTH records remains 'unsupported', not 'mixed'
+  assert.equal(summary.byProvider.qwen.metrics.cold.capability, "unsupported");
+});

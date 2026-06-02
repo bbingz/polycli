@@ -1,5 +1,4 @@
 import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
-import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
 import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
@@ -124,11 +123,6 @@ export function runCmdPrompt({
   }
 
   const parsed = parseCmdTextResult(result.stdout);
-  const resolvedSession = resolveSessionId({
-    stdout: result.stdout,
-    stderr: result.stderr,
-    priority: ["stdout", "stderr", "file"],
-  });
   const hasVisibleText = Boolean(parsed.response.trim());
 
   const error = result.status === 0
@@ -138,7 +132,9 @@ export function runCmdPrompt({
     ok: result.status === 0 && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: resolvedSession.sessionId,
+    // cmd stdout is pure assistant prose with no session-id field; never scan it for a
+    // UUID, which would fabricate a sessionId from any UUID in the answer (cf. agy v0.6.18).
+    sessionId: null,
     model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
     error,
     errorCode: classifyProviderFailure(error, { provider: "cmd" }),
@@ -180,11 +176,6 @@ export function runCmdPromptStreaming({
     },
   }).then((result) => {
     const parsed = parseCmdTextResult(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"],
-    });
     const hasVisibleText = Boolean(parsed.response.trim());
     const error = result.ok
       ? (hasVisibleText ? null : "cmd produced no visible text")
@@ -192,7 +183,9 @@ export function runCmdPromptStreaming({
     return {
       ...result,
       ...parsed,
-      sessionId: resolvedSession.sessionId,
+      // cmd stdout is pure assistant prose with no session-id field; never scan it for a
+      // UUID, which would fabricate a sessionId from any UUID in the answer (cf. agy v0.6.18).
+      sessionId: null,
       model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
       ok: result.ok && hasVisibleText,
       error,

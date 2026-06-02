@@ -122,11 +122,6 @@ function parseGeminiJsonResult(stdout, stderr, status, { defaultModel = null } =
 
   try {
     const parsed = JSON.parse(text.slice(jsonStart));
-    const resolvedSession = resolveSessionId({
-      stdout,
-      stderr,
-      priority: ["stdout", "stderr", "file"],
-    });
     if (parsed.error) {
       return {
         ok: false,
@@ -135,6 +130,21 @@ function parseGeminiJsonResult(stdout, stderr, status, { defaultModel = null } =
         status,
       };
     }
+    if (status !== 0) {
+      return {
+        ok: false,
+        error: String(stderr ?? "").trim() || formatProviderExitError("gemini", status),
+        status,
+      };
+    }
+    // Session id is the structured parsed.session_id; the stderr/file fallback is allowed
+    // (gemini may print an id to stderr) but stdout is blanked so a UUID inside the answer
+    // prose (which lives in the same JSON) can never be promoted to a fabricated sessionId.
+    const resolvedSession = resolveSessionId({
+      stdout: "",
+      stderr,
+      priority: ["stdout", "stderr", "file"],
+    });
     return {
       ok: true,
       response: parsed.response ?? "",
@@ -270,7 +280,7 @@ export function runGeminiPromptStreaming({
   }).then((result) => {
     const parsed = parseGeminiStreamText(result.stdout);
     const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
+      stdout: "",
       stderr: result.stderr,
       priority: ["stdout", "stderr", "file"],
     });
@@ -281,7 +291,8 @@ export function runGeminiPromptStreaming({
     return {
       ...result,
       ...parsed,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      // stdout blanked so a UUID in the answer prose is never promoted to a fabricated id.
+      sessionId: parsed.sessionId ?? resolvedSession.sessionId ?? null,
       model: parsed.model ?? model ?? defaultModel,
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok

@@ -110,3 +110,32 @@ test("withLockfile reclaims a stale lock when the recorded pid appears live", (t
   assert.ok(kill.mock.callCount() >= 1);
   assert.equal(fs.existsSync(lockPath), false);
 });
+
+test("withLockfile reclaims a stale no-pid (partial-write) lock by mtime", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-lock-nopid-"));
+  const lockPath = path.join(dir, "state.lock");
+  // Holder crashed after O_EXCL created the file but before writing a valid {pid} body.
+  fs.writeFileSync(lockPath, "", "utf8");
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(lockPath, old, old);
+
+  const result = withLockfile(lockPath, () => "acquired", {
+    timeoutMs: 100,
+    pollMs: 1,
+    staleMs: 25,
+  });
+
+  assert.equal(result, "acquired");
+  assert.equal(fs.existsSync(lockPath), false);
+});
+
+test("withLockfile waits on a fresh no-pid lock instead of reclaiming it immediately", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-lock-nopid-fresh-"));
+  const lockPath = path.join(dir, "state.lock");
+  fs.writeFileSync(lockPath, "", "utf8"); // fresh empty lock (mtime ~ now)
+
+  assert.throws(
+    () => withLockfile(lockPath, () => "unreachable", { timeoutMs: 25, pollMs: 1, staleMs: 10_000 }),
+    LockfileTimeoutError
+  );
+});

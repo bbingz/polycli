@@ -32,13 +32,17 @@ export function createLineDecoder({ encoding = "utf8", stripCarriageReturn = tru
     push(chunk) {
       if (chunk == null) return [];
       buffer += decoder.write(chunk);
+      // Drain complete lines FIRST, then enforce the limit on the unterminated residual only.
+      // Checking before draining would reject a single chunk carrying many complete short
+      // lines (all drainable) as if it were one pathological line, and drop that data.
+      const lines = drain();
       assertBufferLimit();
-      return drain();
+      return lines;
     },
     end() {
       buffer += decoder.end();
-      assertBufferLimit();
       const lines = drain();
+      assertBufferLimit();
       if (buffer.length > 0) {
         lines.push(normalize(buffer));
         buffer = "";
