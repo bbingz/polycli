@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-02 — Claude — v0.6.20 published (GitHub release + npm)
+
+- Released the merged grok / kimi-code / deep-review work as **v0.6.20**. GitHub release: https://github.com/bbingz/polycli/releases/tag/v0.6.20.
+- npm `latest` (verified via `npm view`): `@bbingz/polycli@0.6.20`, `@bbingz/polycli-opencode@0.6.20`, `@bbingz/polycli-utils@1.0.2` (bumped for the atomic-save/process/stream fixes); `@bbingz/polycli-timing@1.0.1` unchanged.
+- Gate: `npm run release:check` exit 0 (`npm test` 483/483 + validate:bundles/fixtures/manifests/host-map/codex-adapter + check:review-drift + `claude plugin validate` ×2 + publish dry-runs). See the gate/merge entry below for the substantive changes.
+
 ## 2026-06-02 — Codex — baseline GitHub branch protection for public non-fork repos
 
 - Configured minimal default-branch protection for all `bbingz` public, non-fork repositories that currently have a default branch: `polycli`, `engram`, `Rules`, `kimi-plugin-cc`, `gemini-plugin-cc`, `minimax-plugin-cc`, `qwen-plugin-cc`, `tech-microgpt-cn`, `ZhaoShengList`, `feishu-chatgpt`, `bbingz.github.io`, and `gfw`.
