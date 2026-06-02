@@ -27,8 +27,9 @@ that keep kimi's JSON output parseable.
 3. **Language parity.** Kimi's Chinese-language reasoning is strong. If the
    user prompt is Chinese, keep the meta-language (task framing, contracts)
    in Chinese too. JSON keyword enforcement stays English.
-4. **Small `--max-steps-per-turn` on simple Q&A.** For `/polycli:ask --provider kimi`, a small
-   N (1–3) prevents runaway tool-use loops. For `/polycli:rescue --provider kimi`, allow larger.
+4. **Single-turn framing for Ask.** kimi-code's `-p` one-shot answers without an agent loop on
+   simple Q&A, so frame `/polycli:ask --provider kimi` as a direct single-turn answer. The per-turn
+   step budget lives in `~/.kimi-code/config.toml` (`[loop_control]`), not a per-invocation flag.
 5. **No tool-call expectation in Ask.** Bias toward single-turn answers.
 
 ## References

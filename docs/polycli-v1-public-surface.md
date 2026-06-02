@@ -113,7 +113,7 @@ This keeps v1 small, testable, and publishable without pretending the provider m
 | `claude` | `--permission-mode plan --max-turns 1 --tools "" --mcp-config '{"mcpServers":{}}' --strict-mcp-config` | plan/no tools/no MCP |
 | `gemini` | `--approval-mode plan --extensions "" --allowed-mcp-server-names __polycli_prompt_no_mcp__` | plan/no extensions/MCP |
 | `qwen` | `--approval-mode plan --max-session-turns 20` plus repeated `--exclude-tools ...` | bounded multi-turn/no tools; no forced one-turn cap |
-| `kimi` | `--plan --no-thinking --max-steps-per-turn 1` | plan/no thinking/one step |
+| `kimi` | none — `-p` one-shot rejects `--plan`/`--auto`/`--yolo` | non-interactive single-shot (kimi-code v0.6.0) |
 | `cmd` | `--permission-mode plan` | plan |
 | `copilot` | `--no-ask-user --excluded-tools <list>` without allow-all tool/path/url flags | programmatic but restricted |
 | `opencode` | `--agent plan` plus deny-permission config | plan/deny permissions |
