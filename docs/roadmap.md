@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-05-30 (v0.6.19 published: provider-drift maintenance hardening plus upstream session-pollution record/list/purge controls).
+Snapshot: 2026-06-02 (PRs #5/#6/#7 merged to `main`: deep-review hardening + kimi→kimi-code v0.6.0 migration + grok as the 11th provider. Unreleased — latest published release is still v0.6.19).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -11,7 +11,7 @@ Living document — update when items land, when priorities shift, or when a def
 ## Current state
 
 - Latest public release: **v0.6.19** — see `docs/release-notes-v0.6.19.md`. Published 2026-05-29: GitHub release + `@bbingz/polycli-opencode@0.6.19` + `@bbingz/polycli@0.6.19` all on the registry. Patch on top of v0.6.18 adds fixture/review drift guardrails and records upstream session artifacts for explicit `polycli sessions` list/purge cleanup.
-- 10 providers shipped (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy).
+- 11 providers in `main` (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok). grok (xAI Grok Build CLI), the kimi→kimi-code v0.6.0 migration, and the deep-review hardening are merged to `main` (2026-06-02) but NOT yet in a published release — the latest release (v0.6.19) still ships 10.
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
 

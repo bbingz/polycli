@@ -6,6 +6,19 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-02 — Claude — Codex review-gate on PRs #5/#6/#7, then merge all three to main (11th provider grok; unreleased)
+
+Three independent PRs (deep-review hardening, kimi→kimi-code v0.6.0 migration, grok provider) went through a pre-merge Codex review gate, were fixed where findings were real, and were merged to `main` in order #5→#6→#7. NOT released — latest published release is still v0.6.19; this work accumulates for a future release.
+
+**Gate adjudication (Codex is not ground truth — every finding was checked against the real code):**
+- **PR #7 (grok)** — Codex CHANGES_REQUESTED, all 3 real: (a) auth-probe ordering bug — `/\blogged in\b/i` banner check ran before the explicit auth-error regex, so a logged-out `not logged in` (which contains the substring `logged in`) was misread as `loggedIn:true`; reordered + regression test. (b) grok was half-wired — added it everywhere `agy` is advertised (polycli-codex + polycli-copilot skill descriptions/arg-hints, polycli-codex README + plugin.json, root README, host-command-map, and `validate-codex-adapter` PROVIDERS). (c) `grok-cli-runtime` SKILL over-claimed `--effort` mapping (polycli `--effort` is gemini-only, dropped for grok).
+- **PR #6 (kimi-code)** — Codex CHANGES_REQUESTED; 1 real, reframed: buildKimiInvocation emitted `-r <id>` for resume-by-id, but kimi-code v0.6.0 has no `-r` (`kimi --help`: resume-by-id is `-S, --session [id]`, continue-last `-C`); the path is reachable via `rescue --resume <id>`, so `-r` would be rejected at runtime — switched to `--session`. Also tightened the session-id parse to require `type==='session.resume_hint'`. Fixed a fragile review integration test exposed by committing the migration (`doesNotMatch(argv.join())` also matched the reviewed diff text embedded in the `-p` prompt → false positive; now checks flags as discrete argv tokens). Codex false-positives (verified, not changed): the `-p`+`--plan/--auto/--yolo` combination is latent-only (no caller injects those), and the `~/.kimi/` literal is an intentional migration-history comment.
+- **PR #5 (deep-review)** — Codex review stalled (~20 min, no output) on the 1249-line diff, so the gate ran a Claude-driven 6-dimension adversarial workflow (20 reviewers): auth-probe transient cluster, atomic-save locking, signal-kill, stream limit, job-control concurrency, state dedup, companion sessionId, test adequacy. 14 raw findings → 0 survived adversarial verification (the 25 hardening fixes are correctly implemented, no regressions). Only actionable item: untracked an accidentally-committed `.codegraph/.gitignore` and added `.codegraph/` to root `.gitignore`.
+
+**Merge mechanics:** source 3-way merges were clean (provider entries from kimi + grok both preserved; PROVIDERS includes grok). The 5 `polycli-companion.bundle.mjs` files conflicted/auto-merged textually but git's textual bundle merge did NOT match the source — regenerated all bundles via `npm run build:plugins` so they are byte-identical to the merged source.
+
+**Verification on merged `main`:** `npm test` exit 0 (483/483, up from 453); `validate:host-map` (12 capabilities), `validate:codex-adapter` (5 files, now includes grok), `check:review-drift` (no drift) all exit 0; `PROVIDER_IDS` = 11. `docs/roadmap.md` updated to 11-providers-in-main / unreleased. NOT run: `release:check` + npm publish (no release this round).
+
 ## 2026-05-30 — Codex — review v0.6.19 upgrade docs for current-state drift
 
 - Reviewed the v0.6.19 upgrade range (`v0.6.18..HEAD`) after Claude's maintenance/session-pollution increment. No code-level regressions were found in the new review-flag, session-artifact, bundle, or release-check paths under current verification.
