@@ -7,13 +7,14 @@ description: Internal helper contract for calling the polycli companion runtime 
 
 Internal contract for code invoking `scripts/polycli-companion.bundle.mjs`. Not user-facing. Claude uses this skill implicitly when dispatched via `/polycli:* --provider kimi` commands or the `polycli:polycli-provider-agent` subagent.
 
+> **Migrated to `kimi-code` v0.6.0 (2026-06-02).** This provider wraps the new `kimi-code` CLI, NOT the legacy Python `kimi-cli`. The contract below reflects `kimi-code` v0.6.0; the old `--print` / `--input-format` / `--yolo`-on-prompt / stderr-session-regex / `~/.kimi/` / `--max-steps-per-turn` / `-r` facts no longer apply.
+
 ## Runtime requirements
 
-- `kimi` CLI ≥ 1.34 on PATH (dev box verified against 1.36.0 and 1.37.0)
-- `~/.kimi/credentials/` non-empty (user ran `kimi login` interactively)
-- Auth is **100% CLI-managed** — the companion never injects `KIMI_API_KEY` or similar env vars; `kimi login` writes `~/.kimi/credentials/` (OAuth refresh-token handled by kimi-cli itself). The plugin is zero-coupled to Moonshot's auth model — rotating tokens is `kimi logout && kimi login`, no plugin work required.
-- Node.js ≥ 18
-- Zero npm dependencies — plugin uses only Node built-ins
+- The `kimi` (kimi-code) binary on PATH — `kimi -V` reports e.g. `0.6.0`. The legacy Python `kimi-cli` install is migrated (marker `~/.kimi-code/.migrated-to-kimi-code`).
+- Auth is **CLI-managed** — the companion never injects `KIMI_API_KEY` or similar; the user runs `kimi login`. Rotating tokens is `kimi logout && kimi login`, no plugin work.
+- Default model + config live in `~/.kimi-code/config.toml`.
+- Node.js ≥ 18. Zero npm dependencies — plugin uses only Node built-ins.
 
 ## Companion script subcommands
 
@@ -23,106 +24,62 @@ Internal contract for code invoking `scripts/polycli-companion.bundle.mjs`. Not 
 | `health --json` | End-to-end ping (uses `POLYCLI_HEALTH_OK` sentinel) | `{provider, healthy, detail, model}` |
 | `ask [options] "<prompt>"` | One-shot query (120s timeout) | streaming events then `{response, sessionId}` |
 | `rescue [options] "<prompt>"` | Multi-step agent task (600s timeout, supports `--background`) | `{response, sessionId}` foreground; `{jobId, status}` background |
-| `review [options]` / `adversarial-review [options]` | Code review on current diff (adversarial = red-team variant) | `{verdict, summary, findings[], next_steps[]}` family — see `runReview` for exact keys |
-| `status [jobId]` / `result [jobId]` / `cancel [jobId]` | Background job lifecycle | per Gemini provider parity |
+| `review [options]` / `adversarial-review [options]` | Code review on current diff (prompt-only for kimi) | `{verdict, summary, findings[], next_steps[]}` family — see `runReview` for exact keys |
+| `status [jobId]` / `result [jobId]` / `cancel [jobId]` | Background job lifecycle | per provider parity |
 | `timing [options]` | Inspect persisted timing history | `{provider, history[]}` |
 
-Resumable session state is exposed via the `--resume-last` flag (Kimi-only on the unified surface), not a separate subcommand.
+## kimi-code v0.6.0 invocation facts
 
-## Kimi CLI invocation facts (from doc/probe/probe-results.json v3)
+Grounded in `packages/polycli-runtime/src/kimi.js` (the merged adapter) and `kimi --help` on local `kimi-code` 0.6.0. Do NOT re-derive against the old Python CLI.
 
-These constants are the direct result of Phase 0 probes + codex source-read. Do NOT re-derive or re-probe.
-
-- **Version flag**: `kimi -V` (**uppercase**) or `kimi --version` — both return e.g. `kimi, version 1.40.0`. `kimi -v` (lowercase) is **not** a verbose flag in 1.40.0+; it returns a click usage error. Earlier kimi versions may have aliased `-v` differently — do not rely on it.
-- **Headless format**: `kimi -p "<prompt>" --print --output-format stream-json` emits **per-message JSONL** (not per-token streaming).
-- **Event shape**:
-  - Top-level keys: `role`, `content`
-  - `role` ∈ `{"assistant", "tool"}` (maybe more)
-  - `content` is a **list of blocks**, each block has `type`: `"text"`, `"think"`, `"image_url"`, `"audio_url"`, `"video_url"` (source-defined set; probe observed only text + think)
-  - **NO top-level `type` field** as event tag
-- **Multi-line per run**: a single kimi invocation CAN emit multiple JSONL lines (each tool_result is a separate `role:"tool"` event; each assistant turn another line). The parser MUST handle multi-line accumulation.
-- **Session ID**: NOT in stdout JSON. Only in stderr via regex `/kimi -r ([0-9a-f-]{36})/`. Source-verified unconditional emission (not gated by `--quiet`).
-- **Session ID fallback**: `~/.kimi/kimi.json.work_dirs[].last_session_id` where `path` matches the passed `-w` exactly. Updated synchronously in `--print` mode.
-- **Path storage**: **verbatim** (not symlink-resolved). Always pass `-w fs.realpathSync(cwd)` and compare against `work_dirs[i].path` with the same form.
-- **Hash algorithm** for `~/.kimi/sessions/<hash>/`: md5 of path string.
-- **Default model**: TOML scalar `default_model` at the top level of `~/.kimi/config.toml`.
-- **Configured models**: TOML sections `[models.<name>]` (one per name). Name may be bare (`[models.foo]`) or quoted with slashes (`[models."vendor/model"]`). Strip quotes when extracting.
-- **Large prompts**: pipe via stdin with `-p ""` when `prompt.length >= 100000` bytes.
-- **Liveness probe** (NOT auth-fresh check): `kimi -p "POLYCLI_HEALTH_OK" --print --output-format stream-json --max-steps-per-turn 1` with 30s timeout is 3/3 reliable for verifying the binary launches and reaches the model. It does **not** validate that the OAuth token has not expired — an expired token may still let kimi exit 0 and emit text. For true auth state, use `setup --json` and check the `authenticated` field (which inspects `~/.kimi/credentials/`).
-- **Model preflight**: validate `-m <name>` exists in `configured_models` BEFORE calling kimi to avoid wasted sessions (exit 1 + "LLM not set" path).
-- **Stats / token usage**: NOT surfaced in stream-json. kimi emits `StatusUpdate` internally but `JsonPrinter` drops it. v0.1 cannot expose token stats.
+- **Version flag**: `kimi -V` / `kimi --version` → `0.6.0`.
+- **One-shot headless**: `kimi -p "<prompt>" --output-format stream-json` (optionally `-m <model>`). The `-p`/`--prompt` runner is itself non-interactive — there is no `--print` / `--input-format` (those were the old CLI). `--output-format` ∈ `{text, stream-json}`.
+- **`-p` is mutually exclusive with `--yolo` / `--auto` / `--plan`** — the CLI rejects the combination. `-p` needs no approval flag, so the companion passes none on the prompt path.
+- **Event shape** (`stream-json`, per-message JSONL): `{role, content, ...}`. `content` may be a **string** OR a list of `{type, text}` blocks. `role` ∈ `{assistant, tool, meta}`. A single run can emit multiple lines — accumulate.
+- **Session id is STRUCTURED, in stdout**: it arrives in a `{role:"meta", type:"session.resume_hint", session_id:"session_<uuid>"}` event. Read it from there, keeping the `session_` prefix. NEVER scan prose stdout for a bare UUID (drops the prefix; can fabricate from a UUID the user asked about). `sessionId` is `null` when no `session.resume_hint` is emitted.
+- **Resume**: `--session <id>` (alias `-S`) resumes a specific session; `-C` / `--continue` continues the last session for the cwd. There is **no `-r`** flag in v0.6.0.
+- **Config / default model**: top-level `default_model` in `~/.kimi-code/config.toml`. The per-turn step budget moved to `[loop_control]` there — `--max-steps-per-turn` is **no longer a CLI flag**.
+- **Auth probe**: a plain non-interactive `-p` ping (no step flag), 30s timeout. Transient failures (timeout/429/network) stay inconclusive-authenticated, never `loggedOut`. For true auth state use `setup --json` (`authenticated` field).
+- **Model**: `-m <name>` selects the model; validate against `configured_models` (config `[models.<name>]` sections) before spawning.
 
 ## Exit code map
 
 | exit | Meaning | User-facing message |
 |---|---|---|
 | 0 | Success | (parse JSONL, render response) |
-| 1 | `LLMNotSet` (unknown model name) | "Model `<X>` not configured in ~/.kimi/config.toml" |
-| 2 | Click usage error (bad `-w`, bad flag) OR `--scope` enum mismatch (qwen H2 companion-side) | Show stderr error box verbatim |
-| 124 | Local timeout (companion-enforced) — child spawned but exceeded `KIMI_STATUS_TIMED_OUT` budget, or background worker exceeded `spawnSync` 600s timeout | "kimi timed out after Xs" |
+| 1 | Unknown/unset model | "Model `<X>` not configured in `~/.kimi-code/config.toml`" |
+| 2 | Usage error (bad flag) | Show stderr error box verbatim |
+| 124 | Local timeout (companion-enforced) | "kimi timed out after Xs" |
 | 130 | SIGINT | "Cancelled by user" |
-| 143 | SIGTERM (external kill; distinct from 124 local timeout per codex 5-way-review M1) | "Request was interrupted" |
+| 143 | SIGTERM (external kill; distinct from 124) | "Request was interrupted" |
 | other | Internal | Show exit code + stderr first 200 chars |
 
-## Assistant text extraction contract (for Phase 2+)
+## Assistant text extraction
 
-Given an assistant event `{role: "assistant", content: [...]}`:
+`extractKimiText` handles both content shapes:
 
 ```js
-const text = (event.content || [])
+// content may be a string …
+if (typeof event.content === "string") return event.content;
+// … or a list of blocks (only type === "text" contributes; drop "think")
+return (event.content || [])
   .filter(b => b && b.type === "text" && typeof b.text === "string")
   .map(b => b.text)
   .join("");
 ```
 
-- Drop `type === "think"` blocks by default (reasoning channel; surface only with an explicit flag).
-- Skip unknown block types without erroring; preserve the raw block for debug logs.
-- `event.tool_calls` is at the top level, parallel to content — preserve for job tracking in `/polycli:rescue --provider kimi`; ignore for `/polycli:ask --provider kimi`.
+- Drop `type === "think"` blocks by default (reasoning channel).
+- Skip unknown block types without erroring.
+- `role:"tool"` events are collected separately for `/polycli:rescue --provider kimi` job tracking; ignored for `/polycli:ask`.
+
+## Review
+
+`/review --provider kimi` and `/adversarial-review --provider kimi` are **prompt-only** (like minimax): because `-p` rejects `--plan`, no extra review flags are passed. Read-only behavior is enforced through the prompt contract; `scripts/check-review-cli-drift.mjs` guards the load-bearing `-p` / `--output-format` invocation flags so an upstream rename is caught.
 
 ## Do NOT
 
-- Do NOT pass `--approval-mode` (kimi does not accept it).
-- Do NOT write to `~/.kimi/`.
-- Do NOT parse the kimi TUI — always go through `--print`.
-- Do NOT assume stats are available in v0.1.
-- Do NOT use `kimi -C` (continue-last) — session continuity must be explicit via `-r <sessionId>`.
-
-## Kimi-CLI 1.37 flag inventory (informational — companion uses only the ✓ ones)
-
-Verified 2026-04-21 on local `kimi 1.37.0` via `kimi --help` + stdin probe. Listed here so future sibling plugins / v0.2 features know what's available without re-running `kimi --help`.
-
-| Flag | What it does | Companion uses? |
-|---|---|---|
-| `-V` / `--version` | Version. Both forms work in 1.40.0+ | ✓ in setup |
-| `-v` (lowercase) | **Not a flag in 1.40.0+** — returns click usage error | — (do not use) |
-| `-w <dir>` / `--work-dir` | Working directory for the agent | ✓ all spawn calls (realpath'd) |
-| `--add-dir <dir>` | Add additional directory to workspace scope (repeatable) | — (v0.2 multi-root candidate) |
-| `-S <id>` / `-r <id>` / `--session <id>` / `--resume <id>` | Resume a session. **Without id** opens interactive picker (shell only, fails in `--print`). **With id** resumes. v1.37 aliases: `-S` / `--session` is a new synonym for `-r` / `--resume`. | ✓ `-r <sid>` path — regex `/kimi -r ([0-9a-f-]{36})/` still matches the stderr hint verbatim in 1.37 |
-| `-C` / `--continue` | Continue the previous session for the working directory | ✗ explicitly banned (see "Do NOT") |
-| `--config <toml-str>` / `--config-file <path>` | Inline or file-based config override | — |
-| `-m <name>` / `--model <name>` | LLM model override (must exist in `~/.kimi/config.toml`) | ✓ preflight-validated |
-| `--thinking` / `--no-thinking` | Thinking mode toggle (default from config) | — |
-| `-y` / `--yolo` / `--yes` | Auto-approve all actions | ✗ implicit via `--print` |
-| `--plan` | Start in plan mode (v1.33+) | — (v0.2 `/polycli:plan --provider kimi` candidate) |
-| `-p <text>` / `-c <text>` / `--prompt` / `--command` | User prompt | ✓ for short prompts only; stdin path for `prompt.length >= 100_000` |
-| `--print` | Non-interactive mode (implicit `--yolo`) | ✓ all spawn calls |
-| `--input-format [text\|stream-json]` | Required with `--print` when piping stdin | ✓ `text` in stdin path |
-| `--output-format [text\|stream-json]` | Output format; requires `--print` | ✓ `stream-json` always |
-| `--final-message-only` | Print only the final assistant message (skip stream) | — |
-| `--quiet` | Alias for `--print --output-format text --final-message-only` | — (considered; rejected — we need JSONL to separate `think` from `text` blocks consistently) |
-| `--agent [default\|okabe]` | Builtin agent specification (tool/skill bundle). **Orthogonal to `-m <model>`.** | ✗ (companion does not set) |
-| `--agent-file <path>` | Custom agent spec file | — |
-| `--mcp-config-file` / `--mcp-config` | MCP server config injection (repeatable) | — |
-| `--skills-dir <dir>` | Custom skill discovery dirs (repeatable) | — |
-| `--max-steps-per-turn <N>` | Turn step budget | ✓ `--max-steps-per-turn 1` for auth ping |
-| `--max-retries-per-step <N>` | Per-step retry budget | — |
-| `--max-ralph-iterations <N>` | Ralph-mode extra turns (`-1` = unlimited) | — |
-| `--acp` / `kimi acp` | ACP server mode (Claude-Code-alike protocol); `--acp` deprecated, prefer subcommand | — |
-| `--wire` / wire protocol | Experimental wire mode; this is what `@moonshot-ai/kimi-agent-sdk` consumes | — (v0.2+ if we adopt the Agent SDK) |
-
-**Key empirical facts re-confirmed on 1.37** (2026-04-21 probe, non-git `/tmp` cwd):
-
-- `stream-json` stdout shape unchanged: each line is `{role, content: [{type: "think"|"text"|..., ...}]}`.
-- Session-id stderr hint unchanged: `\nTo resume this session: kimi -r <uuid>\n` — `SESSION_ID_STDERR_REGEX` still matches.
-- `-r <bogus-uuid>` in `--print` mode does NOT error (PR #1716's "raise error on not-found" only triggers in interactive mode). The companion's existing `requested !== returned` warning (polycli-companion.bundle.mjs:339) is still the correct guard.
-- Behavior change to be aware of (PR #1802, "keep agent loop alive"): when the LLM returns a text-only response while background tasks are still running, kimi 1.37 now waits rather than exiting. This is the direct rationale for `DEFAULT_TIMEOUT_MS = 900_000`; dropping it back to 300s would SIGTERM legitimate agent-swarm turns.
+- Do NOT combine `-p` with `--yolo` / `--auto` / `--plan` (the CLI rejects the invocation).
+- Do NOT scan prose stdout for a session UUID — read the structured `session.resume_hint` event.
+- Do NOT pass `--print` / `--input-format` / `--max-steps-per-turn` / `-r` — none exist in `kimi-code` v0.6.0.
+- Do NOT write to `~/.kimi-code/`.
+- Do NOT parse the kimi TUI — always go through `-p`.

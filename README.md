@@ -23,7 +23,7 @@
 
 ## What is polycli?
 
-`polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, **`cmd`** (Command Code), and **`mmx-cli`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing`, `debug`, background-job controls, and terminal inspection — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
+`polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, **`cmd`** (Command Code), **`agy`** (Antigravity), **`grok`** (xAI Grok), and **`mmx-cli`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing`, `debug`, background-job controls, and terminal inspection — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
 
 > **polycli is primarily an in-host plugin.** Each host adapter exposes the same `health / ask / review / rescue / timing / debug` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, an installed `polycli` skill in Codex). For environments without a supported host, the optional `@bbingz/polycli` terminal package adds a PATH-callable wrapper around the same companion. See [Outside a supported host](#outside-a-supported-host).
 
@@ -76,7 +76,7 @@ Workflows where bare-shell has **no equivalent at all** (adversarial-review, bac
 
 | Hosts (where polycli is installed) | Providers (what polycli can call) |
 |---|---|
-| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `minimax` (`mmx-cli`) |
+| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `agy` · `grok` · `minimax` (`mmx-cli`) |
 
 See [Capability matrix](#capability-matrix) for what each provider supports.
 
@@ -200,6 +200,8 @@ Source of truth: [`packages/polycli-runtime/src/registry.js`](./packages/polycli
 | `opencode` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `pi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `cmd` | ✓ | — | — | ✓ | ✓ | ✓ | — |
+| `agy` | ✓ | ✓ | — | ✓ | ✓ | ✓ | — |
+| `grok` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 
 Notes:
 
