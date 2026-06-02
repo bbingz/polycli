@@ -11,7 +11,6 @@ import {
   buildKimiInvocation,
   extractKimiText,
   getKimiAuthStatus,
-  resolveKimiResumeSession,
   parseKimiStreamText,
   runKimiPrompt,
   runKimiPromptStreaming,
@@ -29,179 +28,94 @@ function withFakeKimiBin(source, fn) {
   }
 }
 
-test("buildKimiInvocation omits -p in stdin mode, defaults to yolo, and enables input-format text", () => {
+const RESUME_HINT = (id) =>
+  JSON.stringify({ role: "meta", type: "session.resume_hint", session_id: id, command: `kimi -r ${id}` });
+
+test("buildKimiInvocation targets kimi-code one-shot -p + stream-json (no --yolo/--print/--input-format)", () => {
   const invocation = buildKimiInvocation({
-    prompt: "x".repeat(100_000),
-    model: "kimi-k2",
-    resumeSessionId: "123e4567-e89b-12d3-a456-426614174000",
+    prompt: "review this",
+    model: "kimi-for-coding",
+    resumeSessionId: "session_123e4567-e89b-42d3-a456-426614174000",
   });
 
-  assert.equal(invocation.useStdin, true);
-  assert.equal(invocation.input.length, 100_000);
   assert.deepEqual(invocation.args, [
-    "--print",
+    "-p",
+    "review this",
     "--output-format",
     "stream-json",
-    "--input-format",
-    "text",
-    "--yolo",
     "-m",
-    "kimi-k2",
+    "kimi-for-coding",
     "-r",
-    "123e4567-e89b-12d3-a456-426614174000",
+    "session_123e4567-e89b-42d3-a456-426614174000",
   ]);
 });
 
-test("buildKimiInvocation omits --yolo when caller opts out", () => {
-  const invocation = buildKimiInvocation({
-    prompt: "ping",
-    yolo: false,
-  });
-
-  assert.equal(invocation.args.includes("--yolo"), false);
+test("buildKimiInvocation uses -C for resume-last and omits resume flags for a fresh run", () => {
+  assert.deepEqual(
+    buildKimiInvocation({ prompt: "ping", resumeLast: true }).args,
+    ["-p", "ping", "--output-format", "stream-json", "-C"]
+  );
+  assert.deepEqual(
+    buildKimiInvocation({ prompt: "ping" }).args,
+    ["-p", "ping", "--output-format", "stream-json"]
+  );
 });
 
-test("resolveKimiResumeSession resolves and validates the last cwd session before spawn", () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-home-"));
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-cwd-"));
-  const sessionId = "123e4567-e89b-42d3-a456-426614174000";
-  const oldHome = process.env.HOME;
-  const oldUserProfile = process.env.USERPROFILE;
-
-  try {
-    process.env.HOME = home;
-    process.env.USERPROFILE = home;
-    fs.mkdirSync(path.join(home, ".kimi"), { recursive: true });
-    const realCwd = fs.realpathSync(cwd);
-    fs.writeFileSync(
-      path.join(home, ".kimi", "kimi.json"),
-      `${JSON.stringify({ work_dirs: [{ path: realCwd, kaos: "local", last_session_id: sessionId }] })}\n`
-    );
-
-    const first = resolveKimiResumeSession({ cwd, resumeLast: true });
-    assert.equal(first.ok, false);
-    assert.match(first.error, /not found/i);
-
-    fs.mkdirSync(path.join(home, ".kimi", "sessions", first.cwdHash, sessionId), { recursive: true });
-    fs.writeFileSync(path.join(home, ".kimi", "sessions", first.cwdHash, sessionId, "context.jsonl"), "{}\n");
-
-    const second = resolveKimiResumeSession({ cwd, resumeLast: true });
-    assert.equal(second.ok, true);
-    assert.equal(second.sessionId, sessionId);
-  } finally {
-    if (oldHome == null) delete process.env.HOME;
-    else process.env.HOME = oldHome;
-    if (oldUserProfile == null) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = oldUserProfile;
-    fs.rmSync(home, { recursive: true, force: true });
-    fs.rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test("runKimiPromptStreaming rejects invalid explicit resume ids before spawn", async () => {
-  const result = await runKimiPromptStreaming({
-    prompt: "ping",
-    cwd: process.cwd(),
-    resumeSessionId: "not-a-uuid",
-    spawnImpl() {
-      throw new Error("spawn should not be called");
-    },
-  });
-
-  assert.equal(result.ok, false);
-  assert.match(result.error, /invalid sessionId format/i);
-});
-
-test("runKimiPromptStreaming warns when requested resume id differs from returned session", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-home-"));
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-cwd-"));
-  const requested = "123e4567-e89b-42d3-a456-426614174000";
-  const returned = "223e4567-e89b-42d3-a456-426614174001";
-  const oldHome = process.env.HOME;
-  const oldUserProfile = process.env.USERPROFILE;
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.stdin = { write() {}, end() {}, on() {} };
-  child.kill = () => {};
-
-  try {
-    process.env.HOME = home;
-    process.env.USERPROFILE = home;
-    const resolved = resolveKimiResumeSession({ cwd, resumeSessionId: requested });
-    fs.mkdirSync(path.join(home, ".kimi", "sessions", resolved.cwdHash, requested), { recursive: true });
-    fs.writeFileSync(path.join(home, ".kimi", "sessions", resolved.cwdHash, requested, "context.jsonl"), "{}\n");
-
-    const result = await runKimiPromptStreaming({
-      prompt: "ping",
-      cwd,
-      resumeSessionId: requested,
-      spawnImpl() {
-        queueMicrotask(() => {
-          child.stderr.emit("data", `To resume: kimi -r ${returned}\n`);
-          child.stdout.emit("data", '{"role":"assistant","content":[{"type":"text","text":"hello"}]}\n');
-          child.emit("close", 0, null);
-        });
-        return child;
-      },
-    });
-
-    assert.equal(result.ok, true);
-    assert.equal(result.resumeMismatched, true);
-    assert.deepEqual(result.warnings, [
-      `Warning: requested --resume ${requested} did not match returned session ${returned}`,
-    ]);
-  } finally {
-    if (oldHome == null) delete process.env.HOME;
-    else process.env.HOME = oldHome;
-    if (oldUserProfile == null) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = oldUserProfile;
-    fs.rmSync(home, { recursive: true, force: true });
-    fs.rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-test("parseKimiStreamText keeps assistant text and tool events separate", () => {
+test("parseKimiStreamText keeps assistant text, tool events, and reads the structured session id", () => {
   const parsed = parseKimiStreamText(
     [
       '{"role":"assistant","content":[{"type":"text","text":"hello"},{"type":"think","text":"hidden"}]}',
       '{"role":"tool","name":"bash","content":[{"type":"text","text":"ran"}]}',
-      '{"role":"assistant","content":[{"type":"text","text":" world"}],"model":"kimi-k2"}',
+      '{"role":"assistant","content":" world","model":"kimi-for-coding"}',
+      RESUME_HINT("session_a3e525ea-0ad2-49b0-9feb-477ebd05a9ac"),
     ].join("\n")
   );
 
   assert.equal(parsed.response, "hello world");
-  assert.equal(parsed.model, "kimi-k2");
-  assert.equal(parsed.events.length, 3);
+  assert.equal(parsed.model, "kimi-for-coding");
+  assert.equal(parsed.events.length, 4);
   assert.equal(parsed.toolEvents.length, 1);
-  assert.equal(extractKimiText({ role: "assistant", content: [{ type: "text", text: "ok" }] }), "ok");
+  // The full `session_<uuid>` id is preserved (not the bare UUID a prose scan would yield).
+  assert.equal(parsed.sessionId, "session_a3e525ea-0ad2-49b0-9feb-477ebd05a9ac");
 });
 
-test("extractKimiText supports string assistant content", () => {
+test("extractKimiText supports both string and array assistant content", () => {
+  assert.equal(extractKimiText({ role: "assistant", content: "final body" }), "final body");
   assert.equal(
-    extractKimiText({ role: "assistant", content: "final review body" }),
-    "final review body"
+    extractKimiText({ role: "assistant", content: [{ type: "text", text: "ok" }] }),
+    "ok"
   );
 });
 
-test("runKimiPrompt prefers stdout session ids before stderr fallback", () => {
+test("runKimiPrompt reads the structured session_<uuid> id and never fabricates from prose", () => {
   withFakeKimiBin(
     `#!/usr/bin/env node
-process.stdout.write("stdout session 123e4567-e89b-42d3-a456-426614174000\\n");
-process.stderr.write("stderr session 223e4567-e89b-42d3-a456-426614174000\\n");
-process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "text", text: "hello world" }] }) + "\\n");
+process.stdout.write(JSON.stringify({ role: "assistant", content: "here is a uuid 123e4567-e89b-42d3-a456-426614174000" }) + "\\n");
+process.stdout.write(${JSON.stringify(RESUME_HINT("session_a3e525ea-0ad2-49b0-9feb-477ebd05a9ac"))} + "\\n");
 `,
     ({ root, bin }) => {
-      const result = runKimiPrompt({
-        prompt: "ping",
-        cwd: root,
-        defaultModel: "kimi-fallback",
-        bin,
-      });
+      const result = runKimiPrompt({ prompt: "give me a uuid", cwd: root, bin });
 
       assert.equal(result.ok, true);
-      assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
-      assert.equal(result.model, "kimi-fallback");
+      // The prose UUID is in the answer but is NEVER promoted to a sessionId; the structured
+      // session.resume_hint id (with its `session_` prefix) is used instead.
+      assert.match(result.response, /123e4567-e89b-42d3-a456-426614174000/);
+      assert.equal(result.sessionId, "session_a3e525ea-0ad2-49b0-9feb-477ebd05a9ac");
+    }
+  );
+});
+
+test("runKimiPrompt leaves sessionId null when no resume_hint event is emitted (no fabrication)", () => {
+  withFakeKimiBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ role: "assistant", content: "uuid 123e4567-e89b-42d3-a456-426614174000 in the answer" }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runKimiPrompt({ prompt: "give me a uuid", cwd: root, bin });
+
+      assert.equal(result.ok, true);
+      assert.match(result.response, /123e4567/);
+      assert.equal(result.sessionId, null);
     }
   );
 });
@@ -213,14 +127,28 @@ process.stdout.write("secret token\\n");
 process.exit(2);
 `,
     ({ root, bin }) => {
-      const result = runKimiPrompt({
-        prompt: "ping",
-        cwd: root,
-        bin,
-      });
+      const result = runKimiPrompt({ prompt: "ping", cwd: root, bin });
 
       assert.equal(result.ok, false);
       assert.equal(result.error, "kimi exited with code 2");
+    }
+  );
+});
+
+test("runKimiPrompt normalizes a real spawn timeout so the auth probe stays inconclusive", () => {
+  withFakeKimiBin(
+    `#!/usr/bin/env node
+setTimeout(() => {}, 5000);
+`,
+    ({ root, bin }) => {
+      const result = runKimiPrompt({ prompt: "ping", cwd: root, bin, timeout: 200 });
+
+      assert.equal(result.ok, false);
+      assert.match(result.error, /kimi timed out after/i);
+
+      const auth = getKimiAuthStatus(root, { promptRunner: () => result });
+      assert.equal(auth.loggedIn, true);
+      assert.match(auth.detail, /inconclusive/i);
     }
   );
 });
@@ -284,20 +212,24 @@ test("runKimiPromptStreaming returns a structured failure on spawn error", async
   assert.equal(result.errorCode, "binary_missing");
 });
 
-test("runKimiPromptStreaming treats resume footer exits as success when assistant text exists", async () => {
+test("runKimiPromptStreaming captures the structured session id and emits events", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.stdin = { write() {}, end() {}, on() {} };
   child.kill = () => {};
+  const events = [];
 
   const result = await runKimiPromptStreaming({
     prompt: "ping",
+    onEvent(event) {
+      events.push(event);
+    },
     spawnImpl() {
       queueMicrotask(() => {
-        child.stdout.emit("data", '{"role":"assistant","content":[{"type":"text","text":"hello"}]}\n');
-        child.stderr.emit("data", "To resume: kimi -r 123e4567-e89b-42d3-a456-426614174000\n");
-        child.emit("close", 1, null);
+        child.stdout.emit("data", '{"role":"assistant","content":"hello"}\n');
+        child.stdout.emit("data", RESUME_HINT("session_a3e525ea-0ad2-49b0-9feb-477ebd05a9ac") + "\n");
+        child.emit("close", 0, null);
       });
       return child;
     },
@@ -305,8 +237,8 @@ test("runKimiPromptStreaming treats resume footer exits as success when assistan
 
   assert.equal(result.ok, true);
   assert.equal(result.response, "hello");
-  assert.equal(result.error, null);
-  assert.equal(result.errorCode, null);
+  assert.equal(result.sessionId, "session_a3e525ea-0ad2-49b0-9feb-477ebd05a9ac");
+  assert.equal(events.length, 2);
 });
 
 test("runKimiPromptStreaming returns an explicit error when no visible assistant text is emitted", async () => {
@@ -320,7 +252,6 @@ test("runKimiPromptStreaming returns an explicit error when no visible assistant
     prompt: "ping",
     spawnImpl() {
       queueMicrotask(() => {
-        child.stderr.emit("data", "To resume: kimi -r 123\n");
         child.stdout.emit("data", '{"role":"assistant","content":[{"type":"think","text":"hidden"}]}\n');
         child.emit("close", 0, null);
       });

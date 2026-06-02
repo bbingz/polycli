@@ -6,13 +6,15 @@ import {
   PROMPT_FINAL_ANSWER_APPEND_SYSTEM,
 } from "../lib/prompt-runtime.mjs";
 
-test("buildPromptRuntimeOptions constrains kimi ask to visible plan-mode text", () => {
+test("buildPromptRuntimeOptions leaves kimi ask unconstrained under kimi-code (no -p-compatible flags)", () => {
   const options = buildPromptRuntimeOptions({
     provider: "kimi",
     kind: "ask",
   });
 
-  assert.deepEqual(options.extraArgs, ["--plan", "--no-thinking", "--max-steps-per-turn", "1"]);
+  // kimi-code's -p one-shot mode rejects --plan/--auto and dropped --no-thinking/--max-steps-per-turn,
+  // so there are no per-invocation ask constraints to add.
+  assert.deepEqual(options, {});
 });
 
 test("buildPromptRuntimeOptions leaves kimi rescue unconstrained", () => {

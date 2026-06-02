@@ -68,7 +68,6 @@ test("runtime index exports expected surface", () => {
     "parseOpenCodeStreamText",
     "parsePiStreamText",
     "parseQwenStreamText",
-    "resolveKimiResumeSession",
     "runAgyPrompt",
     "runAgyPromptStreaming",
     "runClaudePrompt",

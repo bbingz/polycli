@@ -91,10 +91,12 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     readOnlyValue: null,
   }),
   kimi: Object.freeze({
-    expectFlags: Object.freeze([]),
-    extraArgTokens: Object.freeze(["--no-thinking", "--max-steps-per-turn"]),
-    readOnlyOptionKey: "yolo",
-    readOnlyValue: null,
+    // kimi-code v0.6.0: the legacy --no-thinking/--max-steps-per-turn review levers were removed
+    // upstream and -p one-shot mode rejects --plan/--auto, so review is prompt-only (extraArgTokens
+    // empty, like minimax). expectFlags are the load-bearing INVOCATION flags the runtime depends on
+    // (-p/--prompt + --output-format), so the drift check warns if kimi-code renames or drops them.
+    expectFlags: Object.freeze(["--prompt", "--output-format"]),
+    extraArgTokens: Object.freeze([]),
   }),
   agy: Object.freeze({
     expectFlags: Object.freeze([]),

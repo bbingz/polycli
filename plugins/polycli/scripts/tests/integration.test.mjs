@@ -4,7 +4,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { createClaudeFixtureReplay } from "./helpers/fixture-replay.mjs";
@@ -170,28 +169,25 @@ if (process.env.KIMI_ARGV_LOG) {
 }
 const promptIndex = args.indexOf("-p");
 const prompt = promptIndex >= 0 ? (args[promptIndex + 1] || "") : "ping";
-const noThinking = args.includes("--no-thinking");
 const delayMatch = prompt.match(/__delay=(\\d+)/);
 const delay = delayMatch ? Number.parseInt(delayMatch[1], 10) : Number.parseInt(process.env.KIMI_DELAY_MS || "0", 10);
 const tailDelayMatch = prompt.match(/__tail=(\\d+)/);
 const tailDelay = tailDelayMatch ? Number.parseInt(tailDelayMatch[1], 10) : 0;
 const replyMatch = prompt.match(/__reply=([^\\n]+)/);
 const reply = process.env.KIMI_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
+const returnSession = process.env.KIMI_RETURN_SESSION || "session_33333333-3333-4333-8333-333333333333";
 (async () => {
   logEvent("start");
-  process.stderr.write("To resume: kimi -r 33333333-3333-4333-8333-333333333333\\n");
   if (delay > 0) await sleep(delay);
-  if (process.env.KIMI_REQUIRE_NO_THINKING === "1" && !noThinking) {
-    process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "think", think: "missing no-thinking constraint" }] }) + "\\n");
-    return;
-  }
   if (process.env.KIMI_CONTENT_MODE === "string") {
     process.stdout.write(JSON.stringify({ role: "assistant", content: reply, model: "kimi-test" }) + "\\n");
-  } else if (process.env.KIMI_EMIT_THINKING === "1" && !noThinking) {
+  } else if (process.env.KIMI_EMIT_THINKING === "1") {
     process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "think", think: "thinking before final" }, { type: "text", text: reply }], model: "kimi-test" }) + "\\n");
   } else {
     process.stdout.write(JSON.stringify({ role: "assistant", content: [{ type: "text", text: reply }], model: "kimi-test" }) + "\\n");
   }
+  // kimi-code emits the session id structurally in a resume_hint meta event (session_<uuid>).
+  process.stdout.write(JSON.stringify({ role: "meta", type: "session.resume_hint", session_id: returnSession, command: "kimi -r " + returnSession }) + "\\n");
   if (tailDelay > 0) await sleep(tailDelay);
   logEvent("end");
 })();
@@ -498,18 +494,6 @@ function runCompanion(args, { cwd, env, timeout = 30_000 } = {}) {
 
 function readJsonLine(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8").trim());
-}
-
-function createKimiSessionFixture({ home, cwd, sessionId }) {
-  const realCwd = fs.realpathSync(cwd);
-  const cwdHash = createHash("md5").update(realCwd).digest("hex");
-  fs.mkdirSync(path.join(home, ".kimi", "sessions", cwdHash, sessionId), { recursive: true });
-  fs.writeFileSync(path.join(home, ".kimi", "sessions", cwdHash, sessionId, "context.jsonl"), "{}\n");
-  fs.writeFileSync(
-    path.join(home, ".kimi", "kimi.json"),
-    `${JSON.stringify({ work_dirs: [{ path: realCwd, kaos: "local", last_session_id: sessionId }] })}\n`
-  );
-  return { cwdHash, realCwd };
 }
 
 async function waitForTerminalJob(jobId, context) {
@@ -1065,7 +1049,6 @@ test("integration: kimi ask parses --resume-last, --resume, and --fresh", async 
   const fake = createFakeKimiBin();
   const sessionId = "33333333-3333-4333-8333-333333333333";
   try {
-    createKimiSessionFixture({ home, cwd, sessionId });
     const env = cleanEnv({
       HOME: home,
       USERPROFILE: home,
@@ -1075,14 +1058,17 @@ test("integration: kimi ask parses --resume-last, --resume, and --fresh", async 
       KIMI_FIXED_REPLY: "KIMI_FLAGS_OK",
     });
 
+    // kimi-code resolves resume itself: --resume-last -> -C (continue last for this cwd).
     const resumeLast = await runCompanion(
       ["ask", "--provider", "kimi", "--resume-last", "--json", "__reply=IGNORED"],
       { cwd, env }
     );
     assert.equal(resumeLast.code, 0, resumeLast.stderr);
     let logged = readJsonLine(argLog);
-    assert.deepEqual(logged.argv.slice(logged.argv.indexOf("-r"), logged.argv.indexOf("-r") + 2), ["-r", sessionId]);
+    assert.equal(logged.argv.includes("-C"), true);
+    assert.equal(logged.argv.includes("-r"), false);
 
+    // --resume <id> -> -r <id> passed straight through to the CLI.
     const explicitResume = await runCompanion(
       ["rescue", "--provider", "kimi", "--resume", sessionId, "--json", "__reply=IGNORED"],
       { cwd, env }
@@ -1098,6 +1084,7 @@ test("integration: kimi ask parses --resume-last, --resume, and --fresh", async 
     assert.equal(fresh.code, 0, fresh.stderr);
     logged = readJsonLine(argLog);
     assert.equal(logged.argv.includes("-r"), false);
+    assert.equal(logged.argv.includes("-C"), false);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
@@ -1143,43 +1130,6 @@ test("integration: unsupported flags emit one-line notes and continue", async ()
     fakeKimi.cleanup();
     fakeQwen.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
-  }
-});
-
-test("integration: kimi explicit resume mismatch emits a warning after spawn", async () => {
-  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-home-"));
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-kimi-cwd-"));
-  const fake = createFakeKimiBin();
-  const requested = "123e4567-e89b-42d3-a456-426614174000";
-  const returned = "33333333-3333-4333-8333-333333333333";
-  try {
-    createKimiSessionFixture({ home, cwd, sessionId: requested });
-    const result = await runCompanion(
-      ["ask", "--provider", "kimi", "--resume", requested, "--json", "__reply=PONG"],
-      {
-        cwd,
-        env: cleanEnv({
-          HOME: home,
-          USERPROFILE: home,
-          CLAUDE_PLUGIN_DATA: pluginData,
-          KIMI_CLI_BIN: fake.bin,
-        }),
-      }
-    );
-
-    assert.equal(result.code, 0, result.stderr);
-    const payload = JSON.parse(result.stdout);
-    assert.equal(payload.resumeMismatched, true);
-    assert.match(
-      result.stderr,
-      new RegExp(`Warning: requested --resume ${requested} did not match returned session ${returned}`)
-    );
-  } finally {
-    fake.cleanup();
-    fs.rmSync(pluginData, { recursive: true, force: true });
-    fs.rmSync(home, { recursive: true, force: true });
-    fs.rmSync(cwd, { recursive: true, force: true });
   }
 });
 
@@ -1283,7 +1233,6 @@ test("integration: ask constrains kimi to a visible non-thinking answer", async 
       CLAUDE_PLUGIN_DATA: pluginData,
       KIMI_CLI_BIN: fake.bin,
       KIMI_ARGV_LOG: argLog,
-      KIMI_REQUIRE_NO_THINKING: "1",
       KIMI_FIXED_REPLY: "KIMI_ASK_OK",
     });
     const ask = await runCompanion(
@@ -1296,8 +1245,10 @@ test("integration: ask constrains kimi to a visible non-thinking answer", async 
 
     const logged = readJsonLine(argLog);
     const argv = logged.argv.join(" ");
-    assert.match(argv, /--no-thinking/);
-    assert.match(argv, /--max-steps-per-turn 1/);
+    // kimi-code one-shot invocation; the removed --no-thinking/--max-steps-per-turn flags must NOT reappear.
+    assert.match(argv, /-p /);
+    assert.match(argv, /--output-format stream-json/);
+    assert.doesNotMatch(argv, /--no-thinking|--max-steps-per-turn/);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
@@ -1324,8 +1275,8 @@ test("integration: review constrains kimi to one non-thinking turn", async () =>
     assert.equal(payload.response, "REVIEW_OK");
 
     const logged = JSON.parse(fs.readFileSync(argLog, "utf8").trim());
-    assert.match(logged.argv.join(" "), /--no-thinking/);
-    assert.match(logged.argv.join(" "), /--max-steps-per-turn 1/);
+    assert.match(logged.argv.join(" "), /--output-format stream-json/);
+    assert.doesNotMatch(logged.argv.join(" "), /--no-thinking|--max-steps-per-turn/);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
@@ -1364,8 +1315,8 @@ test("integration: review --background preserves kimi runtime options and stored
     assert.equal(payload.job.jobId, started.job.jobId);
 
     const logged = JSON.parse(fs.readFileSync(argLog, "utf8").trim());
-    assert.match(logged.argv.join(" "), /--no-thinking/);
-    assert.match(logged.argv.join(" "), /--max-steps-per-turn 1/);
+    assert.match(logged.argv.join(" "), /--output-format stream-json/);
+    assert.doesNotMatch(logged.argv.join(" "), /--no-thinking|--max-steps-per-turn/);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });

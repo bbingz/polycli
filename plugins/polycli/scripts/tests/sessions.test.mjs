@@ -15,10 +15,6 @@ const HOME = '/home/tester';
 const CWD = '/Users/tester/-Code-/polycli';
 const SID = '01555281-0f41-48d9-bd9c-775a19ed3cda';
 
-function md5(value) {
-  return createHash('md5').update(value).digest('hex');
-}
-
 // ---- deriveSessionArtifactCandidate ----
 
 test('deriveSessionArtifactCandidate (claude) → one exact <encoded-cwd>/<sessionId>.jsonl path', () => {
@@ -39,14 +35,16 @@ test('deriveSessionArtifactCandidate (claude) → one exact <encoded-cwd>/<sessi
   assert.equal(candidate.kind, 'file');
 });
 
-test('deriveSessionArtifactCandidate (kimi) → one exact <md5(cwd)>/<sessionId> dir, basename==sessionId', () => {
+test('deriveSessionArtifactCandidate (kimi) → kimi-code wd_<base>_<sha256[:12]>/<sessionId> dir, basename==sessionId', () => {
   const candidate = deriveSessionArtifactCandidate({
     provider: 'kimi',
     sessionId: SID,
     workspaceRoot: CWD,
     homedir: HOME,
   });
-  const expected = path.join(HOME, '.kimi', 'sessions', md5(CWD), SID);
+  // CWD does not exist on disk in the test, so the derivation falls back to the given path.
+  const slug = `wd_${path.basename(CWD)}_${createHash('sha256').update(CWD).digest('hex').slice(0, 12)}`;
+  const expected = path.join(HOME, '.kimi-code', 'sessions', slug, SID);
   assert.equal(candidate.path, expected);
   assert.equal(path.basename(candidate.path), SID);
   assert.equal(candidate.kind, 'dir');
@@ -287,7 +285,13 @@ test('planPurge validates kimi dir basename equals sessionId', () => {
   const rec = {
     provider: 'kimi',
     sessionId: SID,
-    sessionArtifactPath: path.join(HOME, '.kimi', 'sessions', md5(CWD), SID),
+    sessionArtifactPath: path.join(
+      HOME,
+      '.kimi-code',
+      'sessions',
+      `wd_${path.basename(CWD)}_${createHash('sha256').update(CWD).digest('hex').slice(0, 12)}`,
+      SID,
+    ),
     workspaceRoot: CWD,
   };
   const plan = planPurge({

@@ -56,13 +56,9 @@ export function buildPromptRuntimeOptions({
     };
   }
 
-  if (kind === "ask" && provider === "kimi") {
-    return {
-      ...runtimeOptions,
-      yolo: false,
-      extraArgs: mergeExtraArgs(runtimeOptions, ["--plan", "--no-thinking", "--max-steps-per-turn", "1"]),
-    };
-  }
+  // kimi-code v0.6.0 has no per-invocation ask constraints: `-p` one-shot mode rejects
+  // --plan/--auto and the old --no-thinking/--max-steps-per-turn flags were removed (those
+  // are now config.toml-level). kimi ask therefore uses the plain `-p` invocation.
 
   if (kind === "ask" && provider === "claude") {
     return {
