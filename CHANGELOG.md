@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-02 — Claude — docs: kimi-code v0.6.0 skill/docs refresh + README 11 providers (PR #8)
+
+- Closed the doc-debt deferred through v0.6.20 (merged via PR #8). The kimi skill prose + reference docs still described the legacy Python kimi-cli, contradicting the kimi-code v0.6.0 adapter: rewrote `kimi-cli-runtime/SKILL.md` (`-p` one-shot, structured `session.resume_hint` id, `--session`/`-C` resume, `~/.kimi-code/`, prompt-only review); fixed `kimi-prompting/SKILL.md` rule 4 (`--max-steps-per-turn` is config-level now), and the kimi rows in `docs/provider-paths.md` + `docs/polycli-v1-public-surface.md`.
+- README (GitHub-rendered) provider prose list, Hosts/providers table, and capability matrix now list all 11 providers — added the previously-missing `agy` (since v0.6.18) and `grok` (v0.6.20); `readme-header.svg` "ten"→"eleven".
+- Docs-only (no code/bundle change). `npm test` 483/483; `validate:codex-adapter` / `host-map` / `manifests` green.
+
 ## 2026-06-02 — Claude — v0.6.20 published (GitHub release + npm)
 
 - Released the merged grok / kimi-code / deep-review work as **v0.6.20**. GitHub release: https://github.com/bbingz/polycli/releases/tag/v0.6.20.
