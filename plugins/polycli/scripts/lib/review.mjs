@@ -156,6 +156,10 @@ const REVIEW_HARD_CONSTRAINTS = {
   minimax() {
     return {};
   },
+  grok() {
+    // --permission-mode plan is grok's read-only mode and composes with the -p one-shot runner.
+    return { permissionMode: "plan", alwaysApprove: false };
+  },
 };
 
 export function buildReviewRuntimeOptions({

@@ -249,7 +249,7 @@ function withLockfile(lockPath, fn, { timeoutMs = 1e4, staleMs = 6e5, pollMs = 2
 }
 
 // packages/polycli-runtime/src/constants.js
-var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd", "agy"];
+var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd", "agy", "grok"];
 var PROVIDER_OPERATION_NAMES = ["prompt"];
 
 // packages/polycli-utils/src/parse-stream-json.js
@@ -3414,6 +3414,226 @@ function runAgyPromptStreaming({
   });
 }
 
+// packages/polycli-runtime/src/grok.js
+var GROK_BIN = process.env.GROK_CLI_BIN || "grok";
+var DEFAULT_TIMEOUT_MS11 = 9e5;
+var AUTH_CHECK_TIMEOUT_MS11 = 3e4;
+var DEFAULT_GROK_MODEL = "grok-composer-2.5-fast";
+var GROK_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|not logged in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var TRANSIENT_PROBE_ERROR_PATTERNS11 = [
+  /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
+];
+function buildGrokInvocation({
+  prompt,
+  model = null,
+  outputFormat = "json",
+  permissionMode = null,
+  alwaysApprove = false,
+  effort = null,
+  resumeSessionId = null,
+  continueLast = false,
+  extraArgs = [],
+  bin = GROK_BIN
+} = {}) {
+  const args = ["-p", String(prompt ?? ""), "--output-format", outputFormat];
+  if (model) args.push("-m", model);
+  if (effort) args.push("--effort", effort);
+  if (permissionMode) args.push("--permission-mode", permissionMode);
+  if (alwaysApprove) args.push("--always-approve");
+  if (continueLast) {
+    args.push("-c");
+  } else if (resumeSessionId) {
+    args.push("-r", resumeSessionId);
+  }
+  if (extraArgs.length > 0) args.push(...extraArgs);
+  return { bin, args };
+}
+function extractGrokText(event) {
+  if (!event || typeof event !== "object") return "";
+  if (event.type === "text" && typeof event.data === "string") return event.data;
+  return "";
+}
+function parseGrokStreamText(text) {
+  const events = [];
+  let response = "";
+  let sessionId = null;
+  let stopReason = null;
+  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+    const trimmed = rawLine.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let event;
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    events.push(event);
+    if (event.type === "text" && typeof event.data === "string") {
+      response += event.data;
+    } else if (event.type === "end") {
+      if (typeof event.sessionId === "string") sessionId = event.sessionId;
+      stopReason = event.stopReason ?? stopReason;
+    }
+  }
+  return { events, response, sessionId, stopReason };
+}
+function parseGrokJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
+  const text = String(stdout ?? "");
+  const jsonStart = text.indexOf("{");
+  if (jsonStart < 0 || status !== 0) {
+    return {
+      ok: false,
+      error: String(stderr ?? "").trim() || formatProviderExitError("grok", status),
+      status
+    };
+  }
+  try {
+    const parsed = JSON.parse(text.slice(jsonStart));
+    const response = typeof parsed.text === "string" ? parsed.text : "";
+    const hasVisibleText = Boolean(response.trim());
+    return {
+      ok: hasVisibleText,
+      response,
+      // grok emits the session id structurally; never scan prose for a UUID.
+      sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : null,
+      model: defaultModel ?? DEFAULT_GROK_MODEL,
+      stopReason: parsed.stopReason ?? null,
+      error: hasVisibleText ? null : "grok produced no visible text",
+      status
+    };
+  } catch (error) {
+    return { ok: false, error: `JSON parse failed: ${error.message}`, status };
+  }
+}
+function getGrokAvailability(cwd) {
+  return binaryAvailable(GROK_BIN, ["--version"], { cwd });
+}
+function buildGrokAuthStatus(result) {
+  if (result.error) {
+    const detail = result.error.code === "ETIMEDOUT" ? `grok auth probe timed out after ${Math.round(AUTH_CHECK_TIMEOUT_MS11 / 1e3)}s` : result.error.message;
+    if (TRANSIENT_PROBE_ERROR_PATTERNS11.some((pattern) => pattern.test(detail))) {
+      return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: null };
+    }
+    return { loggedIn: false, detail };
+  }
+  const text = `${result.stdout ?? ""}
+${result.stderr ?? ""}`;
+  const defaultModel = (text.match(/Default model:\s*(\S+)/) || [])[1] ?? null;
+  if (GROK_EXPLICIT_AUTH_ERROR_RE.test(text)) {
+    return { loggedIn: false, detail: text.trim() || "grok is not logged in" };
+  }
+  if (/\blogged in\b/i.test(text)) {
+    return { loggedIn: true, detail: "authenticated", model: defaultModel };
+  }
+  if (result.status !== 0) {
+    const detail = text.trim() || `grok models exited with code ${result.status}`;
+    if (TRANSIENT_PROBE_ERROR_PATTERNS11.some((pattern) => pattern.test(detail))) {
+      return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: defaultModel };
+    }
+    return { loggedIn: false, detail };
+  }
+  return { loggedIn: true, detail: "authenticated", model: defaultModel };
+}
+function getGrokAuthStatus(cwd, { runner = runCommand } = {}) {
+  const result = runner(GROK_BIN, ["models"], { cwd, timeout: AUTH_CHECK_TIMEOUT_MS11 });
+  return buildGrokAuthStatus(result);
+}
+function runGrokPrompt({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS11,
+  alwaysApprove = true,
+  permissionMode = null,
+  effort = null,
+  resumeSessionId = null,
+  continueLast = false,
+  extraArgs = [],
+  defaultModel = null,
+  bin = GROK_BIN
+} = {}) {
+  const invocation = buildGrokInvocation({
+    prompt,
+    model,
+    outputFormat: "json",
+    permissionMode,
+    alwaysApprove,
+    effort,
+    resumeSessionId,
+    continueLast,
+    extraArgs,
+    bin
+  });
+  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  if (result.error) {
+    const error = result.error.code === "ETIMEDOUT" ? `grok timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
+    return { ok: false, error, errorCode: classifyProviderFailure(error, { provider: "grok" }) };
+  }
+  const parsed = parseGrokJsonResult(result.stdout, result.stderr, result.status, {
+    defaultModel: model ?? defaultModel
+  });
+  return { ...parsed, errorCode: classifyProviderFailure(parsed.error, { provider: "grok" }) };
+}
+function runGrokPromptStreaming({
+  prompt,
+  model = null,
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS11,
+  alwaysApprove = true,
+  permissionMode = null,
+  effort = null,
+  resumeSessionId = null,
+  continueLast = false,
+  extraArgs = [],
+  defaultModel = null,
+  onEvent = () => {
+  },
+  bin = GROK_BIN,
+  spawnImpl
+} = {}) {
+  const invocation = buildGrokInvocation({
+    prompt,
+    model,
+    outputFormat: "streaming-json",
+    permissionMode,
+    alwaysApprove,
+    effort,
+    resumeSessionId,
+    continueLast,
+    extraArgs,
+    bin
+  });
+  return spawnStreamingCommand({
+    bin: invocation.bin,
+    args: invocation.args,
+    cwd,
+    env: { ...process.env },
+    timeout,
+    spawnImpl,
+    onStdoutLine(line) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("{")) return;
+      try {
+        onEvent(JSON.parse(trimmed));
+      } catch {
+      }
+    }
+  }).then((result) => {
+    const parsed = parseGrokStreamText(result.stdout);
+    const hasVisibleText = Boolean(parsed.response.trim());
+    const ok = result.ok && hasVisibleText;
+    const error = ok ? null : result.ok ? "grok produced no visible text" : result.error;
+    return {
+      ...result,
+      ...parsed,
+      model: model ?? defaultModel ?? DEFAULT_GROK_MODEL,
+      ok,
+      error,
+      errorCode: classifyProviderFailure(error, { provider: "grok" })
+    };
+  });
+}
+
 // packages/polycli-runtime/src/registry.js
 import { performance } from "node:perf_hooks";
 
@@ -3706,6 +3926,7 @@ function extractProviderEventText(provider, event) {
   if (provider === "pi") return extractPiText(event);
   if (provider === "cmd") return extractCmdText(event);
   if (provider === "agy") return extractAgyText(event);
+  if (provider === "grok") return extractGrokText(event);
   return "";
 }
 function buildPromptTimingRecord({
@@ -3817,7 +4038,8 @@ var TIMING_SUPPORT = {
   opencode: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   pi: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
   cmd: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "ephemeral" },
-  agy: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" }
+  agy: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
+  grok: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" }
 };
 var RUNTIMES = Object.freeze({
   claude: {
@@ -3949,6 +4171,19 @@ var RUNTIMES = Object.freeze({
     getAuthStatus: getAgyAuthStatus,
     runPrompt: runAgyPrompt,
     runPromptStreaming: runAgyPromptStreaming
+  },
+  grok: {
+    id: "grok",
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      operations: PROVIDER_OPERATION_NAMES
+    },
+    getAvailability: getGrokAvailability,
+    getAuthStatus: getGrokAuthStatus,
+    runPrompt: runGrokPrompt,
+    runPromptStreaming: runGrokPromptStreaming
   }
 });
 for (const runtime of Object.values(RUNTIMES)) {
@@ -4010,6 +4245,9 @@ function isTerminalSummaryEvent(provider, event) {
   }
   if (provider === "pi") {
     return event.type === "agent_end";
+  }
+  if (provider === "grok") {
+    return event.type === "end";
   }
   return false;
 }
@@ -4165,6 +4403,14 @@ var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
       Object.freeze({ helpArgs: Object.freeze(["text", "chat", "--help"]), expect: Object.freeze(["--message"]) }),
       Object.freeze({ helpArgs: Object.freeze(["--help"]), expect: Object.freeze(["--output", "--non-interactive"]) })
     ])
+  }),
+  grok: Object.freeze({
+    // grok review enforces read-only via the --permission-mode plan runtimeOption (composes with
+    // the -p one-shot mode, verified). It carries no review extraArgs of its own.
+    expectFlags: Object.freeze(["--permission-mode"]),
+    extraArgTokens: Object.freeze([]),
+    readOnlyOptionKey: "permissionMode",
+    readOnlyValue: "plan"
   })
 });
 
@@ -4850,6 +5096,8 @@ function deriveSessionArtifactCandidate({ provider, sessionId, workspaceRoot, ho
     case "minimax":
     case "cmd":
       return { path: null, reason: "ephemeral, no per-session store" };
+    case "grok":
+      return { path: null, reason: "grok session files live under a url-encoded cwd dir; exact path is not derivable without a scan" };
     default:
       return { path: null, reason: `no artifact derivation for provider ${provider ?? "?"}` };
   }
@@ -5519,6 +5767,9 @@ var REVIEW_HARD_CONSTRAINTS = {
   },
   minimax() {
     return {};
+  },
+  grok() {
+    return { permissionMode: "plan", alwaysApprove: false };
   }
 };
 function buildReviewRuntimeOptions({
@@ -6094,6 +6345,21 @@ function buildProviderFlagRuntimeOptions(provider, options) {
     }
     if (options.effort) {
       notes.push("--effort is gemini-specific; agy will proceed without it.");
+    }
+    return { runtimeOptions, notes };
+  }
+  if (provider === "grok") {
+    if (resumeFlags.length > 1) {
+      throw new Error("Choose only one of --resume-last, --resume, or --fresh.");
+    }
+    if (options["resume-last"]) runtimeOptions.continueLast = true;
+    if (options.resume) runtimeOptions.resumeSessionId = options.resume;
+    if (options.fresh) {
+      notes.push("--fresh is already grok's default for non-resumed -p runs.");
+    }
+    if (options.effort) runtimeOptions.effort = options.effort;
+    if (options.write) {
+      notes.push("--write is gemini-specific; grok will proceed without it.");
     }
     return { runtimeOptions, notes };
   }

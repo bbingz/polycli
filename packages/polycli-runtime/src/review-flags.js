@@ -112,4 +112,12 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
       Object.freeze({ helpArgs: Object.freeze(["--help"]), expect: Object.freeze(["--output", "--non-interactive"]) }),
     ]),
   }),
+  grok: Object.freeze({
+    // grok review enforces read-only via the --permission-mode plan runtimeOption (composes with
+    // the -p one-shot mode, verified). It carries no review extraArgs of its own.
+    expectFlags: Object.freeze(["--permission-mode"]),
+    extraArgTokens: Object.freeze([]),
+    readOnlyOptionKey: "permissionMode",
+    readOnlyValue: "plan",
+  }),
 });

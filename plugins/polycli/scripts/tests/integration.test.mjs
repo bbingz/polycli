@@ -857,6 +857,7 @@ test("integration: health without provider returns every healthy provider", asyn
       CMD_CLI_BIN: missingBin,
       COPILOT_CLI_BIN: missingBin,
       GEMINI_CLI_BIN: missingBin,
+      GROK_CLI_BIN: missingBin,
       KIMI_CLI_BIN: fakeKimi.bin,
       MMX_CLI_BIN: missingBin,
       OPENCODE_CLI_BIN: missingBin,
@@ -875,8 +876,8 @@ test("integration: health without provider returns every healthy provider", asyn
     assert.equal(payload.anyHealthy, true);
     assert.equal(payload.allHealthy, false);
     assert.deepEqual(payload.healthyProviders, ["qwen"]);
-    assert.deepEqual(payload.unhealthyProviders.sort(), ["agy", "claude", "cmd", "copilot", "gemini", "kimi", "minimax", "opencode", "pi"].sort());
-    assert.equal(payload.results.length, 10);
+    assert.deepEqual(payload.unhealthyProviders.sort(), ["agy", "claude", "cmd", "copilot", "gemini", "grok", "kimi", "minimax", "opencode", "pi"].sort());
+    assert.equal(payload.results.length, 11);
     assert.equal(payload.results.find((result) => result.provider === "qwen").ok, true);
     assert.equal(payload.results.find((result) => result.provider === "kimi").ok, false);
     assert.equal(payload.results.find((result) => result.provider === "kimi").probe.responseMatched, false);
@@ -901,6 +902,7 @@ test("integration: health without provider probes providers concurrently", async
       CMD_CLI_BIN: missingBin,
       COPILOT_CLI_BIN: missingBin,
       GEMINI_CLI_BIN: missingBin,
+      GROK_CLI_BIN: missingBin,
       KIMI_CLI_BIN: fakeKimi.bin,
       MMX_CLI_BIN: missingBin,
       OPENCODE_CLI_BIN: missingBin,

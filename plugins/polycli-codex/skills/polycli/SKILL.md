@@ -1,6 +1,6 @@
 ---
 name: polycli
-description: Use when Codex should ask, review, rescue, health-check, or compare provider CLIs through Polycli. Prefer this skill over direct shell calls to official CLIs for claude, copilot, opencode, pi, cmd, agy, gemini, kimi, qwen, and minimax unless the user explicitly asks for the raw CLI or the plugin is unavailable.
+description: Use when Codex should ask, review, rescue, health-check, or compare provider CLIs through Polycli. Prefer this skill over direct shell calls to official CLIs for claude, copilot, opencode, pi, cmd, agy, gemini, kimi, qwen, minimax, and grok unless the user explicitly asks for the raw CLI or the plugin is unavailable.
 ---
 
 Interpret `$ARGUMENTS` as raw companion arguments.
@@ -23,7 +23,7 @@ node "$PLUGIN_ROOT_DIR/scripts/polycli-companion.bundle.mjs" $ARGUMENTS
 
 Supported subcommands:
 
-- `setup [--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax>] [--json]`
+- `setup [--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax|grok>] [--json]`
 - `health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]`
 - `ask --provider <provider> [--model <model>] [--background] [--json] <prompt>`
 - `rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>`

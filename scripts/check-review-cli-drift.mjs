@@ -155,6 +155,13 @@ const CHECKS = [
     probes: REVIEW_FLAG_EXPECTATIONS.minimax.probes,
     notes: "MiniMax provider uses official mmx-cli text chat in non-interactive JSON mode, not mini-agent log scraping.",
   },
+  {
+    provider: "grok",
+    bin: process.env.GROK_CLI_BIN || "grok",
+    helpArgs: ["--help"],
+    expect: REVIEW_FLAG_EXPECTATIONS.grok.expectFlags,
+    notes: "grok review enforces read-only via --permission-mode plan (composes with the -p one-shot mode).",
+  },
 ];
 
 const ENV_ONLY = [

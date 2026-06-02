@@ -16,7 +16,7 @@ If you are switching between hosts, read the first two sections (identity + samp
 
 All five dispatch to the same `polycli-companion.bundle.mjs` underneath. Differences are at the surface only; behavior, output format, exit codes, and `--json` shape are identical.
 
-Codex-specific rule: when the installed `polycli` skill from `polycli-codex` is available, prefer the skill over direct official CLI shell calls for `claude`, `copilot`, `opencode`, `pi`, `cmd`, `agy`, `gemini`, `kimi`, `qwen`, or `minimax`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell. Use `health`, `status`, `result`, and `timing` as the observable control plane around prompt-bearing work.
+Codex-specific rule: when the installed `polycli` skill from `polycli-codex` is available, prefer the skill over direct official CLI shell calls for `claude`, `copilot`, `opencode`, `pi`, `cmd`, `agy`, `gemini`, `kimi`, `qwen`, `minimax`, or `grok`. Raw provider CLIs are the fallback only when the plugin is unavailable or the user explicitly asks for raw shell. Use `health`, `status`, `result`, and `timing` as the observable control plane around prompt-bearing work.
 
 ## Command-by-command mapping
 

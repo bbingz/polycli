@@ -1,6 +1,6 @@
 ---
 description: Run end-to-end health probes and report healthy polycli providers
-argument-hint: '[--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax>] [--model <model>] [--timeout-ms <ms>]'
+argument-hint: '[--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax|grok>] [--model <model>] [--timeout-ms <ms>]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---

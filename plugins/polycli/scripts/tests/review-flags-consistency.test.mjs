@@ -7,7 +7,7 @@ import { buildReviewRuntimeOptions } from "../lib/review.mjs";
 
 // Providers whose review hard constraints run through buildReviewRuntimeOptions.
 // (agy is review-unsupported → buildReviewRuntimeOptions throws, so it is excluded.)
-const EXACT_MATCH_PROVIDERS = ["claude", "gemini", "qwen", "copilot", "opencode", "pi", "cmd", "kimi", "minimax"];
+const EXACT_MATCH_PROVIDERS = ["claude", "gemini", "qwen", "copilot", "opencode", "pi", "cmd", "kimi", "minimax", "grok"];
 
 // The EXACT set of `--`-prefixed flag tokens review.mjs actually emits as extraArgs.
 function emittedFlagTokens(provider) {
@@ -45,8 +45,8 @@ test("the exact-match check goes RED when a declared token is added OR removed, 
 });
 
 test("assertNoReviewConstraintOverride rejects a bad value on the declared readOnlyOptionKey", () => {
-  // plan-valued guards (claude/gemini/qwen): a non-plan value is rejected.
-  for (const provider of ["claude", "gemini", "qwen"]) {
+  // plan-valued guards (claude/gemini/qwen/grok): a non-plan value is rejected.
+  for (const provider of ["claude", "gemini", "qwen", "grok"]) {
     const key = REVIEW_FLAG_EXPECTATIONS[provider].readOnlyOptionKey;
     assert.throws(
       () => buildReviewRuntimeOptions({ provider, runtimeOptions: { [key]: "yolo" } }),
