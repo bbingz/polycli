@@ -2,7 +2,7 @@
 
 `@bbingz/polycli-runtime` 是 `polycli v2` 的 provider runtime 集成层。
 
-它提供八家 adapter：
+它提供十一家 adapter：
 
 - `claude`
 - `copilot`
@@ -12,6 +12,9 @@
 - `kimi`
 - `qwen`
 - `minimax`
+- `cmd`
+- `agy`
+- `grok`
 
 ## Scope
 
@@ -23,6 +26,7 @@
 - foreground prompt execution
 - streaming execution
 - stream / log parsing
+- review / ask hard-constraint flag vocabulary for host guards and drift checks
 
 这个包不负责：
 
@@ -45,6 +49,10 @@ Provider registry 常量：
 - `PROVIDER_IDS`
 - `PROVIDER_OPERATION_NAMES`
 
+Review constraint surface:
+
+- `REVIEW_FLAG_EXPECTATIONS` from `review-flags.js`, used by host review read-only constraint guards and CLI drift checks.
+
 `PROVIDER_OPERATION_NAMES` 当前明确只有：
 
 - `prompt`
@@ -62,6 +70,9 @@ Provider-specific helpers：
 - `buildMiniMaxInvocation()`
 - `buildOpenCodeInvocation()`
 - `buildPiInvocation()`
+- `buildCmdInvocation()`
+- `buildAgyInvocation()`
+- `buildGrokInvocation()`
 - `parseClaudeJsonResult()`
 - `parseClaudeStreamText()`
 - `parseCopilotStreamText()`
@@ -72,6 +83,10 @@ Provider-specific helpers：
 - `parseOpenCodeJsonResult()`
 - `parseOpenCodeStreamText()`
 - `parsePiStreamText()`
+- `parseCmdTextResult()`
+- `parseAgyTextResult()`
+- `parseGrokJsonResult()`
+- `parseGrokStreamText()`
 - `extractMiniMaxResponseFromLogText()`
 - `extractMiniMaxLogPath()`
 - `extractClaudeText()`
@@ -80,6 +95,9 @@ Provider-specific helpers：
 - `extractKimiText()`
 - `extractOpenCodeText()`
 - `extractPiText()`
+- `extractCmdText()`
+- `extractAgyText()`
+- `extractGrokText()`
 - `stripAnsiSgr()`
 
 Provider-specific runtime methods：
@@ -92,6 +110,9 @@ Provider-specific runtime methods：
 - `getMiniMaxAvailability()` / `getMiniMaxAuthStatus()` / `runMiniMaxPrompt()` / `runMiniMaxPromptStreaming()`
 - `getOpenCodeAvailability()` / `getOpenCodeAuthStatus()` / `runOpenCodePrompt()` / `runOpenCodePromptStreaming()`
 - `getPiAvailability()` / `getPiAuthStatus()` / `runPiPrompt()` / `runPiPromptStreaming()`
+- `getCmdAvailability()` / `getCmdAuthStatus()` / `runCmdPrompt()` / `runCmdPromptStreaming()`
+- `getAgyAvailability()` / `getAgyAuthStatus()` / `runAgyPrompt()` / `runAgyPromptStreaming()`
+- `getGrokAvailability()` / `getGrokAuthStatus()` / `runGrokPrompt()` / `runGrokPromptStreaming()`
 
 Intentional omission:
 

@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { binaryAvailable, formatCommandFailure, runCommand } from "../src/process.js";
+import { spawn } from "node:child_process";
+
+import { binaryAvailable, formatCommandFailure, runCommand, terminateProcessTree } from "../src/process.js";
 
 test("runCommand captures stdout and exit status", () => {
   const result = runCommand(process.execPath, ["-e", "console.log('pong')"]);
@@ -64,4 +66,35 @@ test("formatCommandFailure includes exit and stderr", () => {
   });
   assert.match(message, /exit=2/);
   assert.match(message, /boom/);
+});
+
+test("terminateProcessTree kills a normal non-detached child process", async () => {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  const closed = new Promise((resolve) => child.once("close", (code, signal) => resolve({ code, signal })));
+
+  try {
+    const terminated = await terminateProcessTree(child.pid, { forceAfterMs: 0 });
+    assert.equal(terminated, true);
+  } finally {
+    try {
+      process.kill(child.pid, "SIGKILL");
+    } catch {}
+  }
+
+  const { signal } = await closed;
+  assert.equal(signal, "SIGTERM");
+});
+
+test("terminateProcessTree rejects pid 1 without sending any signal", async (t) => {
+  const kill = t.mock.method(process, "kill", () => {
+    throw new Error("process.kill should not be called for pid 1");
+  });
+
+  await assert.rejects(
+    () => terminateProcessTree(1, { forceAfterMs: 0 }),
+    /Invalid pid/
+  );
+  assert.equal(kill.mock.callCount(), 0);
 });

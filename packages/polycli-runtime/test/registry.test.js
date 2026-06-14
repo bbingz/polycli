@@ -261,6 +261,73 @@ test("runProviderPromptStreaming passes defaultModel as final model fallback", a
   assert.equal(result.model, "fallback-model");
 });
 
+test("runProviderPromptStreaming marks claude tmux TUI text timings as unsupported", async () => {
+  let now = 1_000;
+  const result = await runProviderPromptStreaming({
+    provider: "claude",
+    prompt: "ping",
+    cwd: process.cwd(),
+    executionMode: "tmux-tui",
+    timeout: 5_000,
+    nowMs: () => now,
+    runtime: {
+      runPromptStreaming: async ({ onEvent }) => {
+        now = 1_200;
+        onEvent({ type: "content_block_delta", delta: { type: "text_delta", text: "started" } });
+        now = 1_400;
+        return {
+          ok: true,
+          response: "Started Claude TUI tmux session 'polycli-claude-test'.",
+          model: "claude-test",
+          sessionId: null,
+          tmuxSession: "polycli-claude-test",
+          detached: true,
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.timing.runtimePersistence, "session");
+  assert.equal(result.timing.metrics.ttft.status, "unsupported");
+  assert.equal(result.timing.metrics.gen.status, "unsupported");
+  assert.equal(result.timing.metrics.tail.status, "unsupported");
+  assert.equal(result.timing.metrics.total.status, "measured");
+  assert.equal(result.timing.meta.tmuxDetached, true);
+  assert.equal(result.timing.meta.timingScope, "tmux_startup");
+  assert.equal(result.timing.meta.llmCompletionObserved, false);
+});
+
+test("runProviderPromptStreaming keeps non-claude text timing support with executionMode options", async () => {
+  let now = 1_000;
+  const result = await runProviderPromptStreaming({
+    provider: "gemini",
+    prompt: "ping",
+    cwd: process.cwd(),
+    executionMode: "tmux-tui",
+    timeout: 5_000,
+    nowMs: () => now,
+    runtime: {
+      runPromptStreaming: async ({ onEvent }) => {
+        now = 1_200;
+        onEvent({ type: "message", role: "assistant", content: "pong" });
+        now = 1_500;
+        return {
+          ok: true,
+          response: "pong",
+          model: "gemini-test",
+          sessionId: "123e4567-e89b-42d3-a456-426614174000",
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.timing.metrics.ttft.status, "measured");
+  assert.equal(result.timing.metrics.gen.status, "measured");
+  assert.equal(result.timing.metrics.tail.status, "measured");
+});
+
 test("runProviderPrompt marks supported sync-only metrics as missing instead of unsupported", async () => {
   const result = await runProviderPrompt({
     provider: "gemini",

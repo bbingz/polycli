@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import process from "node:process";
 
-import { loadState, resolveStateFile, resolveWorkspaceRoot, saveState } from "./lib/state.mjs";
+import { resolveStateFile, resolveWorkspaceRoot, updateState } from "./lib/state.mjs";
 
 export const SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
 
@@ -33,7 +33,7 @@ function appendEnvVar(name, value) {
 }
 
 function terminateProcess(pid) {
-  if (!pid) return;
+  if (!Number.isInteger(pid) || pid <= 1) return;
   try {
     process.kill(-pid, "SIGTERM");
   } catch {
@@ -52,26 +52,29 @@ function cleanupSessionJobs(cwd, sessionId) {
   const stateFile = resolveStateFile(workspaceRoot);
   if (!fs.existsSync(stateFile)) return;
 
-  const state = loadState(workspaceRoot);
-  const jobs = Array.isArray(state.jobs) ? state.jobs : [];
-  const sessionJobs = jobs.filter((job) => job.sessionId === sessionId);
-  if (sessionJobs.length === 0) return;
+  const pidsToTerminate = [];
+  updateState(workspaceRoot, (state) => {
+    const jobs = Array.isArray(state.jobs) ? state.jobs : [];
+    const sessionJobs = jobs.filter((job) => job.sessionId === sessionId);
+    if (sessionJobs.length === 0) return;
 
-  for (const job of sessionJobs) {
-    if (job.status === "running" || job.status === "queued") {
-      terminateProcess(job.pid);
+    for (const job of sessionJobs) {
+      if (job.status === "running" || job.status === "queued") {
+        pidsToTerminate.push(job.pid);
+      }
     }
-  }
 
-  saveState(workspaceRoot, {
-    ...state,
-    jobs: jobs.filter((job) => {
+    state.jobs = jobs.filter((job) => {
       if (job.sessionId !== sessionId) return true;
       return job.status === "completed"
         || job.status === "failed"
         || job.status === "cancelled";
-    }),
+    });
   });
+
+  for (const pid of pidsToTerminate) {
+    terminateProcess(pid);
+  }
 }
 
 export function handleLifecycleHook(eventName, input = {}) {

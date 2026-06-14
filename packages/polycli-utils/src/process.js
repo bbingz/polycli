@@ -96,7 +96,7 @@ export async function terminateProcessTree(
   pid,
   { signal = "SIGTERM", forceSignal = "SIGKILL", forceAfterMs = 5_000, ignoreMissing = true } = {}
 ) {
-  if (!Number.isInteger(pid) || pid <= 0) {
+  if (!Number.isInteger(pid) || pid <= 1) {
     throw new Error(`Invalid pid: ${pid}`);
   }
 
@@ -120,19 +120,27 @@ export async function terminateProcessTree(
       return true;
     }
 
+    const killPid = () => {
+      try {
+        process.kill(pid, targetSignal);
+        return true;
+      } catch (error) {
+        if (error.code === "ESRCH" && ignoreMissing) return false;
+        throw error;
+      }
+    };
+
     try {
       process.kill(-pid, targetSignal);
       return true;
     } catch (error) {
       if (error.code === "ESRCH") {
-        if (ignoreMissing) return false;
-        throw error;
+        return killPid();
       }
       if (error.code === "EINVAL") {
         throw error;
       }
-      process.kill(pid, targetSignal);
-      return true;
+      return killPid();
     }
   };
 

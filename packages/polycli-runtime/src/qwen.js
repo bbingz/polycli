@@ -301,14 +301,17 @@ export function runQwenPrompt({
     priority: ["stdout", "stderr", "file"],
   });
   const resultEventError = extractQwenResultError(parsed.resultEvent);
-  const error = result.status === 0 && !resultEventError && parsed.response.trim()
+  const hasVisibleText = Boolean(parsed.response.trim());
+  const error = result.status === 0 && !resultEventError && hasVisibleText
     ? null
-    : result.stderr.trim() || resultEventError || formatProviderExitError("qwen", result.status);
+    : result.stderr.trim()
+      || resultEventError
+      || (result.status === 0 ? "qwen produced no visible text" : formatProviderExitError("qwen", result.status));
   const errorCode = resultEventError
     ? (classifyProviderFailure(resultEventError, { provider: "qwen" }) || "provider_error")
     : classifyProviderFailure(error, { provider: "qwen" });
   return {
-    ok: result.status === 0 && !resultEventError && Boolean(parsed.response.trim()),
+    ok: result.status === 0 && !resultEventError && hasVisibleText,
     status: result.status,
     stderr: result.stderr,
     ...parsed,

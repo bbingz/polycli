@@ -4,10 +4,11 @@
 
 # polycli
 
-**普段使っている AI ホストの中で、9 種類の AI コーディング CLI を 1 つのコマンド体系から操作できます。**
+**普段使っている AI ホストの中で、11 種類の AI コーディング CLI を 1 つのコマンド体系から操作できます。**
 
 [![GitHub release](https://img.shields.io/github/v/release/bbingz/polycli?label=release&color=111827)](https://github.com/bbingz/polycli/releases)
 [![CI](https://github.com/bbingz/polycli/actions/workflows/ci.yml/badge.svg)](https://github.com/bbingz/polycli/actions/workflows/ci.yml)
+[![npm: polycli](https://img.shields.io/npm/v/@bbingz/polycli?label=%40bbingz%2Fpolycli&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli)
 [![npm: polycli-opencode](https://img.shields.io/npm/v/@bbingz/polycli-opencode?label=%40bbingz%2Fpolycli-opencode&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-opencode)
 [![npm: polycli-utils](https://img.shields.io/npm/v/@bbingz/polycli-utils?label=%40bbingz%2Fpolycli-utils&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-utils)
 [![npm: polycli-timing](https://img.shields.io/npm/v/@bbingz/polycli-timing?label=%40bbingz%2Fpolycli-timing&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-timing)
@@ -22,7 +23,7 @@
 
 ## polycli とは？
 
-`polycli` は、Claude Code・Codex・GitHub Copilot CLI・OpenCode のいずれかのホスト上で、共通のコマンド (`health`・`ask`・`review`・`rescue`・`timing`・`debug`、加えてバックグラウンドジョブ制御とターミナル inspector) を使って 9 種類の AI コーディング CLI — **`claude`**・**`gemini`**・**`kimi`**・**`qwen`**・**`copilot`**・**`opencode`**・**`pi`**・**`cmd`** (Command Code)・**`mini-agent`** (MiniMax) — を操作できるツールです。
+`polycli` は、Claude Code・Codex・GitHub Copilot CLI・OpenCode のいずれかのホスト上で、共通のコマンド (`health`・`ask`・`review`・`rescue`・`timing`・`debug`、加えてバックグラウンドジョブ制御とターミナル inspector) を使って 11 種類の AI コーディング CLI — **`claude`**・**`gemini`**・**`kimi`**・**`qwen`**・**`copilot`**・**`opencode`**・**`pi`**・**`cmd`** (Command Code)・**`agy`** (Antigravity)・**`grok`** (xAI Grok)・**`mmx-cli`** (MiniMax) — を操作できるツールです。
 
 これは **ユーティリティ専用の Path B モノレポ** です。プロバイダ間の差異を偽の抽象化で覆い隠したり、ランタイム基底クラスを発明したりはしません。公式の上流 CLI をサブプロセスとして組み合わせ、単一のコマンド面を公開し、4 状態の timing スキーマで能力の違いを正直に表現します。
 
@@ -39,7 +40,7 @@
 
 | ホスト (polycli のインストール先) | プロバイダ (polycli が呼び出せる対象) |
 |---|---|
-| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `mini-agent` |
+| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `agy` · `grok` · `minimax` (`mmx-cli`) |
 
 各プロバイダの対応能力は [Capability matrix](#capability-matrix) を参照してください。
 
@@ -95,7 +96,7 @@ polycli health
 polycli health
 ```
 
-`health` は認証済みのすべてのプロバイダに対してエンドツーエンドのプローブを実行し、生きているものを `healthyProviders` に報告します。その後の日常利用は直接呼び出すだけです:
+`health` は認証済みプロバイダに対してプローブを実行し、生きているものを `healthyProviders` に報告します。Claude は例外で、`claude auth status --json` だけを使い、health prompt は送信しません。その後の日常利用は直接呼び出すだけです:
 
 ```text
 Choose Polycli with @, then ask it to run: ask --provider qwen "このスタックトレースを説明して ..."
@@ -112,7 +113,7 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 | コマンド | 動作 |
 |---|---|
 | `setup` | プロバイダ CLI のインストール状態と認証状態を確認 (モデル呼び出しなし、軽量) |
-| `health` | 短いプロンプトでエンドツーエンド検査。`healthyProviders` を返し、timing を記録 |
+| `health` | Claude 以外は短いプロンプトでエンドツーエンド検査。Claude は auth-only status を使う。`healthyProviders` を返し、適用できる場合は timing を記録 |
 | `ask` | 一発のプロンプト |
 | `review` | 現在の `git diff` に対するコードレビュー |
 | `rescue` | 長めのトリアージ / 解析タスク |
@@ -135,15 +136,18 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 | `gemini` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `kimi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `qwen` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `mini-agent` | ✓ | — | — | — | — | — | — |
+| `minimax` (`mmx-cli`) | ✓ | — | ✓ | — | — | — | — |
 | `opencode` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `pi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `cmd` | ✓ | — | — | ✓ | ✓ | ✓ | — |
+| `agy` | ✓ | ✓ | — | ✓ | ✓ | ✓ | — |
+| `grok` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 
 補足:
 
 - `cold` と `retry` は全プロバイダで `unsupported` です。上流 CLI に安定したシグナルがなく、polycli は偽装を拒否します。`total` は常に `measured` です。
-- `mini-agent` はログ再生方式で、session resume・構造化出力・細粒度 streaming timing をサポートしません。`cmd` は Command Code 公式の headless mode を使うため、各呼び出しは standalone session で、stdout が可視回答になります。
+- `claude` の `ask` / `review` は、`claude -p` の従量課金パスを避けるため、デフォルトで detached tmux TUI mode を使います。この mode では `ttft` / `gen` / `tail` は `unsupported` として報告され、`total` は tmux 起動と prompt 投入だけを測ります。応答には `tmuxSession` + `attachCommand` が含まれます。
+- `minimax` は `mmx-cli` の非対話 JSON 呼び出しで、session resume・細粒度 streaming timing をサポートしません。`cmd` は Command Code 公式の headless mode を使うため、各呼び出しは standalone session で、stdout が可視回答になります。`agy` は Antigravity session mode、`grok` は xAI Grok Build CLI を使います。
 - `tool: true` を宣言しているのは `qwen` のみです。`qwen` がツールを呼び出さなかったとき `missing` (観測可能だが今回は発生せず) を、他のプロバイダは `unsupported` (能力レベルで追跡しない) を報告します。両者の意味は異なるため、混同しないでください。
 
 ## Timing のセマンティクス
@@ -163,6 +167,7 @@ polycli の timing 契約が統一するのは**状態の表現**であって、
 
 - `runtimePersistence` — `ephemeral | session | daemon`
 - `measurementScope` — `request | turn | job`
+- outcome diagnostics — `outcome`, `exitCode`, `terminationReason`, `responseMatched`, and `errorCode`
 
 ## パッケージ
 

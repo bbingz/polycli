@@ -11,6 +11,7 @@ test("runtime index exports expected surface", () => {
     "applyGeminiEffort",
     "buildAgyInvocation",
     "buildClaudeInvocation",
+    "buildClaudeTuiInvocation",
     "buildCmdInvocation",
     "buildCopilotInvocation",
     "buildGeminiEnv",

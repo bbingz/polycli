@@ -14,7 +14,7 @@ test("parseStreamJsonLine surfaces malformed JSON as parse_error", () => {
   const parsed = parseStreamJsonLine('noise {"type":');
   assert.equal(parsed.ok, false);
   assert.equal(parsed.kind, "parse_error");
-  assert.match(parsed.error, /Unexpected end|Expected/);
+  assert.match(parsed.error, /Unexpected end|Expected|Unterminated string/);
 });
 
 test("parseStreamJsonLine accepts prefixed JSON arrays", () => {
@@ -29,6 +29,13 @@ test("parseStreamJsonLine accepts prefixed bare JSON values", () => {
   assert.equal(parsed.ok, true);
   assert.equal(parsed.event, true);
   assert.equal(parsed.prefix, "noise before ");
+});
+
+test("parseStreamJsonLine skips timestamp and pid prefixes before JSON objects", () => {
+  const parsed = parseStreamJsonLine('2026-06-14T10:00:00.000Z pid=42 INFO {"type":"init","session_id":"abc"}');
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.event, { type: "init", session_id: "abc" });
+  assert.equal(parsed.prefix, "2026-06-14T10:00:00.000Z pid=42 INFO ");
 });
 
 test("parseStreamJsonLine distinguishes non-json prose from blank lines", () => {

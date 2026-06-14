@@ -67,24 +67,72 @@
         "tool": { "$ref": "#/$defs/metric" },
         "retry": { "$ref": "#/$defs/metric" },
         "tail": { "$ref": "#/$defs/metric" },
-        "total": { "$ref": "#/$defs/metric" }
+        "total": { "$ref": "#/$defs/totalMetric" }
       }
     }
   },
   "$defs": {
     "metric": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "ms"],
-      "properties": {
-        "status": {
-          "enum": ["measured", "zero", "missing", "unsupported"]
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "ms"],
+          "properties": {
+            "status": { "const": "measured" },
+            "ms": { "type": "number", "exclusiveMinimum": 0 }
+          }
         },
-        "ms": {
-          "type": ["number", "null"],
-          "minimum": 0
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "ms"],
+          "properties": {
+            "status": { "const": "zero" },
+            "ms": { "const": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "ms"],
+          "properties": {
+            "status": { "const": "missing" },
+            "ms": { "type": "null" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "ms"],
+          "properties": {
+            "status": { "const": "unsupported" },
+            "ms": { "type": "null" }
+          }
         }
-      }
+      ]
+    },
+    "totalMetric": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "ms"],
+          "properties": {
+            "status": { "const": "measured" },
+            "ms": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "ms"],
+          "properties": {
+            "status": { "const": "zero" },
+            "ms": { "const": 0 }
+          }
+        }
+      ]
     }
   }
 }

@@ -54,6 +54,26 @@ test("writeFileAtomic fsyncs the temp file before rename and fsyncs the parent d
   assert.ok(renameIndex < dirFsyncIndex, "directory fsync should happen after rename");
 });
 
+test("writeFileAtomic removes the temp file when rename fails", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-atomic-save-fail-"));
+  const filePath = path.join(dir, "state.json");
+  let tmpPath = null;
+
+  t.mock.method(fs, "renameSync", (from) => {
+    tmpPath = String(from);
+    const error = new Error("rename failed");
+    error.code = "EXDEV";
+    throw error;
+  });
+
+  assert.throws(
+    () => writeFileAtomic(filePath, '{"ok":true}\n', "utf8"),
+    /rename failed/
+  );
+  assert.equal(fs.existsSync(tmpPath), false);
+  assert.equal(fs.existsSync(filePath), false);
+});
+
 test("withLockfile does not reclaim a live owner pid", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-lock-live-"));
   const lockPath = path.join(dir, "state.lock");
@@ -85,14 +105,15 @@ test("withLockfile reclaims a dead owner pid", async () => {
   assert.equal(fs.existsSync(lockPath), false);
 });
 
-test("withLockfile reclaims a stale lock when the recorded pid appears live", (t) => {
+test("withLockfile does not reclaim a stale lock while the recorded pid is live", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-lock-reused-"));
   const lockPath = path.join(dir, "state.lock");
   const reusedPid = process.pid + 10_000;
-  fs.writeFileSync(lockPath, JSON.stringify({
+  const contents = JSON.stringify({
     pid: reusedPid,
     acquiredAt: Date.now() - 1_000,
-  }), "utf8");
+  });
+  fs.writeFileSync(lockPath, contents, "utf8");
 
   const kill = t.mock.method(process, "kill", (pid, signal) => {
     assert.equal(pid, reusedPid);
@@ -100,15 +121,13 @@ test("withLockfile reclaims a stale lock when the recorded pid appears live", (t
     return true;
   });
 
-  const result = withLockfile(lockPath, () => JSON.parse(fs.readFileSync(lockPath, "utf8")), {
-    timeoutMs: 100,
-    pollMs: 1,
-    staleMs: 25,
-  });
+  assert.throws(
+    () => withLockfile(lockPath, () => "unreachable", { timeoutMs: 25, pollMs: 1, staleMs: 25 }),
+    LockfileTimeoutError
+  );
 
-  assert.equal(result.pid, process.pid);
   assert.ok(kill.mock.callCount() >= 1);
-  assert.equal(fs.existsSync(lockPath), false);
+  assert.equal(fs.readFileSync(lockPath, "utf8"), contents);
 });
 
 test("withLockfile reclaims a stale no-pid (partial-write) lock by mtime", () => {

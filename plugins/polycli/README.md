@@ -32,6 +32,10 @@ Run `health` once after install, login, or provider config changes. With no prov
 - `/polycli:result`
 - `/polycli:cancel`
 - `/polycli:timing`
+- `/polycli:debug`
+- `/polycli:sessions`
+
+The read-only run-inspector TUI belongs to the terminal package as `polycli tui`; it is not a Claude slash command.
 
 ## Common Invocations
 
@@ -46,6 +50,8 @@ Run `health` once after install, login, or provider config changes. With no prov
 /polycli:result pr-1234abcd
 /polycli:cancel pr-1234abcd
 /polycli:timing --provider qwen
+/polycli:debug runs
+/polycli:sessions list
 ```
 
 ## Provider Model
@@ -62,6 +68,9 @@ Current provider IDs:
 - `kimi`
 - `qwen`
 - `minimax`
+- `cmd`
+- `agy`
+- `grok`
 
 By default, each provider uses the underlying CLI default model. Pass `--model` only when you want an override.
 

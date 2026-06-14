@@ -22,13 +22,14 @@ Claude Code 专属补丁。基础规则见 [AGENTS.md](AGENTS.md)，此处只列
 | 任务类型 | 命令 |
 |---|---|
 | 动单个 package | `node --test packages/<pkg>/test/*.test.js` 先跑 |
-| 改 runtime / host 之一 | 再跑 `npm test`（会先 `build:plugins` 再跑全量 119+ 测试） |
+| 改 runtime / host 之一 | 再跑 `npm test`（会先 `build:plugins` 再跑全量测试） |
 | 要发布前校验 | `npm run release:check`（依赖 `claude plugin validate`） |
 
 注意 `npm test` 已内含 `build:plugins`，**不要**另外先手动 build 再 test。
 
 ## Claude-specific provider notes
-- `claude` runtime 用 `--output-format stream-json` 时必须带 `--verbose`，这是 CLI 契约
+- `claude` runtime 的 print/headless 路径用 `--output-format stream-json` 时必须带 `--verbose`，这是 CLI 契约；不要把这个 `-p`/stream-json 规则套到默认 ask/review 的 tmux TUI 路径上
+- `claude` ask/review 默认启动 detached tmux TUI session，响应包含 `tmuxSession`/`attachCommand`，timing 只覆盖 tmux 启动和 prompt 提交，不代表 LLM 完成时间
 - `claude` 可能通过 `subtype: "error"` 而非 `is_error` 报错，sync/streaming 两路错误处理必须对齐
 - `gemini` 无独立 auth-status 子命令，auth probe 是推断式；不要把 timeout/429 倒退回 `loggedIn=false`
 - `pi` 在 trivial prompt 上仍可能调 tool，属上游行为；非本地解析问题

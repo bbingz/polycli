@@ -50,26 +50,34 @@ function writeFileAtomicSync(filePath, contents, options = {}) {
   ensureParentDir(filePath);
   const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}.${crypto.randomUUID()}`;
   const { flag, mode, writeOptions } = normalizeWriteOptions(options);
-  const fd = fs.openSync(tmpPath, flag, mode);
+  let renamed = false;
 
   try {
-    fs.writeFileSync(fd, contents, writeOptions);
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
+    const fd = fs.openSync(tmpPath, flag, mode);
+    try {
+      fs.writeFileSync(fd, contents, writeOptions);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
 
-  fs.renameSync(tmpPath, filePath);
+    fs.renameSync(tmpPath, filePath);
+    renamed = true;
 
-  const dirFd = fs.openSync(path.dirname(filePath), "r");
-  try {
-    fs.fsyncSync(dirFd);
-  } catch (error) {
-    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
-      throw error;
+    const dirFd = fs.openSync(path.dirname(filePath), "r");
+    try {
+      fs.fsyncSync(dirFd);
+    } catch (error) {
+      if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
+        throw error;
+      }
+    } finally {
+      fs.closeSync(dirFd);
     }
   } finally {
-    fs.closeSync(dirFd);
+    if (!renamed) {
+      unlinkIfExists(tmpPath);
+    }
   }
 }
 
@@ -118,6 +126,7 @@ function tryReclaimStaleLock(lockPath, staleMs) {
   if (pid != null) {
     try {
       process.kill(pid, 0);
+      return false;
     } catch (killError) {
       if (killError.code === "ESRCH") {
         unlinkIfExists(lockPath);
@@ -126,12 +135,7 @@ function tryReclaimStaleLock(lockPath, staleMs) {
       if (killError.code !== "EPERM") {
         throw killError;
       }
-      // EPERM: owner is alive but not ours — fall through to the stale-age check.
-    }
-    const ageMs = acquiredAt == null ? null : Date.now() - acquiredAt;
-    if (ageMs != null && ageMs > staleMs) {
-      unlinkIfExists(lockPath);
-      return true;
+      // EPERM: owner is alive but not ours.
     }
     return false;
   }

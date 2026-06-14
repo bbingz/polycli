@@ -30,6 +30,7 @@ The root export mirrors `src/index.js`:
 ## Semantics
 
 - `unsupported`, `missing`, `zero`, and `measured` are distinct states and must not be collapsed.
+- In v1, `cold` and `retry` are intentionally always `unsupported`; upstream CLIs do not expose stable signals, and polycli does not fake them.
 - `runtimePersistence` distinguishes `ephemeral`, `session`, and `daemon` runtimes.
 - `measurementScope` distinguishes `request`, `turn`, and `job` measurements.
 - Aggregation preserves capability-aware metric summaries plus `runtimePersistenceCounts` and `measurementScopeCounts`.

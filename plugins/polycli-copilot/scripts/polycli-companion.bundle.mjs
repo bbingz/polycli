@@ -4,7 +4,7 @@
 import fs9 from "node:fs";
 import path8 from "node:path";
 import process5 from "node:process";
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import { spawn as spawn2 } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -130,23 +130,31 @@ function writeFileAtomicSync(filePath, contents, options = {}) {
   ensureParentDir(filePath);
   const tmpPath = `${filePath}.tmp.${process2.pid}.${Date.now()}.${crypto.randomUUID()}`;
   const { flag, mode, writeOptions } = normalizeWriteOptions(options);
-  const fd = fs.openSync(tmpPath, flag, mode);
+  let renamed = false;
   try {
-    fs.writeFileSync(fd, contents, writeOptions);
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  fs.renameSync(tmpPath, filePath);
-  const dirFd = fs.openSync(path.dirname(filePath), "r");
-  try {
-    fs.fsyncSync(dirFd);
-  } catch (error) {
-    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
-      throw error;
+    const fd = fs.openSync(tmpPath, flag, mode);
+    try {
+      fs.writeFileSync(fd, contents, writeOptions);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmpPath, filePath);
+    renamed = true;
+    const dirFd = fs.openSync(path.dirname(filePath), "r");
+    try {
+      fs.fsyncSync(dirFd);
+    } catch (error) {
+      if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error?.code)) {
+        throw error;
+      }
+    } finally {
+      fs.closeSync(dirFd);
     }
   } finally {
-    fs.closeSync(dirFd);
+    if (!renamed) {
+      unlinkIfExists(tmpPath);
+    }
   }
 }
 function writeFileAtomic(filePath, contents, options = {}) {
@@ -181,6 +189,7 @@ function tryReclaimStaleLock(lockPath, staleMs) {
   if (pid != null) {
     try {
       process2.kill(pid, 0);
+      return false;
     } catch (killError) {
       if (killError.code === "ESRCH") {
         unlinkIfExists(lockPath);
@@ -189,11 +198,6 @@ function tryReclaimStaleLock(lockPath, staleMs) {
       if (killError.code !== "EPERM") {
         throw killError;
       }
-    }
-    const ageMs2 = acquiredAt == null ? null : Date.now() - acquiredAt;
-    if (ageMs2 != null && ageMs2 > staleMs) {
-      unlinkIfExists(lockPath);
-      return true;
     }
     return false;
   }
@@ -253,18 +257,20 @@ var PROVIDER_IDS = ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "o
 var PROVIDER_OPERATION_NAMES = ["prompt"];
 
 // packages/polycli-utils/src/parse-stream-json.js
-function findJsonStart(text) {
+function findJsonStarts(text) {
+  const starts = [];
   for (let index = 0; index < text.length; index += 1) {
     const slice = text.slice(index);
     const character = text[index];
     if (character === "{" || character === "[" || character === '"' || character === "-" || /\d/.test(character)) {
-      return index;
+      starts.push(index);
+      continue;
     }
     if (slice.startsWith("true") || slice.startsWith("false") || slice.startsWith("null")) {
-      return index;
+      starts.push(index);
     }
   }
-  return -1;
+  return starts;
 }
 function parseStreamJsonLine(raw, { allowPrefix = true } = {}) {
   const text = String(raw ?? "");
@@ -275,12 +281,31 @@ function parseStreamJsonLine(raw, { allowPrefix = true } = {}) {
   let jsonCandidate = trimmed;
   let prefix = "";
   if (allowPrefix) {
-    const jsonStart = findJsonStart(text);
-    if (jsonStart < 0) {
+    let lastParseError = null;
+    for (const jsonStart of findJsonStarts(text)) {
+      const candidatePrefix = text.slice(0, jsonStart);
+      const candidate = text.slice(jsonStart).trim();
+      try {
+        return {
+          ok: true,
+          raw: text,
+          prefix: candidatePrefix,
+          json: candidate,
+          event: JSON.parse(candidate)
+        };
+      } catch (error) {
+        lastParseError = { prefix: candidatePrefix, json: candidate, error: error.message };
+      }
+    }
+    if (!lastParseError) {
       return { ok: false, kind: "non_json", raw: text };
     }
-    prefix = text.slice(0, jsonStart);
-    jsonCandidate = text.slice(jsonStart).trim();
+    return {
+      ok: false,
+      kind: "parse_error",
+      raw: text,
+      ...lastParseError
+    };
   } else if (!trimmed.startsWith("{") && !trimmed.startsWith("[") && !trimmed.startsWith('"') && !trimmed.startsWith("-") && !/^\d/.test(trimmed) && !trimmed.startsWith("true") && !trimmed.startsWith("false") && !trimmed.startsWith("null")) {
     return { ok: false, kind: "non_json", raw: text };
   }
@@ -377,7 +402,7 @@ function formatCommandFailure(result) {
   return parts.join(": ");
 }
 async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SIGKILL", forceAfterMs = 5e3, ignoreMissing = true } = {}) {
-  if (!Number.isInteger(pid) || pid <= 0) {
+  if (!Number.isInteger(pid) || pid <= 1) {
     throw new Error(`Invalid pid: ${pid}`);
   }
   const killOnce = (targetSignal) => {
@@ -399,19 +424,26 @@ async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SI
       }
       return true;
     }
+    const killPid = () => {
+      try {
+        process3.kill(pid, targetSignal);
+        return true;
+      } catch (error) {
+        if (error.code === "ESRCH" && ignoreMissing) return false;
+        throw error;
+      }
+    };
     try {
       process3.kill(-pid, targetSignal);
       return true;
     } catch (error) {
       if (error.code === "ESRCH") {
-        if (ignoreMissing) return false;
-        throw error;
+        return killPid();
       }
       if (error.code === "EINVAL") {
         throw error;
       }
-      process3.kill(pid, targetSignal);
-      return true;
+      return killPid();
     }
   };
   const terminated = killOnce(signal);
@@ -465,6 +497,9 @@ function resolveSessionId({
   }
   return { sessionId: null, source: null };
 }
+
+// packages/polycli-runtime/src/claude.js
+import { randomUUID } from "node:crypto";
 
 // packages/polycli-runtime/src/errors.js
 function formatProviderExitError(provider, status) {
@@ -782,13 +817,62 @@ function spawnStreamingCommand({
 
 // packages/polycli-runtime/src/claude.js
 var CLAUDE_BIN = process.env.CLAUDE_CLI_BIN || "claude";
+var CLAUDE_TMUX_BIN = process.env.POLYCLI_TMUX_BIN || "tmux";
 var DEFAULT_TIMEOUT_MS = 9e5;
+var TMUX_START_TIMEOUT_MS = 3e4;
 var AUTH_CHECK_TIMEOUT_MS = 3e4;
 var PROMPT_STDIN_THRESHOLD = 1e5;
 var CLAUDE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var CLAUDE_TMUX_ENV_EXACT = /* @__PURE__ */ new Set([
+  "ALL_PROXY",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_BETA",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_SMALL_FAST_MODEL",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "CLAUDE_CONFIG_DIR",
+  "CLAUDE_PROJECT_DIR",
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NODE_EXTRA_CA_CERTS",
+  "NO_PROXY",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+  "all_proxy",
+  "https_proxy",
+  "http_proxy",
+  "no_proxy"
+]);
+var CLAUDE_TMUX_DETACHED_WARNING = "Claude tmux TUI mode starts a detached interactive Claude TUI session; attach to read the model response. Timing covers tmux startup and prompt submission only, not LLM completion.";
+var TMUX_CLEANUP_SIGNALS = ["SIGINT", "SIGTERM"];
 var TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
+function shellQuote(value) {
+  const text = String(value ?? "");
+  if (text === "") return "''";
+  if (/^[A-Za-z0-9_./:=,+@%-]+$/.test(text)) return text;
+  return `'${text.replaceAll("'", "'\\''")}'`;
+}
+function sanitizeTmuxName(value) {
+  const text = String(value ?? "").trim();
+  const sanitized = text.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+  return sanitized || `polycli-claude-${randomUUID().slice(0, 8)}`;
+}
+function createTmuxSessionName() {
+  return `polycli-claude-${randomUUID().slice(0, 8)}`;
+}
+function shouldForwardClaudeTmuxEnv(key) {
+  return CLAUDE_TMUX_ENV_EXACT.has(key);
+}
+function buildClaudeTmuxEnvironmentArgs(env) {
+  if (!env || typeof env !== "object") {
+    return [];
+  }
+  return Object.entries(env).filter(([key, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && shouldForwardClaudeTmuxEnv(key) && value != null && !String(value).includes("\0")).sort(([left], [right]) => left.localeCompare(right)).flatMap(([key, value]) => ["-e", `${key}=${String(value)}`]);
+}
 function collectTextFromContent(content) {
   if (typeof content === "string") {
     return content;
@@ -814,6 +898,22 @@ function getClaudeErrorText(event) {
     return event.result;
   }
   return "claude returned an error";
+}
+function firstNonEmptyLine2(text) {
+  return String(text || "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "";
+}
+function parseClaudeLegacyAuthText(text) {
+  const detail = firstNonEmptyLine2(text);
+  if (!detail) {
+    return null;
+  }
+  if (CLAUDE_EXPLICIT_AUTH_ERROR_RE.test(detail) || /\b(not authenticated|not logged in|logged out)\b/i.test(detail)) {
+    return { loggedIn: false, detail, model: null };
+  }
+  if (/\b(authenticated|logged in|signed in)\b/i.test(detail)) {
+    return { loggedIn: true, detail, model: null };
+  }
+  return null;
 }
 function buildClaudeInvocation({
   prompt,
@@ -856,6 +956,299 @@ function buildClaudeInvocation({
     input: useStdin ? promptText : void 0,
     useStdin
   };
+}
+function buildClaudeTuiInvocation({
+  prompt,
+  model = null,
+  permissionMode = "bypassPermissions",
+  resumeSessionId = null,
+  extraArgs = [],
+  bin = CLAUDE_BIN,
+  tmuxBin = CLAUDE_TMUX_BIN,
+  tmuxSessionName = null,
+  cwd = null,
+  env = process.env
+} = {}) {
+  const promptText = String(prompt ?? "");
+  const sessionName = sanitizeTmuxName(tmuxSessionName || createTmuxSessionName());
+  const bufferName = `${sessionName}-prompt`;
+  const claudeArgs = [];
+  if (permissionMode) {
+    claudeArgs.push("--permission-mode", permissionMode);
+  }
+  if (model) {
+    claudeArgs.push("--model", model);
+  }
+  if (resumeSessionId) {
+    claudeArgs.push("--resume", resumeSessionId);
+  }
+  if (extraArgs.length > 0) {
+    claudeArgs.push(...extraArgs);
+  }
+  const shellCommand = [bin, ...claudeArgs].map(shellQuote).join(" ");
+  const startArgs = ["new-session", "-d", "-s", sessionName];
+  startArgs.push(...buildClaudeTmuxEnvironmentArgs(env));
+  if (cwd) {
+    startArgs.push("-c", cwd);
+  }
+  startArgs.push(shellCommand);
+  return {
+    bin: tmuxBin,
+    sessionName,
+    bufferName,
+    startArgs,
+    loadBufferArgs: ["load-buffer", "-b", bufferName, "-"],
+    pasteBufferArgs: ["paste-buffer", "-d", "-b", bufferName, "-t", sessionName],
+    sendEnterArgs: ["send-keys", "-t", sessionName, "Enter"],
+    input: promptText,
+    attachCommand: `tmux attach -t ${shellQuote(sessionName)}`
+  };
+}
+function runTmuxStep(invocation, args, options = {}) {
+  return runCommand(invocation.bin, args, {
+    cwd: options.cwd,
+    env: options.env,
+    input: options.input,
+    timeout: options.timeout
+  });
+}
+function sleepSync2(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function describeTmuxFailure(step, result) {
+  if (result.error) {
+    if (step === "new-session" && result.error.code === "ENOENT") {
+      return "tmux new-session failed: tmux is required for Claude TUI mode but was not found. Install tmux or set POLYCLI_TMUX_BIN.";
+    }
+    return `tmux ${step} failed: ${result.error.message}`;
+  }
+  const detail = String(result.stderr || result.stdout || "").trim();
+  return `tmux ${step} exited with code ${result.status}${detail ? `: ${detail}` : ""}`;
+}
+function installTmuxSignalCleanup(invocation, { cwd, env, timeout, signalEmitter = process }) {
+  const state = { signal: null };
+  const handlers = /* @__PURE__ */ new Map();
+  const remove = () => {
+    for (const [signal, handler] of handlers) {
+      if (typeof signalEmitter.off === "function") {
+        signalEmitter.off(signal, handler);
+      } else if (typeof signalEmitter.removeListener === "function") {
+        signalEmitter.removeListener(signal, handler);
+      }
+    }
+    handlers.clear();
+  };
+  const killSession = () => {
+    runTmuxStep(invocation, ["kill-session", "-t", invocation.sessionName], { cwd, env, timeout });
+  };
+  const handleSignal = (signal) => {
+    if (state.signal) {
+      return;
+    }
+    state.signal = signal;
+    killSession();
+    remove();
+    if (signalEmitter === process) {
+      try {
+        process.kill(process.pid, signal);
+      } catch {
+        process.exitCode = signal === "SIGINT" ? 130 : 143;
+      }
+    }
+  };
+  for (const signal of TMUX_CLEANUP_SIGNALS) {
+    if (typeof signalEmitter.once !== "function") {
+      continue;
+    }
+    const handler = () => handleSignal(signal);
+    handlers.set(signal, handler);
+    signalEmitter.once(signal, handler);
+  }
+  return { state, remove, killSession };
+}
+function waitForClaudeTuiReady(invocation, { cwd, env, timeout }) {
+  const waitTimeout = Number.isFinite(timeout) && timeout > 0 ? timeout : TMUX_START_TIMEOUT_MS;
+  const deadline = Date.now() + waitTimeout;
+  let last = null;
+  while (Date.now() <= deadline) {
+    const captured = runTmuxStep(
+      invocation,
+      ["capture-pane", "-pt", invocation.sessionName, "-S", "-120"],
+      { cwd, env, timeout: 1e3 }
+    );
+    last = captured;
+    if (captured.status === 0 && /Claude Code/.test(captured.stdout || "")) {
+      return { ok: true };
+    }
+    sleepSync2(100);
+  }
+  return {
+    ok: false,
+    error: last ? describeTmuxFailure("capture-pane", last) : "tmux capture-pane did not report Claude readiness"
+  };
+}
+function firstPromptNeedle(input) {
+  return String(input || "").split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 80) || "";
+}
+function pasteReadySignal(text, promptNeedle) {
+  return String(text || "").split(/\r?\n/).filter((line) => /Pasted text #|paste again to expand/i.test(line) || promptNeedle && line.includes(promptNeedle)).join(" ").replace(/\s+/g, " ").trim();
+}
+function waitForClaudeTuiPasteReady(invocation, { cwd, env, timeout }) {
+  if (!String(invocation.input || "").trim()) {
+    return { ok: true };
+  }
+  const waitTimeout = Number.isFinite(timeout) && timeout > 0 ? timeout : TMUX_START_TIMEOUT_MS;
+  const deadline = Date.now() + waitTimeout;
+  const promptNeedle = firstPromptNeedle(invocation.input);
+  let lastReadyText = null;
+  let stableSince = null;
+  let last = null;
+  while (Date.now() <= deadline) {
+    const captured = runTmuxStep(
+      invocation,
+      ["capture-pane", "-pt", invocation.sessionName, "-S", "-120"],
+      { cwd, env, timeout: 1e3 }
+    );
+    last = captured;
+    const text = captured.stdout || "";
+    const readyText = pasteReadySignal(text, promptNeedle);
+    if (captured.status === 0 && readyText) {
+      if (readyText && readyText === lastReadyText) {
+        if (stableSince != null && Date.now() - stableSince >= 750) {
+          return { ok: true };
+        }
+      } else {
+        lastReadyText = readyText;
+        stableSince = Date.now();
+      }
+    }
+    sleepSync2(100);
+  }
+  return {
+    ok: false,
+    error: last ? describeTmuxFailure("capture-pane", last) : "tmux capture-pane did not show pasted prompt"
+  };
+}
+function runClaudeTuiPrompt({
+  prompt,
+  model = null,
+  permissionMode = "bypassPermissions",
+  cwd,
+  timeout = DEFAULT_TIMEOUT_MS,
+  extraArgs = [],
+  resumeSessionId = null,
+  defaultModel = null,
+  bin = CLAUDE_BIN,
+  tmuxBin = CLAUDE_TMUX_BIN,
+  tmuxSessionName = null,
+  env = process.env,
+  signalEmitter = process
+} = {}) {
+  const invocation = buildClaudeTuiInvocation({
+    prompt,
+    model,
+    permissionMode,
+    resumeSessionId,
+    extraArgs,
+    bin,
+    tmuxBin,
+    tmuxSessionName,
+    cwd,
+    env
+  });
+  const startTimeout = Math.min(timeout || TMUX_START_TIMEOUT_MS, TMUX_START_TIMEOUT_MS);
+  const start = runTmuxStep(invocation, invocation.startArgs, { cwd, env, timeout: startTimeout });
+  if (start.error || start.status !== 0) {
+    return { ok: false, error: describeTmuxFailure("new-session", start), stdout: start.stdout, stderr: start.stderr };
+  }
+  const signalCleanup = installTmuxSignalCleanup(invocation, { cwd, env, timeout: startTimeout, signalEmitter });
+  const interrupted = () => signalCleanup.state.signal ? { ok: false, error: `Claude TUI tmux session interrupted by ${signalCleanup.state.signal}` } : null;
+  const finish = (result) => {
+    signalCleanup.remove();
+    return result;
+  };
+  const killAndFinish = (result) => {
+    signalCleanup.killSession();
+    return finish(result);
+  };
+  const initialInterrupt = interrupted();
+  if (initialInterrupt) {
+    return finish(initialInterrupt);
+  }
+  const ready = waitForClaudeTuiReady(invocation, { cwd, env, timeout: startTimeout });
+  const readyInterrupt = interrupted();
+  if (readyInterrupt) {
+    return finish(readyInterrupt);
+  }
+  if (!ready.ok) {
+    return killAndFinish({ ok: false, error: ready.error });
+  }
+  const load = runTmuxStep(invocation, invocation.loadBufferArgs, {
+    cwd,
+    env,
+    input: invocation.input,
+    timeout: startTimeout
+  });
+  const loadInterrupt = interrupted();
+  if (loadInterrupt) {
+    return finish(loadInterrupt);
+  }
+  if (load.error || load.status !== 0) {
+    return killAndFinish({ ok: false, error: describeTmuxFailure("load-buffer", load), stdout: load.stdout, stderr: load.stderr });
+  }
+  const cleanupBuffer = () => {
+    runTmuxStep(invocation, ["delete-buffer", "-b", invocation.bufferName], { cwd, env, timeout: startTimeout });
+  };
+  const paste = runTmuxStep(invocation, invocation.pasteBufferArgs, { cwd, env, timeout: startTimeout });
+  const pasteInterrupt = interrupted();
+  if (pasteInterrupt) {
+    return finish(pasteInterrupt);
+  }
+  if (paste.error || paste.status !== 0) {
+    cleanupBuffer();
+    return killAndFinish({ ok: false, error: describeTmuxFailure("paste-buffer", paste), stdout: paste.stdout, stderr: paste.stderr });
+  }
+  const pasteReady = waitForClaudeTuiPasteReady(invocation, { cwd, env, timeout: startTimeout });
+  const pasteReadyInterrupt = interrupted();
+  if (pasteReadyInterrupt) {
+    return finish(pasteReadyInterrupt);
+  }
+  if (!pasteReady.ok) {
+    return killAndFinish({ ok: false, error: pasteReady.error });
+  }
+  sleepSync2(250);
+  const enter = runTmuxStep(invocation, invocation.sendEnterArgs, { cwd, env, timeout: startTimeout });
+  const enterInterrupt = interrupted();
+  if (enterInterrupt) {
+    return finish(enterInterrupt);
+  }
+  if (enter.error || enter.status !== 0) {
+    return killAndFinish({ ok: false, error: describeTmuxFailure("send-keys", enter), stdout: enter.stdout, stderr: enter.stderr });
+  }
+  const response = [
+    `Started Claude TUI tmux session '${invocation.sessionName}'.`,
+    `Attach with: ${invocation.attachCommand}`,
+    "The prompt was pasted into the interactive session."
+  ].join("\n");
+  return finish({
+    ok: true,
+    response,
+    model: model ?? defaultModel,
+    sessionId: null,
+    detached: true,
+    responseKind: "tmux_tui_session_started",
+    tmuxSession: invocation.sessionName,
+    attachCommand: invocation.attachCommand,
+    warnings: [CLAUDE_TMUX_DETACHED_WARNING],
+    timingMeta: {
+      tmuxDetached: true,
+      timingScope: "tmux_startup",
+      llmCompletionObserved: false
+    },
+    stdout: "",
+    stderr: ""
+  });
 }
 function extractClaudeText(event) {
   if (!event || typeof event !== "object") {
@@ -957,25 +1350,57 @@ function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = null } =
 function getClaudeAvailability(cwd) {
   return binaryAvailable(CLAUDE_BIN, ["--version"], { cwd });
 }
-function getClaudeAuthStatus(cwd, { promptRunner = runClaudePrompt } = {}) {
-  const result = promptRunner({
-    prompt: "ping",
+function getClaudeAuthStatus(cwd, {
+  authRunner = (options = {}) => runCommand(CLAUDE_BIN, ["auth", "status", "--json"], options)
+} = {}) {
+  const result = authRunner({
     cwd,
     timeout: AUTH_CHECK_TIMEOUT_MS
   });
-  if (result.ok) {
+  if (result.error) {
+    const detail2 = result.error.message || "claude auth status failed";
+    if (result.error.code === "ETIMEDOUT" || TRANSIENT_PROBE_ERROR_PATTERNS.some((pattern) => pattern.test(detail2))) {
+      return { loggedIn: true, detail: `auth probe inconclusive: ${detail2}`, model: null };
+    }
+    return { loggedIn: false, detail: detail2 };
+  }
+  if (result.status === 0) {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(String(result.stdout || "{}"));
+    } catch {
+      const legacy = parseClaudeLegacyAuthText(`${result.stdout || ""}
+${result.stderr || ""}`);
+      if (legacy) {
+        return legacy;
+      }
+      const detail2 = firstNonEmptyLine2(`${result.stdout || ""}
+${result.stderr || ""}`);
+      return {
+        loggedIn: true,
+        detail: `auth probe inconclusive: claude auth status returned non-json output${detail2 ? `: ${detail2}` : ""}`,
+        model: null
+      };
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { loggedIn: true, detail: "auth probe inconclusive: claude auth status returned non-object output", model: null };
+    }
+    const loggedIn = parsed.loggedIn ?? parsed.authenticated;
+    if (typeof loggedIn !== "boolean") {
+      return { loggedIn: true, detail: "auth probe inconclusive: claude auth status returned no authentication state", model: parsed.model ?? null };
+    }
     return {
-      loggedIn: true,
-      detail: "authenticated",
-      model: result.model ?? null
+      loggedIn,
+      detail: loggedIn ? "authenticated" : "not authenticated",
+      model: parsed?.model ?? null
     };
   }
-  const detail = String(result.error ?? "").trim() || "claude auth probe failed";
+  const detail = String(result.stderr || result.stdout || "").trim() || `claude auth status exited with code ${result.status}`;
   if (CLAUDE_EXPLICIT_AUTH_ERROR_RE.test(detail)) {
     return { loggedIn: false, detail };
   }
   if (TRANSIENT_PROBE_ERROR_PATTERNS.some((pattern) => pattern.test(detail))) {
-    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: result.model ?? null };
+    return { loggedIn: true, detail: `auth probe inconclusive: ${detail}`, model: null };
   }
   return { loggedIn: false, detail };
 }
@@ -1029,8 +1454,30 @@ function runClaudePromptStreaming({
   onEvent = () => {
   },
   bin = CLAUDE_BIN,
+  tmuxBin = CLAUDE_TMUX_BIN,
+  tmuxSessionName = null,
+  executionMode = "print",
+  env = process.env,
+  signalEmitter = process,
   spawnImpl
 } = {}) {
+  if (executionMode === "tmux-tui") {
+    return Promise.resolve(runClaudeTuiPrompt({
+      prompt,
+      model,
+      permissionMode,
+      cwd,
+      timeout,
+      extraArgs,
+      resumeSessionId,
+      defaultModel,
+      bin,
+      tmuxBin,
+      tmuxSessionName,
+      env,
+      signalEmitter
+    }));
+  }
   const invocation = buildClaudeInvocation({
     prompt,
     model,
@@ -1045,7 +1492,7 @@ function runClaudePromptStreaming({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env,
     input: invocation.input,
     timeout,
     spawnImpl,
@@ -2132,10 +2579,11 @@ function runQwenPrompt({
     priority: ["stdout", "stderr", "file"]
   });
   const resultEventError = extractQwenResultError(parsed.resultEvent);
-  const error = result.status === 0 && !resultEventError && parsed.response.trim() ? null : result.stderr.trim() || resultEventError || formatProviderExitError("qwen", result.status);
+  const hasVisibleText = Boolean(parsed.response.trim());
+  const error = result.status === 0 && !resultEventError && hasVisibleText ? null : result.stderr.trim() || resultEventError || (result.status === 0 ? "qwen produced no visible text" : formatProviderExitError("qwen", result.status));
   const errorCode = resultEventError ? classifyProviderFailure(resultEventError, { provider: "qwen" }) || "provider_error" : classifyProviderFailure(error, { provider: "qwen" });
   return {
-    ok: result.status === 0 && !resultEventError && Boolean(parsed.response.trim()),
+    ok: result.status === 0 && !resultEventError && hasVisibleText,
     status: result.status,
     stderr: result.stderr,
     ...parsed,
@@ -4199,19 +4647,31 @@ function getTimingSupport(provider) {
     runtimePersistence: "ephemeral"
   };
 }
+function getTimingSupportForRun(provider, options = {}) {
+  const support = getTimingSupport(provider);
+  if (provider === "claude" && options.executionMode === "tmux-tui") {
+    return { ...support, ttft: false, gen: false, tail: false };
+  }
+  return support;
+}
 function inferRuntimePersistence(provider, result) {
   const support = getTimingSupport(provider);
   return support.runtimePersistence;
 }
-function buildTimingMeta(provider, result, meta) {
-  const support = getTimingSupport(provider);
-  if (support.runtimePersistence !== "session" || result?.sessionId) {
-    return meta;
-  }
-  return {
+function buildTimingMeta(provider, result, meta, support = getTimingSupport(provider)) {
+  const merged = {
     ...meta || {},
-    sessionIdMissing: true
+    ...result?.timingMeta || {}
   };
+  if (provider === "claude" && result?.detached === true) {
+    merged.tmuxDetached = true;
+    merged.timingScope = merged.timingScope || "tmux_startup";
+    merged.llmCompletionObserved = false;
+  }
+  if (support.runtimePersistence === "session" && !result?.sessionId) {
+    merged.sessionIdMissing = true;
+  }
+  return Object.keys(merged).length > 0 ? merged : null;
 }
 function trackQwenToolTiming(event, timestamp, state) {
   if (event?.type !== "assistant" || !Array.isArray(event.message?.content)) {
@@ -4279,7 +4739,7 @@ async function runProviderPromptStreaming({
   ...options
 }) {
   const startedAt = nowMs();
-  const timingSupport = getTimingSupport(provider);
+  const timingSupport = getTimingSupportForRun(provider, options);
   const selectedRuntime = runtime ?? getProviderRuntime(provider);
   let firstTextAt = null;
   let lastTextAt = null;
@@ -4317,7 +4777,7 @@ async function runProviderPromptStreaming({
     tailMs: lastTextAt == null ? null : Math.max(finishedAt - lastTextAt, 0),
     toolMs: toolState.toolMs,
     supportedMetrics: timingSupport,
-    meta: buildTimingMeta(provider, result, meta)
+    meta: buildTimingMeta(provider, result, meta, timingSupport)
   });
 }
 
@@ -4672,7 +5132,7 @@ function removeJobConfigFile(workspaceRoot, jobId) {
 }
 
 // plugins/polycli/scripts/lib/run-ledger.mjs
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 import path4 from "node:path";
 
 // packages/polycli-utils/src/ndjson.js
@@ -4780,7 +5240,7 @@ function resolveRunLedgerFile(workspaceRoot) {
   return path4.join(resolveStateDir(workspaceRoot), "run-ledger.ndjson");
 }
 function createRunId() {
-  return `run_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+  return `run_${randomUUID2().replaceAll("-", "").slice(0, 20)}`;
 }
 function resolveRunId(options = {}, env = process.env) {
   const runId = options.runId || env.POLYCLI_RUN_ID || createRunId();
@@ -4894,7 +5354,7 @@ function createRunLedgerEvent(event = {}) {
   const commands = [...new Set(event.commands || (command ? [command] : []))].filter(Boolean).sort();
   return {
     version: 1,
-    eventId: event.eventId || `evt_${randomUUID().replaceAll("-", "").slice(0, 20)}`,
+    eventId: event.eventId || `evt_${randomUUID2().replaceAll("-", "").slice(0, 20)}`,
     at,
     runId: event.runId || null,
     workspaceRoot: event.workspaceRoot || null,
@@ -5528,8 +5988,8 @@ function buildPromptRuntimeOptions({
   if (kind === "ask" && provider === "claude") {
     return {
       ...runtimeOptions,
+      executionMode: "tmux-tui",
       permissionMode: "plan",
-      maxTurns: 1,
       extraArgs: mergeExtraArgs(runtimeOptions, [
         "--tools",
         "",
@@ -5724,8 +6184,8 @@ var REVIEW_HARD_CONSTRAINTS = {
   },
   claude() {
     return {
+      executionMode: "tmux-tui",
       permissionMode: "plan",
-      maxTurns: 1,
       extraArgs: ["--tools", "", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config"]
     };
   },
@@ -6270,7 +6730,7 @@ async function inspectProviderAvailability(provider) {
 }
 function createJobId(kind) {
   const prefix = JOB_PREFIXES[kind] || "pj";
-  return `${prefix}-${randomUUID2().slice(0, 8)}`;
+  return `${prefix}-${randomUUID3().slice(0, 8)}`;
 }
 function parseExecutionMode(options) {
   if (options.background && options.wait) {
@@ -6752,6 +7212,26 @@ async function probeProviderHealth({
   };
   if (!inspection.available) {
     report.probe.error = inspection.availabilityDetail || "provider CLI is unavailable";
+  } else if (provider === "claude") {
+    try {
+      const auth = await Promise.resolve(getProviderRuntime(provider).getAuthStatus(process5.cwd()));
+      report.loggedIn = auth.loggedIn ?? false;
+      report.authDetail = auth.detail ?? auth.reason ?? null;
+      report.model = auth.model ?? report.model;
+      report.probe = {
+        ok: Boolean(auth.loggedIn),
+        kind: "auth_status",
+        authOnly: true,
+        responseMatched: Boolean(auth.loggedIn),
+        expected: "authenticated",
+        responsePreview: auth.detail ?? null,
+        error: auth.loggedIn ? null : auth.detail ?? "claude auth status did not report authenticated",
+        timing: null
+      };
+      report.ok = Boolean(auth.loggedIn);
+    } catch (error) {
+      report.probe.error = error.message;
+    }
   } else {
     try {
       const result = await runProviderPromptStreaming({
@@ -7008,24 +7488,28 @@ function buildReviewExecution(rawArgs, { adversarial }) {
 async function runReviewCommand(rawArgs, { adversarial }) {
   const { options, provider, reviewContext, execution } = buildReviewExecution(rawArgs, { adversarial });
   if (!reviewContext.diff.trim()) {
-    const warnings = Array.isArray(reviewContext.warnings) && reviewContext.warnings.length > 0 ? reviewContext.warnings : void 0;
-    const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
-    await recordRunEvent(workspaceRoot, {
-      command: execution.kind,
-      kind: execution.kind,
-      provider: null,
-      phase: "provider_decision",
-      status: "skipped",
-      reason: "no_changes"
-    });
-    output(
-      options.json ? { ok: true, provider, verdict: "no_changes", scope: reviewContext.scope, warnings } : [
-        ...warnings ? [`Note: ${warnings.join(" | ")}`] : [],
-        "No changes to review."
-      ].join("\n\n"),
-      options.json
-    );
-    return;
+    try {
+      const warnings = Array.isArray(reviewContext.warnings) && reviewContext.warnings.length > 0 ? reviewContext.warnings : void 0;
+      const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
+      await recordRunEvent(workspaceRoot, {
+        command: execution.kind,
+        kind: execution.kind,
+        provider: null,
+        phase: "provider_decision",
+        status: "skipped",
+        reason: "no_changes"
+      });
+      output(
+        options.json ? { ok: true, provider, verdict: "no_changes", scope: reviewContext.scope, warnings } : [
+          ...warnings ? [`Note: ${warnings.join(" | ")}`] : [],
+          "No changes to review."
+        ].join("\n\n"),
+        options.json
+      );
+      return;
+    } finally {
+      cleanupRuntimeOptions(execution.runtimeOptions);
+    }
   }
   const { background } = parseExecutionMode(options);
   if (background) {

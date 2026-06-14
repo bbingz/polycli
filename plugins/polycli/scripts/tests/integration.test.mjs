@@ -6,7 +6,6 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { createClaudeFixtureReplay } from "./helpers/fixture-replay.mjs";
 import {
   ensureStateDir,
   readLastUsedProvider,
@@ -256,6 +255,11 @@ if (args.includes("--version")) {
   process.stdout.write("claude 0.0.0-test\\n");
   process.exit(0);
 }
+if (args[0] === "auth" && args[1] === "status") {
+  const loggedIn = process.env.CLAUDE_AUTH_LOGGED_IN !== "0";
+  process.stdout.write(JSON.stringify({ loggedIn, model: "claude-test" }) + "\\n");
+  process.exit(0);
+}
 if (process.env.CLAUDE_ARGV_LOG) {
   fs.writeFileSync(process.env.CLAUDE_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
 }
@@ -298,6 +302,34 @@ if (outputFormat === "stream-json" && !hasVerbose) {
   process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: reply, session_id: "44444444-4444-4444-8444-444444444444", duration_ms: 654 }) + "\\n");
 })();
 `,
+    { mode: 0o755 }
+  );
+  return {
+    root,
+    bin,
+    cleanup() {
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+function createFakeTmuxBin() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-fake-tmux-"));
+  const bin = path.join(root, "tmux");
+  fs.writeFileSync(
+    bin,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+if (process.env.TMUX_ARGV_LOG) {
+  fs.appendFileSync(process.env.TMUX_ARGV_LOG, JSON.stringify({ argv: args, stdin }) + "\\n");
+}
+if (args[0] === "capture-pane") {
+  process.stdout.write(process.env.TMUX_CAPTURE_TEXT || "Claude Code\\npaste again to expand\\n");
+}
+process.exit(Number.parseInt(process.env.TMUX_EXIT_CODE || "0", 10));
+	`,
     { mode: 0o755 }
   );
   return {
@@ -494,6 +526,38 @@ function runCompanion(args, { cwd, env, timeout = 30_000 } = {}) {
 
 function readJsonLine(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8").trim());
+}
+
+function readJsonLines(filePath) {
+  return fs.readFileSync(filePath, "utf8")
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function gitSync(cwd, args) {
+  const result = spawnSync("git", args, { cwd });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
+  }
+}
+
+function createReviewWorkspace() {
+  const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "polycli-review-cwd-")));
+  gitInitSync(cwd);
+  fs.writeFileSync(path.join(cwd, "review.txt"), "before\n", "utf8");
+  gitSync(cwd, ["add", "review.txt"]);
+  gitSync(cwd, ["commit", "-m", "base"]);
+  fs.writeFileSync(path.join(cwd, "review.txt"), "before\nafter\n", "utf8");
+  gitSync(cwd, ["add", "review.txt"]);
+  gitSync(cwd, ["commit", "-m", "change"]);
+  return {
+    cwd,
+    cleanup() {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    },
+  };
 }
 
 async function waitForTerminalJob(jobId, context) {
@@ -728,13 +792,13 @@ test("integration: health verifies qwen with an end-to-end probe and records tim
   }
 });
 
-test("integration: health verifies claude with a captured cli fixture replay", async () => {
+test("integration: health verifies claude with auth status without a prompt run", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
-  const replay = createClaudeFixtureReplay("health-ok");
+  const fake = createFakeClaudeBin();
   try {
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
-      CLAUDE_CLI_BIN: replay.bin,
+      CLAUDE_CLI_BIN: fake.bin,
     });
     const health = await runCompanion(["health", "--json", "--provider", "claude"], {
       cwd: process.cwd(),
@@ -751,13 +815,15 @@ test("integration: health verifies claude with a captured cli fixture replay", a
     const report = payload.results[0];
     assert.equal(report.provider, "claude");
     assert.equal(report.available, true);
-    assert.equal(report.loggedIn, null);
-    assert.equal(report.authDetail, "not checked by health");
-    assert.equal(report.model, replay.meta.expected.model);
+    assert.equal(report.loggedIn, true);
+    assert.equal(report.authDetail, "authenticated");
+    assert.equal(report.model, "claude-test");
     assert.equal(report.probe.ok, true);
+    assert.equal(report.probe.kind, "auth_status");
+    assert.equal(report.probe.authOnly, true);
     assert.equal(report.probe.responseMatched, true);
-    assert.equal(report.probe.responsePreview, replay.meta.expected.response);
-    assert.ok(report.probe.timing, "health result should include timing");
+    assert.equal(report.probe.responsePreview, "authenticated");
+    assert.equal(report.probe.timing, null);
 
     const timing = await runCompanion(["timing", "--json", "--provider", "claude", "--history", "1"], {
       cwd: process.cwd(),
@@ -765,10 +831,47 @@ test("integration: health verifies claude with a captured cli fixture replay", a
     });
     assert.equal(timing.code, 0, timing.stderr);
     const timingPayload = JSON.parse(timing.stdout);
-    assert.equal(timingPayload.records.length, 1);
-    assert.equal(timingPayload.records[0].kind, "health");
+    assert.equal(timingPayload.records.length, 0);
   } finally {
-    replay.cleanup();
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: health reports claude auth status logout as unhealthy", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeClaudeBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      CLAUDE_CLI_BIN: fake.bin,
+      CLAUDE_AUTH_LOGGED_IN: "0",
+    });
+    const health = await runCompanion(["health", "--json", "--provider", "claude"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(health.code, 2);
+    const payload = JSON.parse(health.stdout);
+    assert.equal(payload.ok, false);
+    assert.equal(payload.anyHealthy, false);
+    assert.equal(payload.allHealthy, false);
+    assert.deepEqual(payload.healthyProviders, []);
+    assert.deepEqual(payload.unhealthyProviders, ["claude"]);
+    assert.equal(payload.results.length, 1);
+    const report = payload.results[0];
+    assert.equal(report.provider, "claude");
+    assert.equal(report.available, true);
+    assert.equal(report.loggedIn, false);
+    assert.equal(report.authDetail, "not authenticated");
+    assert.equal(report.probe.ok, false);
+    assert.equal(report.probe.kind, "auth_status");
+    assert.equal(report.probe.authOnly, true);
+    assert.equal(report.probe.responseMatched, false);
+    assert.equal(report.probe.error, "not authenticated");
+    assert.equal(report.probe.timing, null);
+  } finally {
+    fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
@@ -1259,6 +1362,7 @@ test("integration: ask constrains kimi to a visible non-thinking answer", async 
 
 test("integration: review constrains kimi to one non-thinking turn", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createReviewWorkspace();
   const argLog = path.join(pluginData, "kimi-argv.jsonl");
   const fake = createFakeKimiBin();
   try {
@@ -1270,7 +1374,7 @@ test("integration: review constrains kimi to one non-thinking turn", async () =>
     });
     const review = await runCompanion(
       ["review", "--provider", "kimi", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(review.code, 0, review.stderr);
     const payload = JSON.parse(review.stdout);
@@ -1287,12 +1391,14 @@ test("integration: review constrains kimi to one non-thinking turn", async () =>
     );
   } finally {
     fake.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
 
 test("integration: review --background preserves kimi runtime options and stored response", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createReviewWorkspace();
   const argLog = path.join(pluginData, "kimi-background-argv.jsonl");
   const fake = createFakeKimiBin();
   try {
@@ -1304,17 +1410,17 @@ test("integration: review --background preserves kimi runtime options and stored
     });
     const start = await runCompanion(
       ["review", "--provider", "kimi", "--background", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(start.code, 0, start.stderr);
     const started = JSON.parse(start.stdout);
     assert.equal(started.ok, true);
 
-    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: process.cwd(), env });
+    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: reviewWorkspace.cwd, env });
     assert.equal(finalStatus.job.status, "completed");
 
     const stored = await runCompanion(["result", "--json", started.job.jobId], {
-      cwd: process.cwd(),
+      cwd: reviewWorkspace.cwd,
       env,
     });
     assert.equal(stored.code, 0, stored.stderr);
@@ -1333,12 +1439,14 @@ test("integration: review --background preserves kimi runtime options and stored
     );
   } finally {
     fake.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
 
 test("integration: review --background preserves qwen runtime options and stored response", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createReviewWorkspace();
   const argLog = path.join(pluginData, "qwen-background-argv.jsonl");
   const fake = createFakeQwenBin();
   try {
@@ -1350,17 +1458,17 @@ test("integration: review --background preserves qwen runtime options and stored
     });
     const start = await runCompanion(
       ["review", "--provider", "qwen", "--background", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(start.code, 0, start.stderr);
     const started = JSON.parse(start.stdout);
     assert.equal(started.ok, true);
 
-    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: process.cwd(), env });
+    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: reviewWorkspace.cwd, env });
     assert.equal(finalStatus.job.status, "completed");
 
     const stored = await runCompanion(["result", "--json", started.job.jobId], {
-      cwd: process.cwd(),
+      cwd: reviewWorkspace.cwd,
       env,
     });
     assert.equal(stored.code, 0, stored.stderr);
@@ -1394,12 +1502,14 @@ test("integration: review --background preserves qwen runtime options and stored
     assert.equal(occurrences, 1);
   } finally {
     fake.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
 
 test("integration: qwen result-only review still records timing text and preview", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createReviewWorkspace();
   const fake = createFakeQwenBin();
   try {
     const env = cleanEnv({
@@ -1410,16 +1520,16 @@ test("integration: qwen result-only review still records timing text and preview
     });
     const start = await runCompanion(
       ["review", "--provider", "qwen", "--background", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(start.code, 0, start.stderr);
     const started = JSON.parse(start.stdout);
 
-    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: process.cwd(), env });
+    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: reviewWorkspace.cwd, env });
     assert.equal(finalStatus.job.status, "completed");
 
     const stored = await runCompanion(["result", "--json", started.job.jobId], {
-      cwd: process.cwd(),
+      cwd: reviewWorkspace.cwd,
       env,
     });
     assert.equal(stored.code, 0, stored.stderr);
@@ -1434,12 +1544,14 @@ test("integration: qwen result-only review still records timing text and preview
     assert.match(logText, /RESULT_ONLY_QWEN_OK/);
   } finally {
     fake.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
 
 test("integration: kimi string-content review still records preview text", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createReviewWorkspace();
   const fake = createFakeKimiBin();
   try {
     const env = cleanEnv({
@@ -1450,16 +1562,16 @@ test("integration: kimi string-content review still records preview text", async
     });
     const start = await runCompanion(
       ["review", "--provider", "kimi", "--background", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(start.code, 0, start.stderr);
     const started = JSON.parse(start.stdout);
 
-    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: process.cwd(), env });
+    const finalStatus = await waitForTerminalJob(started.job.jobId, { cwd: reviewWorkspace.cwd, env });
     assert.equal(finalStatus.job.status, "completed");
 
     const stored = await runCompanion(["result", "--json", started.job.jobId], {
-      cwd: process.cwd(),
+      cwd: reviewWorkspace.cwd,
       env,
     });
     assert.equal(stored.code, 0, stored.stderr);
@@ -1471,44 +1583,70 @@ test("integration: kimi string-content review still records preview text", async
     assert.match(logText, /STRING_KIMI_OK/);
   } finally {
     fake.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
 
-test("integration: review constrains claude to one turn with no tools", async () => {
+test("integration: review starts claude TUI in tmux with no tools", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
-  const argLog = path.join(pluginData, "claude-review-argv.jsonl");
+  const reviewWorkspace = createReviewWorkspace();
+  const tmuxLog = path.join(pluginData, "claude-review-tmux.jsonl");
   const fake = createFakeClaudeBin();
+  const fakeTmux = createFakeTmuxBin();
   try {
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
       CLAUDE_CLI_BIN: fake.bin,
-      CLAUDE_ARGV_LOG: argLog,
-      CLAUDE_FIXED_REPLY: "CLAUDE_REVIEW_OK",
+      POLYCLI_TMUX_BIN: fakeTmux.bin,
+      TMUX_ARGV_LOG: tmuxLog,
     });
     const review = await runCompanion(
       ["review", "--provider", "claude", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(review.code, 0, review.stderr);
     const payload = JSON.parse(review.stdout);
-    assert.equal(payload.response, "CLAUDE_REVIEW_OK");
+    assert.match(payload.response, /Started Claude TUI tmux session/);
+    assert.equal(payload.detached, true);
+    assert.equal(payload.responseKind, "tmux_tui_session_started");
+    assert.match(payload.attachCommand, /^tmux attach -t polycli-claude-/);
+    assert.match(payload.tmuxSession, /^polycli-claude-/);
+    assert.equal(payload.timing.meta.tmuxDetached, true);
+    assert.equal(payload.timing.meta.timingScope, "tmux_startup");
+    assert.equal(payload.timing.meta.llmCompletionObserved, false);
 
-    const logged = readJsonLine(argLog);
-    assert.match(logged.argv.join(" "), /--max-turns 1/);
-    assert.match(logged.argv.join(" "), /--strict-mcp-config/);
-    assert.match(logged.argv.join(" "), /--mcp-config/);
-    const toolsIndex = logged.argv.indexOf("--tools");
-    assert.notEqual(toolsIndex, -1);
-    assert.equal(logged.argv[toolsIndex + 1], "");
+	    const logged = readJsonLines(tmuxLog);
+	    const commands = logged.map((entry) => entry.argv[0]);
+	    assert.deepEqual(commands.slice(0, 4), [
+	      "new-session",
+	      "capture-pane",
+	      "load-buffer",
+	      "paste-buffer",
+	    ]);
+	    assert.equal(commands.filter((command) => command === "capture-pane").length >= 2, true);
+	    assert.equal(commands.at(-1), "send-keys");
+	    const startCommand = logged[0].argv.at(-1);
+    assert.match(startCommand, new RegExp(fake.bin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(startCommand, /--permission-mode plan/);
+    assert.match(startCommand, /--strict-mcp-config/);
+    assert.match(startCommand, /--mcp-config '\{"mcpServers":\{\}\}'/);
+    assert.match(startCommand, /--tools ''/);
+    assert.doesNotMatch(startCommand, /(^| )-p( |$)|--print|--output-format|--max-turns/);
+	    assert.match(logged[2].stdin, /regressions only/);
+	    assert.match(logged[2].stdin, /Git diff:/);
+    assert.match(payload.warnings.join("\n"), /detached interactive Claude TUI/i);
   } finally {
     fake.cleanup();
+    fakeTmux.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
 
 test("integration: review constrains gemini with isolated cwd and disabled extensions/mcp", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createReviewWorkspace();
   const argLog = path.join(pluginData, "gemini-review-argv.jsonl");
   const fake = createFakeGeminiBin();
   try {
@@ -1520,7 +1658,7 @@ test("integration: review constrains gemini with isolated cwd and disabled exten
     });
     const review = await runCompanion(
       ["review", "--provider", "gemini", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(review.code, 0, review.stderr);
     const payload = JSON.parse(review.stdout);
@@ -1539,12 +1677,14 @@ test("integration: review constrains gemini with isolated cwd and disabled exten
     assert.equal(logged.argv.includes("--policy"), false);
   } finally {
     fake.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
 
 test("integration: review constrains copilot with exhaustive tool exclusion", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createReviewWorkspace();
   const argLog = path.join(pluginData, "copilot-review-argv.jsonl");
   const fake = createFakeCopilotBin();
   try {
@@ -1556,7 +1696,7 @@ test("integration: review constrains copilot with exhaustive tool exclusion", as
     });
     const review = await runCompanion(
       ["review", "--provider", "copilot", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(review.code, 0, review.stderr);
     const payload = JSON.parse(review.stdout);
@@ -1569,12 +1709,14 @@ test("integration: review constrains copilot with exhaustive tool exclusion", as
     assert.match(logged.argv[excludedIndex + 1], /ask_user/);
   } finally {
     fake.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
 
 test("integration: review constrains opencode with plan agent and deny-all config", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createReviewWorkspace();
   const argLog = path.join(pluginData, "opencode-review-argv.jsonl");
   const envLog = path.join(pluginData, "opencode-review-env.jsonl");
   const fake = createFakeOpenCodeBin();
@@ -1588,7 +1730,7 @@ test("integration: review constrains opencode with plan agent and deny-all confi
     });
     const review = await runCompanion(
       ["review", "--provider", "opencode", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(review.code, 0, review.stderr);
     const payload = JSON.parse(review.stdout);
@@ -1605,12 +1747,14 @@ test("integration: review constrains opencode with plan agent and deny-all confi
     });
   } finally {
     fake.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
 
 test("integration: review constrains pi with no-tools", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createReviewWorkspace();
   const argLog = path.join(pluginData, "pi-review-argv.jsonl");
   const fake = createFakePiBin();
   try {
@@ -1622,7 +1766,7 @@ test("integration: review constrains pi with no-tools", async () => {
     });
     const review = await runCompanion(
       ["review", "--provider", "pi", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(review.code, 0, review.stderr);
     const payload = JSON.parse(review.stdout);
@@ -1632,12 +1776,14 @@ test("integration: review constrains pi with no-tools", async () => {
     assert.match(logged.argv.join(" "), /--no-tools/);
   } finally {
     fake.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
 
 test("integration: review uses mmx text chat for minimax without legacy mini-agent config", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createReviewWorkspace();
   const envLog = path.join(pluginData, "minimax-review-env.jsonl");
   const fake = createFakeMiniMaxFixture();
   try {
@@ -1649,7 +1795,7 @@ test("integration: review uses mmx text chat for minimax without legacy mini-age
     });
     const review = await runCompanion(
       ["review", "--provider", "minimax", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
-      { cwd: process.cwd(), env }
+      { cwd: reviewWorkspace.cwd, env }
     );
     assert.equal(review.code, 0, review.stderr);
     const payload = JSON.parse(review.stdout);
@@ -1661,6 +1807,7 @@ test("integration: review uses mmx text chat for minimax without legacy mini-age
     assert.equal(loggedEnv.argv.includes("-t"), false);
   } finally {
     fake.cleanup();
+    reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
@@ -1728,24 +1875,66 @@ test("integration: setup and ask succeed for minimax via bundled companion", asy
   }
 });
 
-test("integration: setup and ask succeed for claude via bundled companion", async () => {
+test("integration: setup succeeds and claude ask starts a tmux TUI session", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
-  const replay = createClaudeFixtureReplay("ask-ok");
+  const tmuxLog = path.join(pluginData, "claude-ask-tmux.jsonl");
+  const fake = createFakeClaudeBin();
+  const fakeTmux = createFakeTmuxBin();
   try {
-    const askPayload = await assertSetupAndAsk("claude", cleanEnv({
+    const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
-      CLAUDE_CLI_BIN: replay.bin,
-    }), "Reply with only: PONG");
-    assert.equal(askPayload.response, replay.meta.expected.response);
-    assert.equal(askPayload.sessionId, replay.meta.expected.sessionId);
-    assert.equal(askPayload.model, replay.meta.expected.model);
+      CLAUDE_CLI_BIN: fake.bin,
+      POLYCLI_TMUX_BIN: fakeTmux.bin,
+      TMUX_ARGV_LOG: tmuxLog,
+    });
+    const setup = await runCompanion(["setup", "--json", "--provider", "claude"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(setup.code, 0, setup.stderr);
+    const setupPayload = JSON.parse(setup.stdout);
+    assert.equal(setupPayload[0].loggedIn, true);
+    assert.equal(setupPayload[0].model, "claude-test");
+
+    const ask = await runCompanion(
+      ["ask", "--provider", "claude", "--json", "Reply with only: PONG"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(ask.code, 0, ask.stderr);
+    const askPayload = JSON.parse(ask.stdout);
+    assert.equal(askPayload.provider, "claude");
+    assert.match(askPayload.response, /Started Claude TUI tmux session/);
+    assert.equal(askPayload.model, "claude-test");
+    assert.equal(askPayload.sessionId, null);
+    assert.equal(askPayload.detached, true);
+    assert.equal(askPayload.responseKind, "tmux_tui_session_started");
+    assert.match(askPayload.tmuxSession, /^polycli-claude-/);
+    assert.match(askPayload.attachCommand, /^tmux attach -t polycli-claude-/);
     assert.equal(askPayload.timing.runtimePersistence, "session");
-    assert.equal(askPayload.timing.metrics.ttft.status, "measured");
-    assert.equal(askPayload.timing.metrics.gen.status, "measured");
-    assert.equal(askPayload.timing.metrics.tail.status, "measured");
+	    assert.equal(askPayload.timing.metrics.ttft.status, "unsupported");
+	    assert.equal(askPayload.timing.metrics.gen.status, "unsupported");
+	    assert.equal(askPayload.timing.metrics.tail.status, "unsupported");
     assert.equal(askPayload.timing.metrics.tool.status, "unsupported");
+    assert.equal(askPayload.timing.meta.tmuxDetached, true);
+    assert.equal(askPayload.timing.meta.timingScope, "tmux_startup");
+    assert.equal(askPayload.timing.meta.llmCompletionObserved, false);
+    assert.match(askPayload.warnings.join("\n"), /detached interactive Claude TUI/i);
+
+	    const logged = readJsonLines(tmuxLog);
+	    const commands = logged.map((entry) => entry.argv[0]);
+	    assert.deepEqual(commands.slice(0, 4), [
+	      "new-session",
+	      "capture-pane",
+	      "load-buffer",
+	      "paste-buffer",
+	    ]);
+	    assert.equal(commands.filter((command) => command === "capture-pane").length >= 2, true);
+	    assert.equal(commands.at(-1), "send-keys");
+	    assert.doesNotMatch(logged[0].argv.at(-1), /(^| )-p( |$)|--print|--output-format|--max-turns/);
+	    assert.match(logged[2].stdin, /Reply with only: PONG/);
   } finally {
-    replay.cleanup();
+    fake.cleanup();
+    fakeTmux.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });
@@ -1977,10 +2166,7 @@ function gitInitSync(cwd) {
     ["config", "user.name", "Test User"],
     ["config", "user.email", "test@example.com"],
   ]) {
-    const result = spawnSync("git", args, { cwd });
-    if (result.status !== 0) {
-      throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
-    }
+    gitSync(cwd, args);
   }
 }
 
@@ -2041,6 +2227,32 @@ test("integration: review with no changes writes no_changes skipped decision", a
     ),
     `expected no_changes skipped decision for run-clean; got ${JSON.stringify(events)}`,
   );
+});
+
+test("integration: gemini no-changes review cleans up isolated cwd", async (t) => {
+  const context = createLedgerContext(t);
+  const fake = createFakeGeminiBin();
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-gemini-clean-review-"));
+  gitInitSync(context.cwd);
+  try {
+    const result = await runCompanion(
+      ["review", "--provider", "gemini", "--json", "--run-id", "run-clean-gemini"],
+      {
+        ...context,
+        env: cleanEnv({
+          ...context.env,
+          GEMINI_CLI_BIN: fake.bin,
+          TMPDIR: tmpRoot,
+        }),
+      },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    const leftovers = fs.readdirSync(tmpRoot).filter((entry) => entry.startsWith("polycli-review-gemini-cwd-"));
+    assert.deepEqual(leftovers, []);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
 });
 
 test("integration: debug runs returns summarized ledger runs", async (t) => {
