@@ -45,7 +45,9 @@ export const PROVIDER_VERSION_PROBES = {
     bin: process.env.MMX_CLI_BIN || process.env.MINIMAX_CLI_BIN || "mmx",
     versionArgs: ["--version"],
   },
+  cmd: { bin: process.env.CMD_CLI_BIN || "cmd", versionArgs: ["--version"] },
   agy: { bin: process.env.AGY_CLI_BIN || "agy", versionArgs: ["--version"] },
+  grok: { bin: process.env.GROK_CLI_BIN || "grok", versionArgs: ["--version"] },
 };
 
 // Extract a semver-ish token (`\d+\.\d+\.\d+`) from heterogeneous CLI output,

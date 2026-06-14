@@ -106,15 +106,17 @@ This keeps v1 small, testable, and publishable without pretending the provider m
 
 ## Provider Permission Defaults
 
-`ask` now defaults to conservative stateless / read-only / no-tool flags wherever the upstream CLI exposes them. `rescue` remains the agentic escape hatch and may use broader provider defaults. `review` and `adversarial-review` are locked to conservative / read-only / plan mode for every provider regardless — see the override table below.
+`ask` now defaults to conservative stateless / read-only / no-tool flags wherever the upstream CLI exposes them. Some upstream CLIs still expose only prompt-only or agentic session modes; those exceptions are explicit in the table below instead of being hidden behind fake flags. `rescue` remains the agentic escape hatch and may use broader provider defaults. `review` and `adversarial-review` are locked to conservative / read-only / plan mode where the provider exposes an enforceable mode; otherwise review is either prompt-only (`kimi`, `minimax`) or unsupported (`agy`).
 
 | Provider | Default flag in `ask` | Effective stance |
 |---|---|---|
-| `claude` | `--permission-mode plan --max-turns 1 --tools "" --mcp-config '{"mcpServers":{}}' --strict-mcp-config` | plan/no tools/no MCP |
+| `claude` | detached tmux TUI with `--permission-mode plan --tools "" --mcp-config '{"mcpServers":{}}' --strict-mcp-config`; no `-p`/`--max-turns` in default ask/review | plan/no tools/no MCP; returns `tmuxSession`/`attachCommand` and startup-only timing |
 | `gemini` | `--approval-mode plan --extensions "" --allowed-mcp-server-names __polycli_prompt_no_mcp__` | plan/no extensions/MCP |
 | `qwen` | `--approval-mode plan --max-session-turns 20` plus repeated `--exclude-tools ...` | bounded multi-turn/no tools; no forced one-turn cap |
 | `kimi` | none — `-p` one-shot rejects `--plan`/`--auto`/`--yolo` | non-interactive single-shot (kimi-code v0.6.0) |
 | `cmd` | `--permission-mode plan` | plan |
+| `agy` | `--dangerously-skip-permissions` for ask/rescue; `/review` rejected | agentic session mode; no enforceable non-interactive plan mode |
+| `grok` | `-p ... --output-format json --always-approve` for ask; review adds `--permission-mode plan` and disables always-approve | structured one-shot; plan review |
 | `copilot` | `--no-ask-user --excluded-tools <list>` without allow-all tool/path/url flags | programmatic but restricted |
 | `opencode` | `--agent plan` plus deny-permission config | plan/deny permissions |
 | `pi` | `--no-session --no-tools --no-extensions --no-skills --no-context-files` | stateless/no tools/context |

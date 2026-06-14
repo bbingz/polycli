@@ -91,10 +91,12 @@ export function splitRawArgumentString(raw) {
   let current = "";
   let quote = null;
   let escaping = false;
+  let tokenStarted = false;
 
   for (const character of raw) {
     if (escaping) {
       current += character;
+      tokenStarted = true;
       escaping = false;
       continue;
     }
@@ -113,24 +115,28 @@ export function splitRawArgumentString(raw) {
         quote = null;
       } else {
         current += character;
+        tokenStarted = true;
       }
       continue;
     }
 
     if (character === "'" || character === '"') {
       quote = character;
+      tokenStarted = true;
       continue;
     }
 
     if (/\s/.test(character)) {
-      if (current) {
+      if (tokenStarted) {
         tokens.push(current);
         current = "";
+        tokenStarted = false;
       }
       continue;
     }
 
     current += character;
+    tokenStarted = true;
   }
 
   if (escaping) {
@@ -140,7 +146,7 @@ export function splitRawArgumentString(raw) {
     throw new Error(`Unterminated ${quote} quote in raw argument string`);
   }
 
-  if (current) {
+  if (tokenStarted) {
     tokens.push(current);
   }
 

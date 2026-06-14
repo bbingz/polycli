@@ -4,7 +4,7 @@
 
 # polycli
 
-**One command surface across 9 AI coding CLIs, inside the host you already use.**
+**One command surface across 11 AI coding CLIs, inside the host you already use.**
 
 [![GitHub release](https://img.shields.io/github/v/release/bbingz/polycli?label=release&color=111827)](https://github.com/bbingz/polycli/releases)
 [![CI](https://github.com/bbingz/polycli/actions/workflows/ci.yml/badge.svg)](https://github.com/bbingz/polycli/actions/workflows/ci.yml)
@@ -29,16 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.19
+## Latest release: v0.6.20
 
-The latest patch adds upstream session-pollution control and provider-drift maintenance hardening (spec-driven, gated by two Codex review rounds):
+The latest patch ships the grok provider, the kimi-code v0.6.0 migration, and the deep-review hardening set:
 
-- New `polycli sessions [list | purge --confirm]` command cleans up the session/history files upstream CLIs leave under `$HOME`. Dry-run by default; deletion is driven only by ledger-recorded, re-validated realpaths — never a path guess or glob.
-- Run-ledger events now record the upstream `sessionId` + a verified `sessionArtifactPath`, so polycli-created sessions are auditable and purgeable.
-- `npm run check:fixture-freshness` flags fixtures pinned to a stale CLI version; `REVIEW_FLAG_EXPECTATIONS` is now the single source of review-flag truth (consistency-tested); `check:review-drift` is wired into the release gate.
-- No provider behavior, host command grammar, or timing schema changed.
+- Added `grok` (xAI Grok Build CLI) as the 11th provider across runtime, host adapters, skills, docs, and release validation.
+- Migrated the kimi adapter and guidance to kimi-code v0.6.0 session semantics (`--session` / `-C`) and structured `session.resume_hint` parsing.
+- Kept the Path B flat-adapter architecture intact while tightening review/deep-review hardening and bundle drift checks.
+- Utility packages stay on their independent v1.x cadence.
 
-See [`docs/release-notes-v0.6.19.md`](./docs/release-notes-v0.6.19.md).
+See [`docs/release-notes-v0.6.20.md`](./docs/release-notes-v0.6.20.md).
 
 ## Why polycli?
 
@@ -141,7 +141,7 @@ polycli health
 # OpenCode (tool call — call polycli_run with ["health","--json"])
 ```
 
-`health` runs an end-to-end probe against every provider with valid auth and reports which ones are alive in `healthyProviders`. After that, daily use is direct. In Codex, either describe the task directly or type `@`, choose Polycli, and ask it to run the companion command:
+`health` runs an end-to-end probe against every provider with valid auth and reports which ones are alive in `healthyProviders`. Claude is the exception: it uses `claude auth status --json` only and does not send a health prompt. After that, daily use is direct. In Codex, either describe the task directly or type `@`, choose Polycli, and ask it to run the companion command:
 
 ```text
 Choose Polycli with @, then ask it to run: ask --provider qwen "explain this stack trace ..."
@@ -173,7 +173,7 @@ All commands work identically across hosts:
 | Command | What it does |
 |---|---|
 | `setup` | Check provider CLI install + auth status (cheap; no model call) |
-| `health` | End-to-end short-prompt probe; returns `healthyProviders` and writes timing |
+| `health` | End-to-end short-prompt probe for providers except Claude; Claude uses auth-only status; returns `healthyProviders` and writes timing where applicable |
 | `ask` | One-shot prompt |
 | `review` | Code review against the current `git diff` |
 | `rescue` | Longer triage / analysis task |
@@ -206,6 +206,7 @@ Source of truth: [`packages/polycli-runtime/src/registry.js`](./packages/polycli
 Notes:
 
 - `cold` and `retry` are `unsupported` for every provider. Upstream CLIs lack a stable signal, and polycli refuses to fake them. `total` is always `measured`.
+- Claude `ask` and `review` run in detached tmux TUI mode by default to avoid the `claude -p` cost path. In that mode `ttft`, `gen`, and `tail` are reported as `unsupported`; `total` measures tmux startup/prompt submission only, and the response contains `tmuxSession` + `attachCommand`.
 - `minimax` uses official `mmx text chat --output json --non-interactive`; no session resume and no fine-grained streaming timing. `cmd` uses documented Command Code headless mode, where each invocation is a standalone session and stdout is the visible answer.
 - Only `qwen` declares `tool: true`. When no tool is invoked, `qwen` reports `missing` (observable but absent); the others report `unsupported` (capability-level not tracked). The two states are not interchangeable.
 

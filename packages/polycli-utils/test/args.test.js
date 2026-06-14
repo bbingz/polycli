@@ -26,6 +26,11 @@ test("splitRawArgumentString respects quotes and escapes", () => {
   assert.deepEqual(tokens, ["ask", "hello world", "two words", "plain value"]);
 });
 
+test("splitRawArgumentString preserves empty quoted arguments", () => {
+  const tokens = splitRawArgumentString(String.raw`cmd "" '' --flag="" value''`);
+  assert.deepEqual(tokens, ["cmd", "", "", "--flag=", "value"]);
+});
+
 test("parseArgs supports short value options concatenated to the flag", () => {
   const parsed = parseArgs(["-r123e4567-e89b-12d3-a456-426614174000"], {
     valueOptions: ["resume"],

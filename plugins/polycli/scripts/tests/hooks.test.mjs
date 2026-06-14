@@ -149,6 +149,40 @@ test("SessionEnd removes only running jobs from the ended session and preserves 
   });
 });
 
+test("SessionEnd does not try to terminate unsafe pid values", (t) => {
+  withPluginData(() => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
+    const kill = t.mock.method(process, "kill", () => {
+      throw new Error("process.kill should not be called for unsafe pid values");
+    });
+    try {
+      writeWorkspaceState(workspaceRoot, {
+        version: 1,
+        jobs: [
+          { jobId: "pa-one", sessionId: "cc-session-1", status: "running", pid: 1 },
+          { jobId: "pa-zero", sessionId: "cc-session-1", status: "running", pid: 0 },
+          { jobId: "pa-negative", sessionId: "cc-session-1", status: "running", pid: -42 },
+          { jobId: "pa-float", sessionId: "cc-session-1", status: "running", pid: 42.5 },
+        ],
+      });
+
+      handleLifecycleHook("SessionEnd", { cwd: workspaceRoot, session_id: "cc-session-1" });
+
+      assert.equal(kill.mock.callCount(), 0);
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test("SessionEnd state cleanup uses the locked state updater", () => {
+  const source = fs.readFileSync(lifecycleHookPath, "utf8");
+
+  assert.match(source, /\bupdateState\b/);
+  assert.doesNotMatch(source, /\bloadState\b/);
+  assert.doesNotMatch(source, /\bsaveState\b/);
+});
+
 test("parseStopReviewOutput scans all lines for a prose-prefixed BLOCK sentinel", () => {
   const result = parseStopReviewOutput("好的，这是审查：\nThe work is not done yet.\nBLOCK: tests were not run");
 

@@ -134,8 +134,9 @@ test("checkFixtureFreshness skips (not fails) when spawn errors non-ENOENT", () 
   assert.equal(report.stale.length, 0);
 });
 
-test("PROVIDER_VERSION_PROBES covers every fixture provider with a version arg", () => {
-  for (const provider of ["claude", "gemini", "qwen", "copilot", "opencode", "pi", "kimi", "minimax"]) {
+test("PROVIDER_VERSION_PROBES covers every runtime provider with a version arg", () => {
+  const providers = ["claude", "gemini", "qwen", "copilot", "opencode", "pi", "kimi", "minimax", "cmd", "agy", "grok"];
+  for (const provider of providers) {
     const probe = PROVIDER_VERSION_PROBES[provider];
     assert.ok(probe, `missing probe for ${provider}`);
     assert.ok(typeof probe.bin === "string" && probe.bin.length > 0, `${provider} bin`);

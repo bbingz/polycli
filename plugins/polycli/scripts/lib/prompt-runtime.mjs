@@ -63,8 +63,8 @@ export function buildPromptRuntimeOptions({
   if (kind === "ask" && provider === "claude") {
     return {
       ...runtimeOptions,
+      executionMode: "tmux-tui",
       permissionMode: "plan",
-      maxTurns: 1,
       extraArgs: mergeExtraArgs(runtimeOptions, [
         "--tools",
         "",

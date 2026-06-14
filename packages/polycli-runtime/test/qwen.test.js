@@ -350,6 +350,24 @@ process.exit(2);
   );
 });
 
+test("runQwenPrompt returns an explicit empty-output error on zero exit with no visible text", () => {
+  withFakeQwenBin(
+    `#!/usr/bin/env node
+process.exit(0);
+`,
+    ({ root, env }) => {
+      const result = runQwenPrompt({
+        prompt: "ping",
+        cwd: root,
+        env,
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.error, "qwen produced no visible text");
+    }
+  );
+});
+
 test("getQwenAuthStatus keeps loggedIn=true for transient probe failures", () => {
   const auth = getQwenAuthStatus(process.cwd(), {
     envBuilder() {

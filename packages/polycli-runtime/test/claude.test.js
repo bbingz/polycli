@@ -8,6 +8,7 @@ import path from "node:path";
 import { loadStreamFixture } from "./helpers/fixture-replay.mjs";
 import {
   buildClaudeInvocation,
+  buildClaudeTuiInvocation,
   extractClaudeText,
   getClaudeAuthStatus,
   parseClaudeJsonResult,
@@ -25,6 +26,28 @@ function withFakeClaudeBin(source, fn) {
     return fn({ root, bin });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function withFakeBin(name, source, fn) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `polycli-${name}-sync-`));
+  const bin = path.join(root, name);
+  fs.writeFileSync(bin, source, { mode: 0o755 });
+
+  let deferCleanup = false;
+  try {
+    const result = fn({ root, bin });
+    if (result && typeof result.finally === "function") {
+      deferCleanup = true;
+      return result.finally(() => {
+        fs.rmSync(root, { recursive: true, force: true });
+      });
+    }
+    return result;
+  } finally {
+    if (!deferCleanup) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }
 }
 
@@ -71,6 +94,48 @@ test("buildClaudeInvocation enables verbose output for stream-json mode", () => 
     "--max-turns",
     "10",
   ]);
+});
+
+test("buildClaudeTuiInvocation starts an interactive claude session through tmux", () => {
+  const invocation = buildClaudeTuiInvocation({
+    prompt: "review this",
+    model: "claude-sonnet-4-20250514",
+    permissionMode: "plan",
+    maxTurns: 1,
+    resumeSessionId: "123e4567-e89b-12d3-a456-426614174000",
+    extraArgs: ["--tools", "", "--mcp-config", "{\"mcpServers\":{}}", "--strict-mcp-config"],
+    bin: "/opt/bin/claude",
+    tmuxBin: "/opt/bin/tmux",
+    tmuxSessionName: "polycli-claude-test",
+    cwd: "/repo",
+    env: {
+      ANTHROPIC_API_KEY: "test-key",
+      CLAUDE_CONFIG_DIR: "/tmp/claude",
+      POLYCLI_INTERNAL_SECRET: "do-not-forward",
+    },
+  });
+
+  assert.equal(invocation.bin, "/opt/bin/tmux");
+  assert.deepEqual(invocation.startArgs, [
+    "new-session",
+    "-d",
+    "-s",
+    "polycli-claude-test",
+    "-e",
+    "ANTHROPIC_API_KEY=test-key",
+    "-e",
+    "CLAUDE_CONFIG_DIR=/tmp/claude",
+    "-c",
+    "/repo",
+    "/opt/bin/claude --permission-mode plan --model claude-sonnet-4-20250514 --resume 123e4567-e89b-12d3-a456-426614174000 --tools '' --mcp-config '{\"mcpServers\":{}}' --strict-mcp-config",
+  ]);
+  assert.deepEqual(invocation.loadBufferArgs, ["load-buffer", "-b", "polycli-claude-test-prompt", "-"]);
+  assert.deepEqual(invocation.pasteBufferArgs, ["paste-buffer", "-d", "-b", "polycli-claude-test-prompt", "-t", "polycli-claude-test"]);
+  assert.deepEqual(invocation.sendEnterArgs, ["send-keys", "-t", "polycli-claude-test", "Enter"]);
+  assert.equal(invocation.input, "review this");
+  assert.equal(invocation.attachCommand, "tmux attach -t polycli-claude-test");
+  assert.doesNotMatch(invocation.startArgs.at(-1), /(^| )-p( |$)|--print|--output-format|--max-turns/);
+  assert.equal(invocation.startArgs.includes("POLYCLI_INTERNAL_SECRET=do-not-forward"), false);
 });
 
 test("parseClaudeStreamText collects session id, result metadata, and assistant text", () => {
@@ -288,6 +353,282 @@ test("runClaudePromptStreaming treats a successful final result before timeout a
   assert.equal(result.sessionId, "claude-stream-timeout");
 });
 
+test("runClaudePromptStreaming passes caller env through print mode", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+  const env = { PATH: "/bin", POLYCLI_SENTINEL: "present" };
+  let observedEnv = null;
+
+  const result = await runClaudePromptStreaming({
+    prompt: "ping",
+    env,
+    spawnImpl(_bin, _args, options) {
+      observedEnv = options.env;
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"content_block_delta","delta":{"type":"text_delta","text":"pong"}}\n');
+        child.stdout.emit("data", '{"type":"result","subtype":"success","is_error":false,"result":"pong"}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(observedEnv, env);
+});
+
+test("runClaudePromptStreaming returns a structured failure when tmux cannot start", async () => {
+  await withFakeBin(
+    "tmux",
+    `#!/usr/bin/env node
+process.stderr.write("session failed\\n");
+process.exit(2);
+`,
+    async ({ root, bin }) => {
+      const result = await runClaudePromptStreaming({
+        prompt: "ping",
+        cwd: root,
+        bin: "/usr/bin/false",
+        tmuxBin: bin,
+        tmuxSessionName: "polycli-claude-fail",
+        executionMode: "tmux-tui",
+      });
+
+      assert.equal(result.ok, false);
+      assert.match(result.error, /tmux new-session exited with code 2: session failed/);
+    }
+  );
+});
+
+test("runClaudePromptStreaming submits folded Claude paste markers", async () => {
+  await withFakeBin(
+    "tmux",
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+if (process.env.TMUX_ARGV_LOG) {
+  fs.appendFileSync(process.env.TMUX_ARGV_LOG, JSON.stringify({ argv: args, stdin }) + "\\n");
+}
+if (args[0] === "capture-pane") {
+  process.stdout.write("Claude Code\\npaste again to expand\\n");
+}
+process.exit(0);
+`,
+    async ({ root, bin }) => {
+      const logFile = path.join(root, "tmux.jsonl");
+      const result = await runClaudePromptStreaming({
+        prompt: "review this",
+        cwd: root,
+        bin: "/usr/bin/false",
+        tmuxBin: bin,
+        tmuxSessionName: "polycli-claude-folded-paste",
+        executionMode: "tmux-tui",
+        timeout: 2_000,
+        env: { ...process.env, TMUX_ARGV_LOG: logFile },
+      });
+
+      const commands = fs.readFileSync(logFile, "utf8")
+        .trim()
+        .split(/\n/)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      assert.equal(result.ok, true);
+      assert.equal(result.detached, true);
+      assert.equal(result.responseKind, "tmux_tui_session_started");
+      assert.equal(result.timingMeta.tmuxDetached, true);
+      assert.equal(result.timingMeta.timingScope, "tmux_startup");
+      assert.equal(result.timingMeta.llmCompletionObserved, false);
+      assert.match(result.warnings.join("\n"), /detached interactive Claude TUI/i);
+      assert.equal(commands.at(-1).argv[0], "send-keys");
+      assert.match(commands.find((entry) => entry.argv[0] === "load-buffer").stdin, /review this/);
+    }
+  );
+});
+
+test("runClaudePromptStreaming kills tmux session when signalled during TUI orchestration", async () => {
+  await withFakeBin(
+    "tmux",
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (process.env.TMUX_ARGV_LOG) {
+  fs.appendFileSync(process.env.TMUX_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
+}
+if (args[0] === "capture-pane") {
+  process.stdout.write("Claude Code\\n");
+}
+process.exit(0);
+`,
+    async ({ root, bin }) => {
+      const logFile = path.join(root, "tmux.jsonl");
+      class ImmediateSigtermEmitter extends EventEmitter {
+        once(event, listener) {
+          super.once(event, listener);
+          if (event === "SIGTERM") {
+            listener();
+          }
+          return this;
+        }
+      }
+
+      const result = await runClaudePromptStreaming({
+        prompt: "ping",
+        cwd: root,
+        bin: "/usr/bin/false",
+        tmuxBin: bin,
+        tmuxSessionName: "polycli-claude-signal",
+        executionMode: "tmux-tui",
+        timeout: 1_000,
+        env: { ...process.env, TMUX_ARGV_LOG: logFile },
+        signalEmitter: new ImmediateSigtermEmitter(),
+      });
+
+      const commands = fs.readFileSync(logFile, "utf8")
+        .trim()
+        .split(/\n/)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line).argv);
+      assert.equal(result.ok, false);
+      assert.match(result.error, /interrupted by SIGTERM/);
+      assert.deepEqual(commands[0].slice(0, 4), ["new-session", "-d", "-s", "polycli-claude-signal"]);
+      assert.match(commands[0].at(-1), /\/usr\/bin\/false/);
+      assert.deepEqual(commands[1], ["kill-session", "-t", "polycli-claude-signal"]);
+    }
+  );
+});
+
+test("runClaudePromptStreaming kills tmux session when the TUI never becomes ready", async () => {
+  await withFakeBin(
+    "tmux",
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (process.env.TMUX_ARGV_LOG) {
+  fs.appendFileSync(process.env.TMUX_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
+}
+if (args[0] === "capture-pane") {
+  process.stdout.write("not ready\\n");
+}
+process.exit(0);
+`,
+    async ({ root, bin }) => {
+      const logFile = path.join(root, "tmux.jsonl");
+      const result = await runClaudePromptStreaming({
+        prompt: "ping",
+        cwd: root,
+        bin: "/usr/bin/false",
+        tmuxBin: bin,
+        tmuxSessionName: "polycli-claude-not-ready",
+        executionMode: "tmux-tui",
+        timeout: 1_000,
+        env: { ...process.env, TMUX_ARGV_LOG: logFile },
+      });
+
+      const commands = fs.readFileSync(logFile, "utf8")
+        .trim()
+        .split(/\n/)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line).argv[0]);
+      assert.equal(result.ok, false);
+      assert.match(result.error, /capture-pane/);
+      assert.equal(commands.includes("kill-session"), true);
+    }
+  );
+});
+
+test("runClaudePromptStreaming kills tmux session when the pasted prompt never appears", async () => {
+  await withFakeBin(
+    "tmux",
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (process.env.TMUX_ARGV_LOG) {
+  fs.appendFileSync(process.env.TMUX_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
+}
+if (args[0] === "capture-pane") {
+  const stateFile = process.env.TMUX_STATE_FILE;
+  const count = stateFile && fs.existsSync(stateFile) ? Number.parseInt(fs.readFileSync(stateFile, "utf8"), 10) : 0;
+  const next = Number.isFinite(count) ? count + 1 : 1;
+  if (stateFile) fs.writeFileSync(stateFile, String(next));
+  process.stdout.write(next === 1 ? "Claude Code\\n" : "Claude Code\\nno pasted prompt\\n");
+}
+process.exit(0);
+`,
+    async ({ root, bin }) => {
+      const logFile = path.join(root, "tmux.jsonl");
+      const stateFile = path.join(root, "state");
+      const result = await runClaudePromptStreaming({
+        prompt: "ping",
+        cwd: root,
+        bin: "/usr/bin/false",
+        tmuxBin: bin,
+        tmuxSessionName: "polycli-claude-no-paste",
+        executionMode: "tmux-tui",
+        timeout: 1_000,
+        env: { ...process.env, TMUX_ARGV_LOG: logFile, TMUX_STATE_FILE: stateFile },
+      });
+
+      const commands = fs.readFileSync(logFile, "utf8")
+        .trim()
+        .split(/\n/)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line).argv[0]);
+      assert.equal(result.ok, false);
+      assert.match(result.error, /capture-pane/);
+      assert.deepEqual(commands.slice(0, 4), ["new-session", "capture-pane", "load-buffer", "paste-buffer"]);
+      assert.equal(commands.at(-1), "kill-session");
+    }
+  );
+});
+
+test("runClaudePromptStreaming deletes the tmux prompt buffer when paste fails", async () => {
+  await withFakeBin(
+    "tmux",
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (process.env.TMUX_ARGV_LOG) {
+  fs.appendFileSync(process.env.TMUX_ARGV_LOG, JSON.stringify({ argv: args }) + "\\n");
+}
+if (args[0] === "capture-pane") {
+  process.stdout.write("Claude Code\\n");
+}
+if (args[0] === "paste-buffer") {
+  process.stderr.write("paste failed\\n");
+  process.exit(2);
+}
+process.exit(0);
+`,
+    async ({ root, bin }) => {
+      const logFile = path.join(root, "tmux.jsonl");
+      const result = await runClaudePromptStreaming({
+        prompt: "ping",
+        cwd: root,
+        bin: "/usr/bin/false",
+        tmuxBin: bin,
+        tmuxSessionName: "polycli-claude-paste-fails",
+        executionMode: "tmux-tui",
+        timeout: 1_000,
+        env: { ...process.env, TMUX_ARGV_LOG: logFile },
+      });
+
+      const commands = fs.readFileSync(logFile, "utf8")
+        .trim()
+        .split(/\n/)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line).argv);
+      assert.equal(result.ok, false);
+      assert.match(result.error, /paste-buffer exited with code 2/);
+      assert.deepEqual(commands.at(-2), ["delete-buffer", "-b", "polycli-claude-paste-fails-prompt"]);
+      assert.deepEqual(commands.at(-1), ["kill-session", "-t", "polycli-claude-paste-fails"]);
+    }
+  );
+});
+
 test("runClaudePromptStreaming still fails timeout recovery when no visible text exists", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -329,7 +670,45 @@ test("parseClaudeStreamText replays a captured real cli fixture", () => {
 
 test("getClaudeAuthStatus keeps loggedIn=true for a transient/timeout probe failure", () => {
   const auth = getClaudeAuthStatus(process.cwd(), {
-    promptRunner: () => ({ ok: false, error: "claude timed out after 30s" }),
+    authRunner: () => ({ status: 1, stdout: "", stderr: "claude timed out after 30s", error: null }),
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /inconclusive/i);
+});
+
+test("getClaudeAuthStatus keeps loggedIn=true when auth status times out", () => {
+  const timeout = new Error("spawnSync claude ETIMEDOUT");
+  timeout.code = "ETIMEDOUT";
+  const auth = getClaudeAuthStatus(process.cwd(), {
+    authRunner: () => ({ status: null, stdout: "", stderr: "", error: timeout }),
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /inconclusive/i);
+});
+
+test("getClaudeAuthStatus reads legacy non-json authenticated output", () => {
+  const auth = getClaudeAuthStatus(process.cwd(), {
+    authRunner: () => ({ status: 0, stdout: "authenticated\n", stderr: "", error: null }),
+  });
+
+  assert.equal(auth.loggedIn, true);
+  assert.match(auth.detail, /authenticated/i);
+});
+
+test("getClaudeAuthStatus reads legacy non-json logged-out output", () => {
+  const auth = getClaudeAuthStatus(process.cwd(), {
+    authRunner: () => ({ status: 0, stdout: "not authenticated\n", stderr: "", error: null }),
+  });
+
+  assert.equal(auth.loggedIn, false);
+  assert.match(auth.detail, /not authenticated/i);
+});
+
+test("getClaudeAuthStatus treats unknown non-json success output as inconclusive", () => {
+  const auth = getClaudeAuthStatus(process.cwd(), {
+    authRunner: () => ({ status: 0, stdout: "Claude Code auth status unavailable\n", stderr: "", error: null }),
   });
 
   assert.equal(auth.loggedIn, true);
@@ -338,7 +717,7 @@ test("getClaudeAuthStatus keeps loggedIn=true for a transient/timeout probe fail
 
 test("getClaudeAuthStatus reports loggedIn=false only on an explicit auth error", () => {
   const auth = getClaudeAuthStatus(process.cwd(), {
-    promptRunner: () => ({ ok: false, error: "401 Unauthorized: invalid api key" }),
+    authRunner: () => ({ status: 1, stdout: "", stderr: "401 Unauthorized: invalid api key", error: null }),
   });
 
   assert.equal(auth.loggedIn, false);

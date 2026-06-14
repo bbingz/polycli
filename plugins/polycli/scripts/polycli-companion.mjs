@@ -825,6 +825,26 @@ async function probeProviderHealth({
 
   if (!inspection.available) {
     report.probe.error = inspection.availabilityDetail || "provider CLI is unavailable";
+  } else if (provider === "claude") {
+    try {
+      const auth = await Promise.resolve(getProviderRuntime(provider).getAuthStatus(process.cwd()));
+      report.loggedIn = auth.loggedIn ?? false;
+      report.authDetail = auth.detail ?? auth.reason ?? null;
+      report.model = auth.model ?? report.model;
+      report.probe = {
+        ok: Boolean(auth.loggedIn),
+        kind: "auth_status",
+        authOnly: true,
+        responseMatched: Boolean(auth.loggedIn),
+        expected: "authenticated",
+        responsePreview: auth.detail ?? null,
+        error: auth.loggedIn ? null : (auth.detail ?? "claude auth status did not report authenticated"),
+        timing: null,
+      };
+      report.ok = Boolean(auth.loggedIn);
+    } catch (error) {
+      report.probe.error = error.message;
+    }
   } else {
     try {
       const result = await runProviderPromptStreaming({
@@ -1100,28 +1120,32 @@ function buildReviewExecution(rawArgs, { adversarial }) {
 async function runReviewCommand(rawArgs, { adversarial }) {
   const { options, provider, reviewContext, execution } = buildReviewExecution(rawArgs, { adversarial });
   if (!reviewContext.diff.trim()) {
-    const warnings = Array.isArray(reviewContext.warnings) && reviewContext.warnings.length > 0
-      ? reviewContext.warnings
-      : undefined;
-    const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
-    await recordRunEvent(workspaceRoot, {
-      command: execution.kind,
-      kind: execution.kind,
-      provider: null,
-      phase: "provider_decision",
-      status: "skipped",
-      reason: "no_changes",
-    });
-    output(
-      options.json
-        ? { ok: true, provider, verdict: "no_changes", scope: reviewContext.scope, warnings }
-        : [
-          ...(warnings ? [`Note: ${warnings.join(" | ")}`] : []),
-          "No changes to review.",
-        ].join("\n\n"),
-      options.json
-    );
-    return;
+    try {
+      const warnings = Array.isArray(reviewContext.warnings) && reviewContext.warnings.length > 0
+        ? reviewContext.warnings
+        : undefined;
+      const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
+      await recordRunEvent(workspaceRoot, {
+        command: execution.kind,
+        kind: execution.kind,
+        provider: null,
+        phase: "provider_decision",
+        status: "skipped",
+        reason: "no_changes",
+      });
+      output(
+        options.json
+          ? { ok: true, provider, verdict: "no_changes", scope: reviewContext.scope, warnings }
+          : [
+            ...(warnings ? [`Note: ${warnings.join(" | ")}`] : []),
+            "No changes to review.",
+          ].join("\n\n"),
+        options.json
+      );
+      return;
+    } finally {
+      cleanupRuntimeOptions(execution.runtimeOptions);
+    }
   }
 
   const { background } = parseExecutionMode(options);

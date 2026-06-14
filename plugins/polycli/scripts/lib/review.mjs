@@ -112,8 +112,8 @@ const REVIEW_HARD_CONSTRAINTS = {
   },
   claude() {
     return {
+      executionMode: "tmux-tui",
       permissionMode: "plan",
-      maxTurns: 1,
       extraArgs: ["--tools", "", "--mcp-config", "{\"mcpServers\":{}}", "--strict-mcp-config"],
     };
   },

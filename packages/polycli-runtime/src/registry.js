@@ -244,21 +244,36 @@ function getTimingSupport(provider) {
   };
 }
 
+function getTimingSupportForRun(provider, options = {}) {
+  const support = getTimingSupport(provider);
+  if (provider === "claude" && options.executionMode === "tmux-tui") {
+    return { ...support, ttft: false, gen: false, tail: false };
+  }
+  return support;
+}
+
 function inferRuntimePersistence(provider, result) {
   const support = getTimingSupport(provider);
   return support.runtimePersistence;
 }
 
-function buildTimingMeta(provider, result, meta) {
-  const support = getTimingSupport(provider);
-  if (support.runtimePersistence !== "session" || result?.sessionId) {
-    return meta;
+function buildTimingMeta(provider, result, meta, support = getTimingSupport(provider)) {
+  const merged = {
+    ...(meta || {}),
+    ...(result?.timingMeta || {}),
+  };
+
+  if (provider === "claude" && result?.detached === true) {
+    merged.tmuxDetached = true;
+    merged.timingScope = merged.timingScope || "tmux_startup";
+    merged.llmCompletionObserved = false;
   }
 
-  return {
-    ...(meta || {}),
-    sessionIdMissing: true,
-  };
+  if (support.runtimePersistence === "session" && !result?.sessionId) {
+    merged.sessionIdMissing = true;
+  }
+
+  return Object.keys(merged).length > 0 ? merged : null;
 }
 
 function trackQwenToolTiming(event, timestamp, state) {
@@ -361,7 +376,7 @@ export async function runProviderPromptStreaming({
   ...options
 }) {
   const startedAt = nowMs();
-  const timingSupport = getTimingSupport(provider);
+  const timingSupport = getTimingSupportForRun(provider, options);
   const selectedRuntime = runtime ?? getProviderRuntime(provider);
   let firstTextAt = null;
   let lastTextAt = null;
@@ -403,6 +418,6 @@ export async function runProviderPromptStreaming({
     tailMs: lastTextAt == null ? null : Math.max(finishedAt - lastTextAt, 0),
     toolMs: toolState.toolMs,
     supportedMetrics: timingSupport,
-    meta: buildTimingMeta(provider, result, meta),
+    meta: buildTimingMeta(provider, result, meta, timingSupport),
   });
 }

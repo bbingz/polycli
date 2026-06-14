@@ -4,10 +4,11 @@
 
 # polycli
 
-**在你已经在用的 AI host 里，用一套命令驱动 9 个 AI coding CLI。**
+**在你已经在用的 AI host 里，用一套命令驱动 11 个 AI coding CLI。**
 
 [![GitHub release](https://img.shields.io/github/v/release/bbingz/polycli?label=release&color=111827)](https://github.com/bbingz/polycli/releases)
 [![CI](https://github.com/bbingz/polycli/actions/workflows/ci.yml/badge.svg)](https://github.com/bbingz/polycli/actions/workflows/ci.yml)
+[![npm: polycli](https://img.shields.io/npm/v/@bbingz/polycli?label=%40bbingz%2Fpolycli&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli)
 [![npm: polycli-opencode](https://img.shields.io/npm/v/@bbingz/polycli-opencode?label=%40bbingz%2Fpolycli-opencode&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-opencode)
 [![npm: polycli-utils](https://img.shields.io/npm/v/@bbingz/polycli-utils?label=%40bbingz%2Fpolycli-utils&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-utils)
 [![npm: polycli-timing](https://img.shields.io/npm/v/@bbingz/polycli-timing?label=%40bbingz%2Fpolycli-timing&color=cb3837)](https://www.npmjs.com/package/@bbingz/polycli-timing)
@@ -22,7 +23,7 @@
 
 ## polycli 是什么？
 
-`polycli` 让你在 Claude Code、Codex、GitHub Copilot CLI 或 OpenCode 中，用同一套命令（`health`、`ask`、`review`、`rescue`、`timing`、`debug`，以及后台作业管控和终端 inspector）驱动 9 个 AI coding CLI：**`claude`**、**`gemini`**、**`kimi`**、**`qwen`**、**`copilot`**、**`opencode`**、**`pi`**、**`cmd`**（Command Code）和 **`mini-agent`**（MiniMax）。
+`polycli` 让你在 Claude Code、Codex、GitHub Copilot CLI 或 OpenCode 中，用同一套命令（`health`、`ask`、`review`、`rescue`、`timing`、`debug`，以及后台作业管控和终端 inspector）驱动 11 个 AI coding CLI：**`claude`**、**`gemini`**、**`kimi`**、**`qwen`**、**`copilot`**、**`opencode`**、**`pi`**、**`cmd`**（Command Code）、**`agy`**（Antigravity）、**`grok`**（xAI Grok）和 **`mmx-cli`**（MiniMax）。
 
 这是一个 **utility-only 的 Path B monorepo**：不假装能抹平 provider 之间的差异，也不引入 runtime 基类。它把官方上游 CLI 作为子进程组合起来，统一命令面，并通过四态 timing schema 如实暴露能力差异。
 
@@ -39,7 +40,7 @@
 
 | Host（polycli 安装在哪里） | Provider（polycli 能调什么） |
 |---|---|
-| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `mini-agent` |
+| Claude Code · Codex · GitHub Copilot CLI · OpenCode | `claude` · `copilot` · `gemini` · `kimi` · `qwen` · `opencode` · `pi` · `cmd` · `agy` · `grok` · `minimax` (`mmx-cli`) |
 
 各 provider 支持的能力详见 [Capability matrix](#capability-matrix)。
 
@@ -95,7 +96,7 @@ polycli health
 polycli health
 ```
 
-`health` 会对所有已认证的 provider 跑一次端到端探针，并把存活的列在 `healthyProviders` 里。之后日常使用就直接调：
+`health` 会对已认证的 provider 跑探针，并把存活的列在 `healthyProviders` 里。Claude 是例外：它只调用 `claude auth status --json`，不会发送健康检查 prompt。之后日常使用就直接调：
 
 ```text
 Choose Polycli with @, then ask it to run: ask --provider qwen "解释这个 stack trace ..."
@@ -112,7 +113,7 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 | 命令 | 作用 |
 |---|---|
 | `setup` | 检查 provider CLI 是否安装、是否登录（不发模型请求，便宜） |
-| `health` | 端到端短 prompt 探针，返回 `healthyProviders` 并写入 timing |
+| `health` | 除 Claude 外的端到端短 prompt 探针；Claude 使用 auth-only status；返回 `healthyProviders` 并在适用时写入 timing |
 | `ask` | 单次提问 |
 | `review` | 基于当前 `git diff` 做代码审查 |
 | `rescue` | 较长的排障 / 分析任务 |
@@ -135,15 +136,18 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 | `gemini` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `kimi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `qwen` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `mini-agent` | ✓ | — | — | — | — | — | — |
+| `minimax` (`mmx-cli`) | ✓ | — | ✓ | — | — | — | — |
 | `opencode` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `pi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | `cmd` | ✓ | — | — | ✓ | ✓ | ✓ | — |
+| `agy` | ✓ | ✓ | — | ✓ | ✓ | ✓ | — |
+| `grok` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 
 说明：
 
 - `cold` 和 `retry` 对所有 provider 都是 `unsupported`：上游 CLI 没有稳定信号，polycli 拒绝伪造。`total` 永远是 `measured`。
-- `mini-agent` 走日志回放协议，不支持 session resume、不支持结构化输出、不支持细粒度 streaming timing。`cmd` 走 Command Code 官方 headless 模式，每次调用都是 standalone session，stdout 就是可见答案。
+- `claude` 的 `ask` / `review` 默认走 detached tmux TUI，用来避开 `claude -p` 的按量路径。该模式下 `ttft` / `gen` / `tail` 会报 `unsupported`；`total` 只测 tmux 启动和 prompt 提交，响应里会包含 `tmuxSession` + `attachCommand`。
+- `minimax` 走 `mmx-cli` 非交互 JSON 调用，不支持 session resume、不支持细粒度 streaming timing。`cmd` 走 Command Code 官方 headless 模式，每次调用都是 standalone session，stdout 就是可见答案。`agy` 走 Antigravity session 模式但输出是纯文本；`grok` 走 xAI Grok Build CLI。
 - 只有 `qwen` 声明 `tool: true`。当 `qwen` 没触发 tool 调用时报 `missing`（可观测但本次未发生），其他 provider 报 `unsupported`（能力上不跟踪）。两个状态语义不同，不要合并。
 
 ## Timing 语义
@@ -163,6 +167,7 @@ polycli 的 timing 契约统一的是**状态表达**，不是数值。每个指
 
 - `runtimePersistence` —— `ephemeral | session | daemon`
 - `measurementScope` —— `request | turn | job`
+- outcome diagnostics —— `outcome`, `exitCode`, `terminationReason`, `responseMatched`, and `errorCode`
 
 ## Packages
 

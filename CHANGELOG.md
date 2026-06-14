@@ -6,9 +6,32 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-15 — Codex — Qwen audit checklist remediation
+
+- Consolidated the Qwen third-party review batch into `docs/audit/third-party-review-followup-2026-06-15.md`, then verified all 11 claims with independent subagents against the current worktree before editing. All 11 were confirmed still-present before remediation.
+- Fixed the three behavior/security issues with regressions: `writeFileAtomicSync` now removes its temp file on failed rename/write paths; no-diff review cleanup now runs in a `finally` so Gemini isolated tempdirs are removed; unsafe pid values (`<=1` / non-integers) are rejected before process-group termination.
+- Added the missing Claude health logged-out integration coverage by making the fake Claude auth fixture emit `loggedIn:false` via env, and asserting the companion reports Claude unhealthy with a populated probe error.
+- Closed the docs/parity findings: plugin README lists `debug` / `sessions` and terminal TUI ownership; root and translated READMEs describe Claude health as auth-only, add the terminal package badge, outcome diagnostics, and `minimax` (`mmx-cli`) alias; timing/runtime package READMEs document v1 `cold`/`retry` and `REVIEW_FLAG_EXPECTATIONS`.
+- Verification: focused regressions pass; `npm test` exit 0 (508/508); `npm run release:check` exit 0 including bundle, fixture, manifest, host-map, Codex adapter, review-drift, Claude plugin validation, and npm pack dry-runs.
+
+## 2026-06-15 — Codex — multi-review adjudication follow-up
+
+- Adjudicated the Minimax/Kimi/MiMo review batch against the current source after the Claude tmux TUI remediation. Kept the user-requested Claude tmux TUI default instead of reverting `ask`/`review` to `claude -p`; treated "restore synchronous LLM answer" findings as a product-semantics conflict, not a fix to apply.
+- Fixed two confirmed issues: Claude legacy `auth status` non-JSON success output is now parsed or marked inconclusive instead of treated as logout, and `session-lifecycle-hook.mjs` now removes session jobs through locked `updateState` rather than naked load/save.
+- Closed release-safety/doc drift found in the review batch: fixture freshness probes now cover the 11-provider runtime surface (`cmd`, `agy`, `grok` included); README capability notes, `docs/provider-paths.md`, `docs/polycli-v1-public-surface.md`, `CLAUDE.md`, and `docs/roadmap.md` describe Claude tmux TUI startup-only timing and the `tmuxSession`/`attachCommand` response shape.
+- Added draft `docs/release-notes-v0.6.21.md` for the current unreleased patch rather than rewriting the already-published v0.6.20 notes.
+
+## 2026-06-14 — Codex — Claude tmux TUI review remediation
+
+- Adjudicated the Claude/DeepSeek review findings against the current code and the user requirement that Claude subagent calls avoid the upcoming `claude -p` pay-as-you-go path. Confirmed the ask/review semantic drift, timing ambiguity, missing signal cleanup, tmux environment propagation gap, and auth-only health ambiguity; intentionally did **not** revert Claude ask/review defaults to `-p`.
+- Hardened Claude tmux TUI mode: `tmux new-session` now receives an explicit allowlist of Claude/Anthropic/proxy/cert env vars via `-e`; SIGINT/SIGTERM during orchestration kill the created tmux session before process shutdown; missing tmux gets a direct install/config error; successful tmux launches return `detached:true`, `responseKind:"tmux_tui_session_started"`, `warnings`, and `timingMeta` that says timing covers only `tmux_startup` and `llmCompletionObserved:false`.
+- Runtime timing now merges provider `timingMeta` and uses the run-level timing support for Claude tmux TUI, so `ttft/gen/tail` stay `unsupported`, `total` remains schema-valid `measured`, and the record explicitly marks `tmuxDetached:true` / startup-only timing. Claude health remains no-model-call/auth-only by design and now reports `probe.kind:"auth_status"` plus `authOnly:true` instead of looking like a sentinel LLM probe.
+- Tests added/updated for tmux env propagation, detached payload semantics, startup-only timing metadata, signal cleanup, Claude health auth-only reporting, and companion ask/review integration. Bundles regenerated for all host surfaces.
+- Verification: `npm test` exit 0 (500/500); `node --test packages/polycli-runtime/test/claude.test.js`; `node --test packages/polycli-runtime/test/registry.test.js`; `node --test plugins/polycli/scripts/tests/integration.test.mjs`; `npm run validate:bundles`; `npm run validate:manifests`; `npm run validate:host-map`.
+
 ## 2026-06-02 — Claude — repo cleanup: removed stale R8 worktrees + `release/v0.6.19` branch
 
-- After the v0.6.20 release, deleted the merged `release/v0.6.19` branch and the 3 abandoned `worktree-agent-*` git worktrees + their branches (all local-only — none on origin). Verified safe first: each branch had 0 commits not in `main` (so `git branch -d` succeeded, git-confirming they were merged); the worktrees' only uncommitted content was an identical, obsolete 2026-04-24 path-rewrite (`/home/user/…`→`/Users/bing/…`) on a snapshot ~41k lines behind `main`, locked by a dead pid (96484).
+- After the v0.6.20 release, deleted the merged `release/v0.6.19` branch and the 3 abandoned `worktree-agent-*` git worktrees + their branches (all local-only — none on origin). Verified safe first: each branch had 0 commits not in `main` (so `git branch -d` succeeded, git-confirming they were merged); the worktrees' only uncommitted content was an identical, obsolete 2026-04-24 path-rewrite (`/home/user/…`→`<local-home>/…`) on a snapshot ~41k lines behind `main`, locked by a dead pid (96484).
 - The single (identical across all 3) staged diff was saved to `/tmp/r8-worktree-staged-pathrewrite.patch` as insurance, but applying it is NOT advised: active files (README/docs) no longer carry those paths, and the remaining `/home/user/` references on `main` are historical records (CHANGELOG, `docs/archive/*`, `release-notes-v0.6.1`) that should not be rewritten.
 - Repo now has a single `main` branch, synced with origin, at v0.6.20.
 

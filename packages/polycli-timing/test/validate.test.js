@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { validateTimingRecord } from "../src/validate.js";
+
+const schemaPath = fileURLToPath(new URL("../timing.schema.json", import.meta.url));
 
 test("validateTimingRecord accepts capability-aware metric statuses", () => {
   const result = validateTimingRecord({
@@ -91,4 +95,29 @@ test("validateTimingRecord rejects negative metric milliseconds", () => {
 
   assert.equal(result.ok, false);
   assert.match(result.errors.join("\n"), /metrics\.ttft\.ms must be > 0/);
+});
+
+test("timing JSON schema mirrors validator status/ms and total contracts", () => {
+  const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
+  const metricBranches = schema.$defs.metric.oneOf;
+  const totalBranches = schema.$defs.totalMetric.oneOf;
+
+  assert.deepEqual(
+    metricBranches.map((branch) => branch.properties.status.const),
+    ["measured", "zero", "missing", "unsupported"]
+  );
+  assert.deepEqual(
+    metricBranches.map((branch) => branch.properties.ms),
+    [
+      { type: "number", exclusiveMinimum: 0 },
+      { const: 0 },
+      { type: "null" },
+      { type: "null" },
+    ]
+  );
+  assert.deepEqual(
+    totalBranches.map((branch) => branch.properties.status.const),
+    ["measured", "zero"]
+  );
+  assert.equal(schema.properties.metrics.properties.total.$ref, "#/$defs/totalMetric");
 });
