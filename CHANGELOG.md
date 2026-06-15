@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-15 — Codex — Claude workflow orchestration design
+
+- Researched the current Claude Code Dynamic Workflow surface, Codex xhigh planning options, and local Claude/Qwen/Minimax/Kimi/MiMo workflow run artifacts to choose an implementation path for multi-level subagent workflows.
+- Added `docs/superpowers/specs/2026-06-15-claude-workflow-orchestration-design.md`. The design keeps Codex xhigh as a planner/compiler for workflow JS, uses Claude Code Dynamic Workflows as the actual subagent runtime, and launches Claude through the existing tmux TUI path so the default does not fall back to `claude -p` or Agent SDK credit usage.
+- Scoped polycli to a thin control/observability surface (`workflow plan/start/list/status/result`) instead of a new agent framework. Workflow artifact readers must treat Claude's `workflows/wf_*.json` and `subagents/workflows/<id>/*.jsonl` format as observed local evidence, not a guaranteed public API.
+
 ## 2026-06-15 — Codex — v0.6.21 published (Claude tmux TUI + review remediation)
 
 - Released **v0.6.21** after the third-party review remediation closeout. GitHub release/tag to be created from this release commit; npm publication is already visible on the registry.
