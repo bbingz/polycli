@@ -1,5 +1,7 @@
 # Claude Workflow Orchestration Design
 
+Chinese version: [2026-06-15-claude-workflow-orchestration-design.zh-CN.md](./2026-06-15-claude-workflow-orchestration-design.zh-CN.md)
+
 ## Objective
 
 Define the implementable path for using Codex xhigh as the planning layer for Claude Code Dynamic Workflows, then launching Claude Code's official workflow runtime through the existing Claude tmux TUI path so Claude subagent work does not default back to `claude -p` or the Agent SDK credit path.
