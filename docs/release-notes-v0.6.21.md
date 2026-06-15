@@ -15,6 +15,7 @@ Draft patch on top of `v0.6.20`. This is not a published release note yet; keep 
 
 - Claude auth status now treats legacy non-JSON success output as authenticated/unauthenticated when explicit text is present, and marks unknown successful output as inconclusive instead of a logout.
 - The session lifecycle hook now cleans up session jobs through the locked `updateState` path instead of a naked load/save write cycle.
+- The stop-time review gate now uses a per-run `POLYCLI_STOP_REVIEW_*` sentinel token, so echoed `ALLOW:` / `BLOCK:` lines from the previous Claude response cannot be mistaken for the gate verdict.
 - Fixture freshness probes now include the current 11-provider runtime surface, including `cmd`, `agy`, and `grok`.
 
 ### Docs and release hygiene

@@ -6,6 +6,13 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-15 — Codex — final multi-review cleanup before merge closeout
+
+- Re-ran a source-grounded adjudication over the remaining non-Qwen review findings after PR #9 landed. One additional behavior bug was confirmed still-present: the stop-time review gate scanned all response lines for bare `ALLOW:` / `BLOCK:` sentinels, so a provider echo of the previous Claude response could be misread as the gate verdict.
+- Fixed the stop-review gate by generating a per-run `POLYCLI_STOP_REVIEW_*` token, requiring `ALLOW <token>:` / `BLOCK <token>:` in the provider response, and ignoring stale bare sentinels when the token is active. Added parser and `runStopReview` regressions.
+- Rechecked the old `isTerminalSummaryEvent` finding. It is not a live MiniMax/cmd/agy/kimi bug in the current runtime: MiniMax declares `ttft`/`tail` unsupported, cmd/agy stream only text-delta events, and Kimi's meta event carries no visible text. No code change kept for that claim.
+- Remaining non-bug findings are tracked as design/maintenance items, not release blockers: Claude ask/review stays detached tmux TUI by product requirement; Claude health stays auth-only; provider env filtering and duplicated transient-pattern helpers are future hardening/refactor candidates.
+
 ## 2026-06-15 — Codex — Qwen audit checklist remediation
 
 - Consolidated the Qwen third-party review batch into `docs/audit/third-party-review-followup-2026-06-15.md`, then verified all 11 claims with independent subagents against the current worktree before editing. All 11 were confirmed still-present before remediation.

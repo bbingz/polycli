@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -17,6 +18,7 @@ const STOP_REVIEW_TIMEOUT_MS = 15 * 60 * 1000;
 const HEALTH_TIMEOUT_MS = 60_000;
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(SCRIPT_DIR, "..");
+const STOP_REVIEW_SENTINEL_PREFIX = "POLYCLI_STOP_REVIEW_";
 
 function readHookInput() {
   try {
@@ -51,16 +53,23 @@ function interpolateTemplate(template, variables) {
   });
 }
 
-function buildStopReviewPrompt(input = {}) {
+function createStopReviewSentinelToken() {
+  return `${STOP_REVIEW_SENTINEL_PREFIX}${randomUUID().replaceAll("-", "")}`;
+}
+
+function buildStopReviewPrompt(input = {}, { sentinelToken = createStopReviewSentinelToken() } = {}) {
   const lastAssistantMessage = String(input.last_assistant_message ?? "").trim();
   const template = loadPromptTemplate(ROOT_DIR, "stop-review-gate");
   const claudeResponseBlock = lastAssistantMessage
     ? ["Previous Claude response:", lastAssistantMessage].join("\n")
     : "";
-  return interpolateTemplate(template, { CLAUDE_RESPONSE_BLOCK: claudeResponseBlock });
+  return interpolateTemplate(template, {
+    CLAUDE_RESPONSE_BLOCK: claudeResponseBlock,
+    SENTINEL_TOKEN: sentinelToken,
+  });
 }
 
-export function parseStopReviewOutput(rawOutput) {
+export function parseStopReviewOutput(rawOutput, { sentinelToken = null } = {}) {
   const text = String(rawOutput ?? "").trim();
   if (!text) {
     return {
@@ -69,11 +78,21 @@ export function parseStopReviewOutput(rawOutput) {
     };
   }
 
-  // Scan ALL lines for the ALLOW/BLOCK sentinel. Kimi empirically prefixes
-  // prose before structured output, and a first-line-only parser can trap
-  // users in a false BLOCK loop.
+  // Scan all lines, but when a per-run token is present, only accept verdicts carrying
+  // that token. This keeps compatibility with providers that prefix prose while avoiding
+  // stale ALLOW:/BLOCK: lines echoed from the previous Claude response.
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
+    if (sentinelToken) {
+      const allowPrefix = `ALLOW ${sentinelToken}:`;
+      const blockPrefix = `BLOCK ${sentinelToken}:`;
+      if (trimmed.startsWith(allowPrefix)) return { ok: true, error: null };
+      if (trimmed.startsWith(blockPrefix)) {
+        const detail = trimmed.slice(blockPrefix.length).trim() || text;
+        return { ok: false, error: `Polycli stop-time review found issues: ${detail}` };
+      }
+      continue;
+    }
     if (trimmed.startsWith("ALLOW:")) return { ok: true, error: null };
     if (trimmed.startsWith("BLOCK:")) {
       const detail = trimmed.slice("BLOCK:".length).trim() || text;
@@ -101,7 +120,8 @@ export function runStopReview({
   input = {},
   timeoutMs = STOP_REVIEW_TIMEOUT_MS,
 } = {}) {
-  const prompt = buildStopReviewPrompt(input);
+  const sentinelToken = createStopReviewSentinelToken();
+  const prompt = buildStopReviewPrompt(input, { sentinelToken });
   const result = spawnSync(process.execPath, [companionPath, "ask", "--provider", provider, "--json", prompt], {
     cwd,
     encoding: "utf8",
@@ -126,7 +146,7 @@ export function runStopReview({
 
   try {
     const payload = parseJsonFromStdout(result.stdout);
-    if (payload?.response) return parseStopReviewOutput(payload.response);
+    if (payload?.response) return parseStopReviewOutput(payload.response, { sentinelToken });
     if (payload?.error) return { ok: false, error: payload.error };
   } catch {
     // fall through
