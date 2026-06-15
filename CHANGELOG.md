@@ -6,6 +6,13 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-15 — Codex — v0.6.21 published (Claude tmux TUI + review remediation)
+
+- Released **v0.6.21** after the third-party review remediation closeout. GitHub release/tag to be created from this release commit; npm publication is already visible on the registry.
+- npm `latest` verified via `npm view`: `@bbingz/polycli@0.6.21` and `@bbingz/polycli-opencode@0.6.21`. Utility packages remain on their independent v1 line: `@bbingz/polycli-utils@1.0.2`, `@bbingz/polycli-timing@1.0.1`.
+- Release content: Claude `ask`/`review` default to detached tmux TUI mode instead of `claude -p`; tmux launch responses expose `tmuxSession`/`attachCommand` and startup-only timing; review gate sentinel parsing, auth probing, fixture freshness, state cleanup, tempfile cleanup, unsafe pid guards, and docs parity are hardened.
+- Verification: `npm run release:check` exit 0 (`npm test` 511/511 + bundle/fixture/manifest/host-map/Codex adapter/review-drift/Claude plugin validation + npm dry-runs). `npm whoami` authenticated as `bbingz`; npm publish completed for the two v0.6.21 public host packages.
+
 ## 2026-06-15 — Codex — final multi-review cleanup before merge closeout
 
 - Re-ran a source-grounded adjudication over the remaining non-Qwen review findings after PR #9 landed. One additional behavior bug was confirmed still-present: the stop-time review gate scanned all response lines for bare `ALLOW:` / `BLOCK:` sentinels, so a provider echo of the previous Claude response could be misread as the gate verdict.

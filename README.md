@@ -29,16 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.20
+## Latest release: v0.6.21
 
-The latest patch ships the grok provider, the kimi-code v0.6.0 migration, and the deep-review hardening set:
+The latest patch ships Claude tmux TUI defaults and the third-party review remediation set:
 
-- Added `grok` (xAI Grok Build CLI) as the 11th provider across runtime, host adapters, skills, docs, and release validation.
-- Migrated the kimi adapter and guidance to kimi-code v0.6.0 session semantics (`--session` / `-C`) and structured `session.resume_hint` parsing.
-- Kept the Path B flat-adapter architecture intact while tightening review/deep-review hardening and bundle drift checks.
+- Claude `ask` and `review` now start detached tmux TUI sessions by default instead of using the `claude -p` path.
+- Claude tmux TUI responses expose `tmuxSession` / `attachCommand`, startup-only `total` timing, and `ttft` / `gen` / `tail` as `unsupported`.
+- Hardened the review gate, lockfile/tempfile cleanup, session lifecycle cleanup, auth-status probing, fixture freshness checks, and release docs.
 - Utility packages stay on their independent v1.x cadence.
 
-See [`docs/release-notes-v0.6.20.md`](./docs/release-notes-v0.6.20.md).
+See [`docs/release-notes-v0.6.21.md`](./docs/release-notes-v0.6.21.md).
 
 ## Why polycli?
 

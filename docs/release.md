@@ -8,11 +8,11 @@ This repository publishes in three different ways:
 
 ## Current Release State
 
-As of `2026-06-02`, the current public release is **v0.6.20**:
+As of `2026-06-15`, the current public release is **v0.6.21**:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
-- Last published GitHub release: `v0.6.20` — https://github.com/bbingz/polycli/releases/tag/v0.6.20
-- Published npm packages (all `latest`, verified via `npm view`): `@bbingz/polycli-opencode@0.6.20`, `@bbingz/polycli@0.6.20`, and `@bbingz/polycli-utils@1.0.2` (bumped for the atomic-save/process/stream fixes).
+- Last published GitHub release: `v0.6.21` — https://github.com/bbingz/polycli/releases/tag/v0.6.21
+- Published npm packages (all `latest`, verified via `npm view`): `@bbingz/polycli-opencode@0.6.21`, `@bbingz/polycli@0.6.21`, and `@bbingz/polycli-utils@1.0.2`.
 - `@bbingz/polycli-timing@1.0.1` unchanged (already on the registry; not republished).
 
 Verified release paths:
@@ -43,6 +43,7 @@ Current runtime scope in-repo:
 - `qwen`
 - `minimax`
 - `agy`
+- `grok`
 
 Current host scope:
 
@@ -50,6 +51,7 @@ Current host scope:
 - `Codex` marketplace plugin
 - `Copilot` marketplace plugin
 - `OpenCode` npm package
+- Terminal CLI npm package
 
 Model selection behavior remains intentionally simple:
 

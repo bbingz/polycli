@@ -1,6 +1,6 @@
-# polycli v0.6.21 (draft)
+# polycli v0.6.21
 
-Draft patch on top of `v0.6.20`. This is not a published release note yet; keep it aligned with the current workspace until the release is cut.
+Patch on top of `v0.6.20` that ships Claude tmux TUI defaults and the third-party review remediation set. The Path B stance remains intact: provider modules stay flat, provider-specific parsing stays in runtime, and timing capability differences stay explicit.
 
 ## What changed
 
@@ -26,4 +26,13 @@ Draft patch on top of `v0.6.20`. This is not a published release note yet; keep 
 
 ## Verification
 
-- To be filled at release cut.
+- `npm run release:check`
+- GitHub Actions Node 20 verification
+
+## Release artifacts
+
+- GitHub release `v0.6.21`
+- npm `@bbingz/polycli-opencode@0.6.21`
+- npm `@bbingz/polycli@0.6.21`
+
+Utility packages stay on the independent v1.x cadence (`@bbingz/polycli-utils@1.0.2`, `@bbingz/polycli-timing@1.0.1`).
