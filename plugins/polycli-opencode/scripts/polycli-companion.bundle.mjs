@@ -5988,7 +5988,6 @@ function buildPromptRuntimeOptions({
   if (kind === "ask" && provider === "claude") {
     return {
       ...runtimeOptions,
-      executionMode: "tmux-tui",
       permissionMode: "plan",
       extraArgs: mergeExtraArgs(runtimeOptions, [
         "--tools",
@@ -6184,7 +6183,6 @@ var REVIEW_HARD_CONSTRAINTS = {
   },
   claude() {
     return {
-      executionMode: "tmux-tui",
       permissionMode: "plan",
       extraArgs: ["--tools", "", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config"]
     };

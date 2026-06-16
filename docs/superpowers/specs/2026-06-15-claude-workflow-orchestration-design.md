@@ -4,7 +4,9 @@ Chinese version: [2026-06-15-claude-workflow-orchestration-design.zh-CN.md](./20
 
 ## Objective
 
-Define the implementable path for using Codex xhigh as the planning layer for Claude Code Dynamic Workflows, then launching Claude Code's official workflow runtime through the existing Claude tmux TUI path so Claude subagent work does not default back to `claude -p` or the Agent SDK credit path.
+Define the implementable path for using Codex xhigh as the planning layer for Claude Code Dynamic Workflows, then launching Claude Code's official workflow runtime through the existing Claude tmux TUI path.
+
+Policy update, 2026-06-16: Anthropic paused the Agent SDK / `claude -p` credit change after this design was written. Ordinary Claude `ask` / `review` defaults have been restored to headless `claude -p`; workflow execution may still need tmux TUI because Dynamic Workflows run through the interactive Claude Code runtime.
 
 The result should let a human or host agent ask polycli to produce, launch, observe, and archive repeatable multi-agent workflow runs without turning polycli into its own agent framework.
 
@@ -12,8 +14,8 @@ The result should let a human or host agent ask polycli to produce, launch, obse
 
 - Claude Code Dynamic Workflows are JavaScript scripts that orchestrate subagents at scale, run in the background, and store run progress under the Claude session directory.
 - Claude Code documents workflows as the right primitive for codebase audits, large migrations, cross-checked research, and repeatable quality patterns.
-- Starting 2026-06-15, Claude Agent SDK and `claude -p` usage on subscription plans draw from a separate Agent SDK credit. That makes SDK and `-p` unsuitable as the default path for this project goal.
-- Polycli already keeps Claude `ask` and `review` on `executionMode: "tmux-tui"` to avoid silently returning to `claude -p`.
+- Anthropic announced, then paused, the 2026-06-15 Agent SDK / `claude -p` credit change. Do not cite the paused credit behavior alone as a reason to avoid `claude -p`.
+- Polycli keeps a Claude `executionMode: "tmux-tui"` runtime path for callers that need interactive Claude Code behavior such as Dynamic Workflows.
 - Local workflow evidence shows the useful pattern:
   - implementation waves use disjoint file ownership, TDD-first instructions, and exact focused test commands;
   - review waves use one-finding-per-auditor, verbatim evidence requirements, adversarial verification, and a synthesis stage;
@@ -31,7 +33,7 @@ Primary references:
 
 - Do not implement a general workflow runtime in polycli.
 - Do not add a provider base class, agent base class, or template-method runtime.
-- Do not make `claude -p` or the Claude Agent SDK the default execution path.
+- Do not make the Claude Agent SDK the default execution path for this workflow feature. Re-check current Anthropic billing before deciding whether workflow planning or helper calls should use `claude -p`.
 - Do not require all providers to support Claude workflows. This track is Claude-runner-specific, with polycli acting as host-neutral control and observability surface.
 - Do not hand-edit generated companion bundles in worker tasks.
 - Do not use workflow scripts as direct shell or filesystem actors. Workflow scripts coordinate agents; agents perform reads, edits, and commands under Claude Code's permission model.
@@ -60,7 +62,7 @@ Codex xhigh is a planner/compiler, not the executor. If the planner is unavailab
 
 ### 2. Runner: Claude tmux TUI
 
-Polycli starts Claude Code in a detached tmux TUI session, preserving the existing Claude cost-path constraint.
+Polycli starts Claude Code in a detached tmux TUI session when the workflow feature needs the interactive Claude Code runtime.
 
 The runner prompt should ask Claude to execute an explicit workflow script or create a workflow from an explicit prompt. For saved workflows, it can ask Claude to run the saved slash command. The runner returns detached startup metadata, not an LLM answer:
 
@@ -271,7 +273,7 @@ A finding survives only when the configured vote threshold is met. The default t
 
 ## Security And Cost Constraints
 
-- Default path must not call `claude -p`.
+- Workflow execution must use the runtime that actually supports Claude Code Dynamic Workflows; ordinary helper prompts may use `claude -p` if current Anthropic policy still allows subscription-backed usage.
 - Default path must not import or depend on the Claude Agent SDK.
 - Claude tmux environment propagation stays allowlisted.
 - Workflow script paths must be absolute or resolved under the workspace, `.claude/workflows`, or `~/.claude/workflows`.
@@ -339,11 +341,11 @@ Stage 4: saved workflow and cancellation.
 
 The first implementation plan is complete only when:
 
-- a user can start a Claude Dynamic Workflow through tmux TUI without `claude -p`;
+- a user can start a Claude Dynamic Workflow through tmux TUI when the interactive Claude Code runtime is required;
 - polycli can list and inspect the resulting workflow artifact for the current workspace;
 - JSON output distinguishes startup, running, completed, failed, and unobserved states;
 - tests prove artifact parsing and tmux-start behavior without requiring live Claude;
-- docs clearly state that Agent SDK and `claude -p` are opt-in only due to the 2026-06-15 credit behavior;
+- docs clearly state which workflow calls use tmux TUI versus headless `claude -p`, based on current Anthropic policy and runtime capability;
 - no Path-B runtime abstraction or provider base class is introduced.
 
 ## Open Decisions For Implementation Plan

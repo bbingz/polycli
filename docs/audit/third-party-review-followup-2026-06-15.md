@@ -2,6 +2,8 @@
 
 Purpose: merge the current third-party audit findings into one source-backed checklist, then track independent subagent verification and remediation.
 
+Superseded policy note, 2026-06-16: Anthropic paused the Agent SDK / `claude -p` credit change. Current `main` restores Claude `ask` / `review` to headless `claude -p` defaults with plan/no-tools/no-MCP constraints, while keeping tmux TUI as an explicit/internal runtime mode.
+
 Scope:
 
 - Current worktree at `<repo>`.
@@ -13,7 +15,7 @@ Rules:
 - Do not treat third-party consensus as evidence.
 - Each item needs a current-source verdict: `fixed`, `still-present`, `false-positive`, `mitigated`, or `not-applicable`.
 - For `still-present`, add or update a focused test before production-code changes unless the item is docs-only.
-- Keep the user-required Claude tmux TUI default. Do not "fix" findings by reverting Claude `ask` / `review` to `claude -p`.
+- Superseded on 2026-06-16: the user-required Claude tmux TUI default was tied to the now-paused `claude -p` credit change. The current default is back to headless `claude -p`; tmux TUI remains available as an explicit/internal runtime mode.
 
 ## Consolidated Findings
 
@@ -35,7 +37,7 @@ Rules:
 
 | Cluster | Decision |
 |---|---|
-| Claude ask/review synchronous response | Do not restore `claude -p` default. The product requirement is detached tmux TUI startup, with `tmuxSession` / `attachCommand` as the response. |
+| Claude ask/review synchronous response | Superseded on 2026-06-16. Restore `claude -p` as the default while preserving the same plan/no-tools/no-MCP constraints and keeping tmux TUI available for explicit/internal callers. |
 | Claude tmux timing | `ttft` / `gen` / `tail` are unsupported in tmux TUI mode; `total` is startup/prompt-submission time only. |
 | Claude health | Auth-only health is intentional; docs and payloads must label it honestly. |
 | Provider docs drift | Keep 11 providers represented across runtime, plugin docs, release validation, and host docs. |
@@ -49,7 +51,7 @@ After PR #9 was merged, the remaining Claude / DeepSeek / Minimax / Kimi / MiMo 
 |---|---|---|
 | Stop-review gate `ALLOW:` / `BLOCK:` sentinel injection | still-present before this final cleanup | Fixed with a per-run `POLYCLI_STOP_REVIEW_*` token; the parser ignores stale bare sentinels when a token is active. Added parser and `runStopReview` regression tests. |
 | `isTerminalSummaryEvent` missing `kimi` / `minimax` / `cmd` / `agy` | overbroad / not-applicable in current runtime | No code change kept. MiniMax declares `ttft` / `tail` unsupported, cmd/agy only stream text-delta events, and Kimi meta events do not expose visible text. |
-| Claude ask/review should return synchronous LLM answer | product-semantics conflict | Not changed. The user requirement is to avoid default `claude -p`; default response is `tmuxSession` / `attachCommand`. |
+| Claude ask/review should return synchronous LLM answer | superseded policy | Changed on 2026-06-16 after Anthropic paused the Agent SDK / `claude -p` credit change. Default response is again synchronous model output; tmux TUI startup remains an explicit/internal mode. |
 | Claude tmux `totalMs` is startup-only | fixed / documented | `ttft` / `gen` / `tail` are unsupported; metadata marks `tmuxDetached`, `timingScope:"tmux_startup"`, and `llmCompletionObserved:false`. |
 | Claude tmux SIGINT/SIGTERM leak | fixed in prior remediation | `runClaudePromptStreaming` has signal cleanup regressions for orchestration interruption and startup failures. |
 | Claude tmux env propagation | fixed for Claude-owned env | Tmux receives an explicit Claude/Anthropic/proxy/cert allowlist via `tmux -e`; broad provider-wide env filtering remains a future hardening decision. |

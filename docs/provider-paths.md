@@ -8,7 +8,7 @@ This table is a routing reference for humans and host adapters. It is not an aut
 
 | Model family / need | Primary Polycli provider path | Secondary path | Notes |
 |---|---|---|---|
-| Claude Code / Anthropic coding agent | `claude` | `opencode` Anthropic models | Default polycli `ask`/`review` starts a detached Claude tmux TUI with plan/no-tools/no-MCP constraints and returns `tmuxSession` + `attachCommand`; it intentionally does not pass `-p`/`--max-turns`. Rescue and explicit print/headless calls still use the official headless JSON/stream JSON CLI path. |
+| Claude Code / Anthropic coding agent | `claude` | `opencode` Anthropic models | Default polycli `ask`/`review` now uses official headless `claude -p` with plan/no-tools/no-MCP constraints, returning synchronous JSON/stream JSON output. Detached tmux TUI remains available in runtime for explicit/internal callers that need an interactive Claude Code session. |
 | Gemini | `gemini` | none | Official CLI headless `-p`, `--approval-mode plan`, JSON/stream JSON. Keep isolated cwd and disabled extensions/MCP for review. |
 | Qwen Code / Qwen Coding Plan | `qwen` | `opencode` Alibaba Coding Plan models | Official Qwen Code default `maxSessionTurns=-1` means do not force ask to one turn. Polycli ask uses a bounded `maxSteps=20`, `approvalMode=plan`, and `--exclude-tools`; review uses the same no-tool stance. SDK `canUseTool` is a better future path if Polycli moves beyond CLI wrapping. |
 | Kimi coding | `kimi` (kimi-code v0.6.0) | `opencode` Kimi For Coding models | The `-p` one-shot runner is non-interactive and rejects `--plan`/`--auto`/`--yolo`, so ask uses a plain `-p` invocation and review is prompt-only (like minimax). Default model from `~/.kimi-code/config.toml`. |

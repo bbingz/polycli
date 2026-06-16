@@ -110,7 +110,7 @@ This keeps v1 small, testable, and publishable without pretending the provider m
 
 | Provider | Default flag in `ask` | Effective stance |
 |---|---|---|
-| `claude` | detached tmux TUI with `--permission-mode plan --tools "" --mcp-config '{"mcpServers":{}}' --strict-mcp-config`; no `-p`/`--max-turns` in default ask/review | plan/no tools/no MCP; returns `tmuxSession`/`attachCommand` and startup-only timing |
+| `claude` | headless `claude -p` with `--permission-mode plan --tools "" --mcp-config '{"mcpServers":{}}' --strict-mcp-config` | plan/no tools/no MCP; returns synchronous model output and stream timings. Detached tmux TUI remains an explicit/internal runtime mode with `tmuxSession`/`attachCommand` and startup-only timing |
 | `gemini` | `--approval-mode plan --extensions "" --allowed-mcp-server-names __polycli_prompt_no_mcp__` | plan/no extensions/MCP |
 | `qwen` | `--approval-mode plan --max-session-turns 20` plus repeated `--exclude-tools ...` | bounded multi-turn/no tools; no forced one-turn cap |
 | `kimi` | none — `-p` one-shot rejects `--plan`/`--auto`/`--yolo` | non-interactive single-shot (kimi-code v0.6.0) |

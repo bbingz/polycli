@@ -146,7 +146,7 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 说明：
 
 - `cold` 和 `retry` 对所有 provider 都是 `unsupported`：上游 CLI 没有稳定信号，polycli 拒绝伪造。`total` 永远是 `measured`。
-- `claude` 的 `ask` / `review` 默认走 detached tmux TUI，用来避开 `claude -p` 的按量路径。该模式下 `ttft` / `gen` / `tail` 会报 `unsupported`；`total` 只测 tmux 启动和 prompt 提交，响应里会包含 `tmuxSession` + `attachCommand`。
+- `claude` 的 `ask` / `review` 默认走 headless `claude -p`，并保留 plan/no-tools/no-MCP 约束，所以会返回同步模型答案和可测的 streaming timing。runtime 仍保留 detached tmux TUI 作为显式/内部路径；该模式下 `ttft` / `gen` / `tail` 会报 `unsupported`，`total` 只测 tmux 启动和 prompt 提交，响应里会包含 `tmuxSession` + `attachCommand`。
 - `minimax` 走 `mmx-cli` 非交互 JSON 调用，不支持 session resume、不支持细粒度 streaming timing。`cmd` 走 Command Code 官方 headless 模式，每次调用都是 standalone session，stdout 就是可见答案。`agy` 走 Antigravity session 模式但输出是纯文本；`grok` 走 xAI Grok Build CLI。
 - 只有 `qwen` 声明 `tool: true`。当 `qwen` 没触发 tool 调用时报 `missing`（可观测但本次未发生），其他 provider 报 `unsupported`（能力上不跟踪）。两个状态语义不同，不要合并。
 

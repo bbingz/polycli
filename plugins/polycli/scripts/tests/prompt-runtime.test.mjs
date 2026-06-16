@@ -50,7 +50,6 @@ test("buildPromptRuntimeOptions keeps qwen ask multi-step but excludes tools", (
 
 test("buildPromptRuntimeOptions uses conservative one-shot defaults for ask", () => {
   assert.deepEqual(buildPromptRuntimeOptions({ provider: "claude", kind: "ask" }), {
-    executionMode: "tmux-tui",
     permissionMode: "plan",
     extraArgs: ["--tools", "", "--mcp-config", "{\"mcpServers\":{}}", "--strict-mcp-config"],
   });

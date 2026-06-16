@@ -1588,18 +1588,17 @@ test("integration: kimi string-content review still records preview text", async
   }
 });
 
-test("integration: review starts claude TUI in tmux with no tools", async () => {
+test("integration: review runs claude print mode with no tools", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   const reviewWorkspace = createReviewWorkspace();
-  const tmuxLog = path.join(pluginData, "claude-review-tmux.jsonl");
+  const argLog = path.join(pluginData, "claude-review-argv.jsonl");
   const fake = createFakeClaudeBin();
-  const fakeTmux = createFakeTmuxBin();
   try {
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
       CLAUDE_CLI_BIN: fake.bin,
-      POLYCLI_TMUX_BIN: fakeTmux.bin,
-      TMUX_ARGV_LOG: tmuxLog,
+      CLAUDE_ARGV_LOG: argLog,
+      CLAUDE_FIXED_REPLY: "CLAUDE_REVIEW_OK",
     });
     const review = await runCompanion(
       ["review", "--provider", "claude", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
@@ -1607,38 +1606,23 @@ test("integration: review starts claude TUI in tmux with no tools", async () => 
     );
     assert.equal(review.code, 0, review.stderr);
     const payload = JSON.parse(review.stdout);
-    assert.match(payload.response, /Started Claude TUI tmux session/);
-    assert.equal(payload.detached, true);
-    assert.equal(payload.responseKind, "tmux_tui_session_started");
-    assert.match(payload.attachCommand, /^tmux attach -t polycli-claude-/);
-    assert.match(payload.tmuxSession, /^polycli-claude-/);
-    assert.equal(payload.timing.meta.tmuxDetached, true);
-    assert.equal(payload.timing.meta.timingScope, "tmux_startup");
-    assert.equal(payload.timing.meta.llmCompletionObserved, false);
+    assert.equal(payload.response, "CLAUDE_REVIEW_OK");
+    assert.equal(payload.detached, undefined);
+    assert.equal(payload.responseKind, undefined);
+    assert.equal(payload.timing.meta.tmuxDetached, undefined);
 
-	    const logged = readJsonLines(tmuxLog);
-	    const commands = logged.map((entry) => entry.argv[0]);
-	    assert.deepEqual(commands.slice(0, 4), [
-	      "new-session",
-	      "capture-pane",
-	      "load-buffer",
-	      "paste-buffer",
-	    ]);
-	    assert.equal(commands.filter((command) => command === "capture-pane").length >= 2, true);
-	    assert.equal(commands.at(-1), "send-keys");
-	    const startCommand = logged[0].argv.at(-1);
-    assert.match(startCommand, new RegExp(fake.bin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.match(startCommand, /--permission-mode plan/);
-    assert.match(startCommand, /--strict-mcp-config/);
-    assert.match(startCommand, /--mcp-config '\{"mcpServers":\{\}\}'/);
-    assert.match(startCommand, /--tools ''/);
-    assert.doesNotMatch(startCommand, /(^| )-p( |$)|--print|--output-format|--max-turns/);
-	    assert.match(logged[2].stdin, /regressions only/);
-	    assert.match(logged[2].stdin, /Git diff:/);
-    assert.match(payload.warnings.join("\n"), /detached interactive Claude TUI/i);
+    const logged = readJsonLines(argLog);
+    const args = logged[0].argv;
+    assert.equal(args[0], "-p");
+    assert.match(args[1], /regressions only/);
+    assert.match(args[1], /Git diff:/);
+    assert.deepEqual(args.slice(2, 5), ["--output-format", "stream-json", "--verbose"]);
+    assert.equal(args[args.indexOf("--permission-mode") + 1], "plan");
+    assert.equal(args[args.indexOf("--tools") + 1], "");
+    assert.equal(args[args.indexOf("--mcp-config") + 1], "{\"mcpServers\":{}}");
+    assert.equal(args.includes("--strict-mcp-config"), true);
   } finally {
     fake.cleanup();
-    fakeTmux.cleanup();
     reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
@@ -1875,17 +1859,16 @@ test("integration: setup and ask succeed for minimax via bundled companion", asy
   }
 });
 
-test("integration: setup succeeds and claude ask starts a tmux TUI session", async () => {
+test("integration: setup succeeds and claude ask returns a print-mode answer", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
-  const tmuxLog = path.join(pluginData, "claude-ask-tmux.jsonl");
+  const argLog = path.join(pluginData, "claude-ask-argv.jsonl");
   const fake = createFakeClaudeBin();
-  const fakeTmux = createFakeTmuxBin();
   try {
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
       CLAUDE_CLI_BIN: fake.bin,
-      POLYCLI_TMUX_BIN: fakeTmux.bin,
-      TMUX_ARGV_LOG: tmuxLog,
+      CLAUDE_ARGV_LOG: argLog,
+      CLAUDE_FIXED_REPLY: "PONG",
     });
     const setup = await runCompanion(["setup", "--json", "--provider", "claude"], {
       cwd: process.cwd(),
@@ -1903,38 +1886,29 @@ test("integration: setup succeeds and claude ask starts a tmux TUI session", asy
     assert.equal(ask.code, 0, ask.stderr);
     const askPayload = JSON.parse(ask.stdout);
     assert.equal(askPayload.provider, "claude");
-    assert.match(askPayload.response, /Started Claude TUI tmux session/);
+    assert.equal(askPayload.response, "PONG");
     assert.equal(askPayload.model, "claude-test");
-    assert.equal(askPayload.sessionId, null);
-    assert.equal(askPayload.detached, true);
-    assert.equal(askPayload.responseKind, "tmux_tui_session_started");
-    assert.match(askPayload.tmuxSession, /^polycli-claude-/);
-    assert.match(askPayload.attachCommand, /^tmux attach -t polycli-claude-/);
+    assert.equal(askPayload.sessionId, "44444444-4444-4444-8444-444444444444");
+    assert.equal(askPayload.detached, undefined);
+    assert.equal(askPayload.responseKind, undefined);
     assert.equal(askPayload.timing.runtimePersistence, "session");
-	    assert.equal(askPayload.timing.metrics.ttft.status, "unsupported");
-	    assert.equal(askPayload.timing.metrics.gen.status, "unsupported");
-	    assert.equal(askPayload.timing.metrics.tail.status, "unsupported");
+    assert.equal(askPayload.timing.metrics.ttft.status, "measured");
+    assert.equal(askPayload.timing.metrics.gen.status, "measured");
+    assert.equal(askPayload.timing.metrics.tail.status, "measured");
     assert.equal(askPayload.timing.metrics.tool.status, "unsupported");
-    assert.equal(askPayload.timing.meta.tmuxDetached, true);
-    assert.equal(askPayload.timing.meta.timingScope, "tmux_startup");
-    assert.equal(askPayload.timing.meta.llmCompletionObserved, false);
-    assert.match(askPayload.warnings.join("\n"), /detached interactive Claude TUI/i);
+    assert.equal((askPayload.timing.meta || {}).tmuxDetached, undefined);
 
-	    const logged = readJsonLines(tmuxLog);
-	    const commands = logged.map((entry) => entry.argv[0]);
-	    assert.deepEqual(commands.slice(0, 4), [
-	      "new-session",
-	      "capture-pane",
-	      "load-buffer",
-	      "paste-buffer",
-	    ]);
-	    assert.equal(commands.filter((command) => command === "capture-pane").length >= 2, true);
-	    assert.equal(commands.at(-1), "send-keys");
-	    assert.doesNotMatch(logged[0].argv.at(-1), /(^| )-p( |$)|--print|--output-format|--max-turns/);
-	    assert.match(logged[2].stdin, /Reply with only: PONG/);
+    const logged = readJsonLines(argLog);
+    const args = logged[0].argv;
+    assert.equal(args[0], "-p");
+    assert.equal(args[1], "Reply with only: PONG");
+    assert.deepEqual(args.slice(2, 5), ["--output-format", "stream-json", "--verbose"]);
+    assert.equal(args[args.indexOf("--permission-mode") + 1], "plan");
+    assert.equal(args[args.indexOf("--tools") + 1], "");
+    assert.equal(args[args.indexOf("--mcp-config") + 1], "{\"mcpServers\":{}}");
+    assert.equal(args.includes("--strict-mcp-config"), true);
   } finally {
     fake.cleanup();
-    fakeTmux.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });

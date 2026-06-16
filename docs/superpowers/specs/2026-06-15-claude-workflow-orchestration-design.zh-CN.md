@@ -4,7 +4,9 @@
 
 ## 目标
 
-定义一条可实现的路线：用 Codex xhigh 做 Claude Code Dynamic Workflows 的规划层，让它根据目标、仓库约束和验证门槛生成 workflow JavaScript；实际执行仍交给 Claude Code 官方 workflow runtime，并通过 polycli 现有的 Claude tmux TUI 路径启动，避免 Claude 子 agent 工作默认回到 `claude -p` 或 Agent SDK credit 路径。
+定义一条可实现的路线：用 Codex xhigh 做 Claude Code Dynamic Workflows 的规划层，让它根据目标、仓库约束和验证门槛生成 workflow JavaScript；实际执行仍交给 Claude Code 官方 workflow runtime，并通过 polycli 现有的 Claude tmux TUI 路径启动。
+
+策略更新，2026-06-16：Anthropic 在本设计写完后暂停了 Agent SDK / `claude -p` credit 变更。普通 Claude `ask` / `review` 默认值已恢复到 headless `claude -p`；workflow 执行仍可能需要 tmux TUI，因为 Dynamic Workflows 依赖交互式 Claude Code runtime。
 
 最终结果应该让人类或 host agent 可以通过 polycli 生产、启动、观察和归档可复用的多 agent workflow run，同时不把 polycli 变成新的 agent framework。
 
@@ -12,8 +14,8 @@
 
 - Claude Code Dynamic Workflows 是 JavaScript 脚本，用来大规模编排 subagents，可后台运行，并把 run 进度保存在 Claude session 目录下。
 - Claude Code 官方文档把 workflows 定位为 codebase audit、大规模迁移、交叉验证研究和可复用质量流程的合适原语。
-- 从 2026-06-15 开始，Claude Agent SDK 和订阅计划里的 `claude -p` usage 会消耗单独的 Agent SDK credit。因此 SDK 和 `-p` 不适合作为本目标的默认路径。
-- polycli 已经让 Claude `ask` 和 `review` 保持在 `executionMode: "tmux-tui"`，避免静默回到 `claude -p`。
+- Anthropic 曾宣布、随后暂停 2026-06-15 Agent SDK / `claude -p` credit 变更。不要只因为已暂停的 credit 行为而禁止 `claude -p`。
+- polycli 保留 Claude `executionMode: "tmux-tui"` runtime 路径，供需要交互式 Claude Code 行为（例如 Dynamic Workflows）的调用方使用。
 - 本地 workflow 证据显示，有效模式是：
   - 实现类 wave 使用互斥文件所有权、TDD-first 指令和精确 focused test command；
   - review 类 wave 使用“一条 finding 一个 auditor”、逐字证据要求、adversarial verification 和 synthesis 阶段；
@@ -31,7 +33,7 @@
 
 - 不在 polycli 里实现通用 workflow runtime。
 - 不添加 provider base class、agent base class 或 template-method runtime。
-- 不把 `claude -p` 或 Claude Agent SDK 作为默认执行路径。
+- 不把 Claude Agent SDK 作为本 workflow 功能的默认执行路径。是否让 workflow planning 或 helper calls 使用 `claude -p`，需要按当时 Anthropic 计费政策重新确认。
 - 不要求所有 provider 都支持 Claude workflows。这个 track 明确是 Claude-runner-specific，polycli 只提供 host-neutral control 和 observability surface。
 - worker task 不手工编辑生成出来的 companion bundles。
 - 不把 workflow 脚本当成直接操作 shell 或文件系统的执行体。workflow 脚本只负责编排 agents；读取、编辑和命令执行由 Claude Code 权限模型下的 agents 完成。
@@ -60,7 +62,7 @@ Codex xhigh 是 planner/compiler，不是 executor。如果 planner 不可用，
 
 ### 2. Runner: Claude tmux TUI
 
-polycli 通过 detached tmux TUI session 启动 Claude Code，保留现有 Claude cost-path 约束。
+当 workflow 功能需要交互式 Claude Code runtime 时，polycli 通过 detached tmux TUI session 启动 Claude Code。
 
 runner prompt 应该要求 Claude 执行一个明确的 workflow script，或从明确 prompt 创建 workflow。对于 saved workflows，可以要求 Claude 运行对应 saved slash command。runner 返回 detached startup metadata，而不是 LLM 答案：
 
@@ -271,7 +273,7 @@ verifier schema：
 
 ## 安全与成本约束
 
-- 默认路径不得调用 `claude -p`。
+- workflow 执行必须使用真正支持 Claude Code Dynamic Workflows 的 runtime；普通 helper prompt 在当前 Anthropic 政策仍允许订阅支撑时可以使用 `claude -p`。
 - 默认路径不得 import 或依赖 Claude Agent SDK。
 - Claude tmux 环境变量传播保持 allowlist。
 - workflow script paths 必须是绝对路径，或解析到 workspace、`.claude/workflows`、`~/.claude/workflows` 下。
@@ -339,11 +341,11 @@ Stage 4：saved workflow 和 cancellation。
 
 第一份 implementation plan 只有在以下条件满足时才算完成：
 
-- 用户能通过 tmux TUI 启动 Claude Dynamic Workflow，且不走 `claude -p`；
+- 用户能在需要交互式 Claude Code runtime 时通过 tmux TUI 启动 Claude Dynamic Workflow；
 - polycli 能列出并检查当前 workspace 的 workflow artifact；
 - JSON 输出能区分 startup、running、completed、failed 和 unobserved；
 - 测试能在不依赖 live Claude 的情况下证明 artifact parsing 和 tmux-start behavior；
-- 文档明确说明 Agent SDK 和 `claude -p` 因 2026-06-15 credit 行为只能作为 opt-in；
+- 文档明确说明哪些 workflow 调用走 tmux TUI，哪些可以走 headless `claude -p`，并以当前 Anthropic 政策和 runtime 能力为准；
 - 未引入 Path-B runtime abstraction 或 provider base class。
 
 ## Implementation Plan 阶段的待定决策

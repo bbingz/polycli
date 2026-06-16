@@ -29,16 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.21
+## Latest release: v0.6.22
 
-The latest patch ships Claude tmux TUI defaults and the third-party review remediation set:
+The latest patch restores Claude `ask`/`review` to the synchronous `claude -p` path by default after Anthropic paused the Agent SDK credit change:
 
-- Claude `ask` and `review` now start detached tmux TUI sessions by default instead of using the `claude -p` path.
-- Claude tmux TUI responses expose `tmuxSession` / `attachCommand`, startup-only `total` timing, and `ttft` / `gen` / `tail` as `unsupported`.
+- Claude `ask` and `review` now use headless `claude -p` by default with plan/no-tools/no-MCP constraints, so they return a synchronous model answer again.
+- The detached tmux TUI path remains in runtime for explicit/internal callers; in that mode responses expose `tmuxSession` / `attachCommand`, startup-only `total` timing, and `ttft` / `gen` / `tail` as `unsupported`.
 - Hardened the review gate, lockfile/tempfile cleanup, session lifecycle cleanup, auth-status probing, fixture freshness checks, and release docs.
 - Utility packages stay on their independent v1.x cadence.
 
-See [`docs/release-notes-v0.6.21.md`](./docs/release-notes-v0.6.21.md).
+See [`docs/release-notes-v0.6.22.md`](./docs/release-notes-v0.6.22.md).
 
 ## Why polycli?
 
@@ -206,7 +206,7 @@ Source of truth: [`packages/polycli-runtime/src/registry.js`](./packages/polycli
 Notes:
 
 - `cold` and `retry` are `unsupported` for every provider. Upstream CLIs lack a stable signal, and polycli refuses to fake them. `total` is always `measured`.
-- Claude `ask` and `review` run in detached tmux TUI mode by default to avoid the `claude -p` cost path. In that mode `ttft`, `gen`, and `tail` are reported as `unsupported`; `total` measures tmux startup/prompt submission only, and the response contains `tmuxSession` + `attachCommand`.
+- Claude `ask` and `review` run through headless `claude -p` by default with plan/no-tools/no-MCP constraints, so they return synchronous model output and measured stream timings. The runtime still supports detached tmux TUI mode for explicit/internal callers; in that mode `ttft`, `gen`, and `tail` are reported as `unsupported`, `total` measures tmux startup/prompt submission only, and the response contains `tmuxSession` + `attachCommand`.
 - `minimax` uses official `mmx text chat --output json --non-interactive`; no session resume and no fine-grained streaming timing. `cmd` uses documented Command Code headless mode, where each invocation is a standalone session and stdout is the visible answer.
 - Only `qwen` declares `tool: true`. When no tool is invoked, `qwen` reports `missing` (observable but absent); the others report `unsupported` (capability-level not tracked). The two states are not interchangeable.
 

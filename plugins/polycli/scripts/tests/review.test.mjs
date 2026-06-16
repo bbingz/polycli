@@ -55,8 +55,9 @@ test("buildReviewRuntimeOptions applies claude hard constraints", () => {
     cwd: process.cwd(),
   });
 
-  assert.equal(options.executionMode, "tmux-tui");
+  assert.equal(options.executionMode, undefined);
   assert.equal(options.maxTurns, undefined);
+  assert.equal(options.permissionMode, "plan");
   assert.deepEqual(options.extraArgs, ["--tools", "", "--mcp-config", "{\"mcpServers\":{}}", "--strict-mcp-config"]);
 });
 

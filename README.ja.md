@@ -146,7 +146,7 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 補足:
 
 - `cold` と `retry` は全プロバイダで `unsupported` です。上流 CLI に安定したシグナルがなく、polycli は偽装を拒否します。`total` は常に `measured` です。
-- `claude` の `ask` / `review` は、`claude -p` の従量課金パスを避けるため、デフォルトで detached tmux TUI mode を使います。この mode では `ttft` / `gen` / `tail` は `unsupported` として報告され、`total` は tmux 起動と prompt 投入だけを測ります。応答には `tmuxSession` + `attachCommand` が含まれます。
+- `claude` の `ask` / `review` は、デフォルトで headless `claude -p` を使い、plan/no-tools/no-MCP 制約を保つため、同期的なモデル応答と streaming timing を返します。runtime には明示的/内部呼び出し向けの detached tmux TUI mode も残っています。この mode では `ttft` / `gen` / `tail` は `unsupported` として報告され、`total` は tmux 起動と prompt 投入だけを測ります。応答には `tmuxSession` + `attachCommand` が含まれます。
 - `minimax` は `mmx-cli` の非対話 JSON 呼び出しで、session resume・細粒度 streaming timing をサポートしません。`cmd` は Command Code 公式の headless mode を使うため、各呼び出しは standalone session で、stdout が可視回答になります。`agy` は Antigravity session mode、`grok` は xAI Grok Build CLI を使います。
 - `tool: true` を宣言しているのは `qwen` のみです。`qwen` がツールを呼び出さなかったとき `missing` (観測可能だが今回は発生せず) を、他のプロバイダは `unsupported` (能力レベルで追跡しない) を報告します。両者の意味は異なるため、混同しないでください。
 
