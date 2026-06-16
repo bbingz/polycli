@@ -6,14 +6,15 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
-## 2026-06-16 — Codex — v0.6.22 release prep (Claude print defaults)
+## 2026-06-16 — Codex — v0.6.22 published (Claude print defaults)
 
 - Anthropic paused the Agent SDK / `claude -p` dedicated-credit change, so the previous default tradeoff no longer holds for ordinary Claude `ask` / `review`.
 - Restored Claude `ask` / `review` defaults to headless `claude -p` while preserving plan/no-tools/no-MCP constraints (`--permission-mode plan --tools "" --mcp-config '{"mcpServers":{}}' --strict-mcp-config`).
 - Kept the detached tmux TUI runtime path intact for explicit/internal callers, especially workflow cases that need an interactive Claude Code runtime.
 - Updated focused tests and current docs to separate the historical v0.6.21 tmux-default release from the current main behavior.
 - Live smoke: `POLYCLI_TMUX_BIN=/tmp/polycli-no-tmux-for-print-smoke node plugins/polycli/scripts/polycli-companion.mjs ask --provider claude --json ...` returned `ok:true`, response `POLYCLI_CLAUDE_PRINT_SMOKE_20260616`, measured `ttft/gen/tail`, session `e639c2cb-320f-4226-b521-ed5b608851b9`, and Claude-reported `total_cost_usd:0.11984500000000001`.
-- Prepared v0.6.22 release manifests, package lock entries, and `docs/release-notes-v0.6.22.md`; publish proof will be recorded after npm/GitHub release completion.
+- Published GitHub release `v0.6.22`: https://github.com/bbingz/polycli/releases/tag/v0.6.22 (`publishedAt` `2026-06-16T02:52:57Z`).
+- npm `latest` verified as `0.6.22` for both public host packages: `@bbingz/polycli-opencode@0.6.22` (`time.modified` `2026-06-16T02:51:05.698Z`, shasum `09e36dbd10d2bc72257f3c27ed3b6b910809901e`) and `@bbingz/polycli@0.6.22` (`time.modified` `2026-06-16T02:51:14.262Z`, shasum `28b00344f743ec0b37342242c80b81867b293c73`).
 
 ## 2026-06-15 — Codex — Claude workflow orchestration design
 

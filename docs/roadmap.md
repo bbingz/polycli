@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-06-16 (v0.6.22 is the latest release candidate; it restores Claude ask/review to headless `claude -p` defaults after Anthropic paused the Agent SDK credit change).
+Snapshot: 2026-06-16 (v0.6.22 is the latest public release; it restores Claude ask/review to headless `claude -p` defaults after Anthropic paused the Agent SDK credit change).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,8 +10,8 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest release candidate: **v0.6.22** — see `docs/release-notes-v0.6.22.md`. It restores default Claude ask/review to `claude -p` while keeping tmux TUI as an explicit/internal runtime path.
-- 11 providers ship in the latest release candidate (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok). v0.6.21 shipped Claude detached tmux TUI defaults and the third-party review remediation set.
+- Latest public release: **v0.6.22** — see `docs/release-notes-v0.6.22.md`. It restores default Claude ask/review to `claude -p` while keeping tmux TUI as an explicit/internal runtime path.
+- 11 providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok). v0.6.21 shipped Claude detached tmux TUI defaults and the third-party review remediation set.
 - Current unreleased workspace work: none.
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.

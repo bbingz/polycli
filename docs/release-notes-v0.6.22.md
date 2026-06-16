@@ -26,8 +26,8 @@ The Path B stance remains intact: provider modules stay flat, provider-specific 
 
 ## Release artifacts
 
-- GitHub release `v0.6.22`
-- npm `@bbingz/polycli-opencode@0.6.22`
-- npm `@bbingz/polycli@0.6.22`
+- GitHub release `v0.6.22`: https://github.com/bbingz/polycli/releases/tag/v0.6.22 (`publishedAt` `2026-06-16T02:52:57Z`)
+- npm `@bbingz/polycli-opencode@0.6.22` (`latest`, `time.modified` `2026-06-16T02:51:05.698Z`, shasum `09e36dbd10d2bc72257f3c27ed3b6b910809901e`)
+- npm `@bbingz/polycli@0.6.22` (`latest`, `time.modified` `2026-06-16T02:51:14.262Z`, shasum `28b00344f743ec0b37342242c80b81867b293c73`)
 
 Utility packages stay on the independent v1.x cadence (`@bbingz/polycli-utils@1.0.2`, `@bbingz/polycli-timing@1.0.1`).
