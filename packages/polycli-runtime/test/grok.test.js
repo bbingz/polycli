@@ -133,10 +133,10 @@ process.exit(2);
 
 test("getGrokAuthStatus infers login state from `grok models` without spending a model call", () => {
   const authed = getGrokAuthStatus(process.cwd(), {
-    runner: () => ({ error: null, status: 0, stdout: "You are logged in with grok.com.\n\nDefault model: grok-composer-2.5-fast\n", stderr: "" }),
+    runner: () => ({ error: null, status: 0, stdout: "You are logged in with grok.com.\n\nDefault model: grok-build\n", stderr: "" }),
   });
   assert.equal(authed.loggedIn, true);
-  assert.equal(authed.model, "grok-composer-2.5-fast");
+  assert.equal(authed.model, "grok-build");
 
   const loggedOut = getGrokAuthStatus(process.cwd(), {
     runner: () => ({ error: null, status: 1, stdout: "", stderr: "Please log in with `grok login`." }),

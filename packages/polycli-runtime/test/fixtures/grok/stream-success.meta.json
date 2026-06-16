@@ -1,0 +1,23 @@
+{
+  "provider": "grok",
+  "name": "stream-success",
+  "capturedAt": "2026-06-16T15:43:40Z",
+  "version": "grok 0.2.51 (f4f85a6492e) [stable]",
+  "argv": [
+    "-p",
+    "Reply with exactly HELLO_GROK_FIXTURE and nothing else.",
+    "--output-format",
+    "streaming-json",
+    "-m",
+    "grok-build",
+    "--permission-mode",
+    "plan",
+    "--disable-web-search",
+    "--max-turns",
+    "1"
+  ],
+  "expected": {
+    "response": "HELLO_GROK_FIXTURE",
+    "sessionId": "019ed119-dbb5-7271-a16e-316a12838ec5"
+  }
+}

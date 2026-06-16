@@ -18,9 +18,7 @@ const REQUIRED_SUCCESS_FIXTURE_PROVIDERS = [
   "qwen",
   "grok",
 ];
-const DEFAULT_MISSING_SUCCESS_ALLOWLIST = new Map([
-  ["grok", "pending first real grok streaming fixture capture"],
-]);
+const DEFAULT_MISSING_SUCCESS_ALLOWLIST = new Map();
 
 function walkMetaFiles(root, current = root) {
   const entries = fs.readdirSync(current, { withFileTypes: true });

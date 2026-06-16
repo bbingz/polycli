@@ -43,7 +43,7 @@ Status: closed as an active guardrail. CI, release publication, npm registry sta
 Current guardrails:
 
 - `npm run validate:bundles` checks that all five generated companion bundles are byte-identical after `npm test` rebuilds them.
-- `npm run validate:fixtures` checks real runtime fixture metadata has provider/name/capturedAt/version/argv/expected response fields, matching stream captures, and explicit allowlist rows for missing success fixtures.
+- `npm run validate:fixtures` checks real runtime fixture metadata has provider/name/capturedAt/version/argv/expected response fields, matching stream captures, and required success fixtures for every parser-backed provider.
 - `npm run validate:manifests` keeps host plugin versions and marketplace entries aligned.
 - `npm run validate:host-map` keeps host command docs and registered command surfaces aligned.
 - `npm run validate:codex-adapter` keeps Codex provider triggers, raw-CLI fallback rules, and health/status/result/timing observability guidance aligned.

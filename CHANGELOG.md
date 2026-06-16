@@ -6,16 +6,24 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-16 — Codex — Grok fixture residual cleanup
+
+- Closed the remaining workflow-review residual risk by capturing a real Grok streaming fixture with `grok 0.2.51 (f4f85a6492e) [stable]`: `grok -p 'Reply with exactly HELLO_GROK_FIXTURE and nothing else.' --output-format streaming-json -m grok-build --permission-mode plan --disable-web-search --max-turns 1`.
+- Added `packages/polycli-runtime/test/fixtures/grok/stream-success.*` and wired Grok into the table-driven fixture replay test, so Grok's real `thought` / `text` / `end` streaming shape is now parser-checked in CI.
+- Removed the default Grok missing-success allowlist from `validate:fixtures`; the command now checks 17 fixture metadata files and prints no missing-success allowlist rows.
+- Updated the hardcoded Grok fallback/default-model guidance from stale `grok-composer-2.5-fast` to current local default `grok-build`, and aligned the Grok plugin guidance skills plus fixture-capture docs.
+- Verification: `node --test packages/polycli-runtime/test/grok.test.js packages/polycli-runtime/test/fixture-replay-all.test.js scripts/tests/validate-fixture-metadata.test.mjs && node scripts/validate-fixture-metadata.mjs` passed; `node --test packages/polycli-runtime/test/*.test.js scripts/tests/validate-fixture-metadata.test.mjs && node scripts/validate-fixture-metadata.mjs && node scripts/check-fixture-freshness.mjs` passed with Grok fresh and older provider fixture-staleness warnings remaining warn-only; `npm test` passed 535/535; `npm run release:check` exit 0, including `validate:fixtures` at 17 checked and no allowlist output. Not published.
+
 ## 2026-06-16 — Codex — workflow review remediation sweep
 
 - Remediated the confirmed medium/low findings from the workflow deep review batch without changing the Path B architecture: no shared provider base class, no provider parser promotion into `polycli-utils`, and no timing-state collapse.
 - Hardened local privacy defaults: terminal fallback state now uses `~/.polycli/state` instead of shared OS temp; state/workspace/job dirs are created private; state, job config/result, ledger, timing, preview, and provider model cache writes use private modes where applicable.
 - Fixed background job lifecycle gaps: cancellation now records cancelled terminal ledger events, removes per-job config, cleans runtime `cleanupPaths`, and `MAX_JOBS` pruning preserves queued/running jobs. The queued-to-running parent write now uses a stale-write guard so an already-terminal worker result is not overwritten.
 - Fixed host/provider semantics: OpenCode host adapter treats every non-zero companion exit as failure even with stdout; Qwen forwards explicit `--model`; registry model fallback now prefers provider output, then explicit model, then cached/default model; Grok marks terminal error metadata or non-success stop reasons as failed while preserving partial text.
-- Closed observability/test/doc gaps: TUI recognizes `provider_decision:passed`, all captured runtime fixtures are replayed through provider parsers, fixture metadata now reports the explicit Grok success-fixture allowlist, sessions list/purge has companion wiring integration coverage, README/public-surface/host-map/docs drift was aligned, and CI now dry-runs the terminal package tarball.
+- Closed observability/test/doc gaps: TUI recognizes `provider_decision:passed`, all captured runtime fixtures are replayed through provider parsers, fixture metadata requires success fixtures for parser-backed providers, sessions list/purge has companion wiring integration coverage, README/public-surface/host-map/docs drift was aligned, and CI now dry-runs the terminal package tarball.
 - Stabilized the Claude tmux TUI fake-bin tests under full-suite parallel load by widening the test-only tmux timeout budget; this fixes the `tmux.jsonl` ENOENT flake seen during full-suite verification.
 - Verification: focused RED/GREEN tests for permissions, cancel cleanup, active job pruning, OpenCode non-zero exits, Qwen model forwarding, Grok terminal errors, TUI passed status, fixture replay/metadata, sessions CLI wiring, and queued-to-running stale writes; `node --test packages/polycli-runtime/test/claude.test.js` passed 28/28 after test stabilization; `npm test` passed 535/535; `npm run release:check` exit 0, including bundle/fixture/manifest/host-map/Codex adapter/review-drift checks, Claude plugin validation, and npm pack dry-runs for opencode/utils/timing/terminal.
-- Residual risk: Grok still lacks a real captured success fixture; this is now explicit in `validate:fixtures` output as an allowlisted missing fixture. Not published; this is current unreleased workspace work after v0.6.24.
+- Follow-up note: the remaining Grok real-fixture gap was closed in the later `Grok fixture residual cleanup` entry above. Not published; this is current unreleased workspace work after v0.6.24.
 
 ## 2026-06-16 — Codex — post-v0.6.24 latest-package review cleanup
 

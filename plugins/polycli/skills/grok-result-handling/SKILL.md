@@ -11,7 +11,7 @@ How to surface output from `/polycli:ask|rescue|review --provider grok`.
 - The visible answer is the companion payload's `response` (from grok's `text`). Present that; do
   NOT surface grok's `thought` (reasoning) channel unless the user asked to see reasoning.
 - `sessionId` (UUIDv7) is structured and trustworthy — quote it when offering a `--resume`.
-- `model` reflects the requested model (`grok-composer-2.5-fast` by default, or `grok-build`).
+- `model` reflects the requested model (`grok-build` by default).
 
 ## Health / errors
 - Ignore transient `ERROR worker quit ... UnexpectedContentType` lines on stderr when the run

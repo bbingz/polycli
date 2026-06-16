@@ -47,6 +47,8 @@ Two captures were recorded per provider:
 - `minimax`
   - `mmx text chat --message 'Reply with exactly HELLO_MINIMAX_FIXTURE and nothing else.' --output json --non-interactive`
   - `mmx text chat --message 'Reply with exactly HELLO_MINIMAX_FIXTURE_ALT and nothing else.' --output json --non-interactive`
+- `grok`
+  - `grok -p 'Reply with exactly HELLO_GROK_FIXTURE and nothing else.' --output-format streaming-json -m grok-build --permission-mode plan --disable-web-search --max-turns 1`
 
 ## Scrubbing Policy
 

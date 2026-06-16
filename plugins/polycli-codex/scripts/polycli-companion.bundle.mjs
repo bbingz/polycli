@@ -3872,7 +3872,7 @@ function runAgyPromptStreaming({
 var GROK_BIN = process.env.GROK_CLI_BIN || "grok";
 var DEFAULT_TIMEOUT_MS11 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS11 = 3e4;
-var DEFAULT_GROK_MODEL = "grok-composer-2.5-fast";
+var DEFAULT_GROK_MODEL = "grok-build";
 var GROK_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|not logged in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var SUCCESS_STOP_REASONS = /* @__PURE__ */ new Set(["endturn", "end_turn", "stop", "stop_sequence", "complete", "completed", "done", "finished"]);
 var TRANSIENT_PROBE_ERROR_PATTERNS11 = [

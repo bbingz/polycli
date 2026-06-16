@@ -1,0 +1,28 @@
+{"type":"thought","data":"The"}
+{"type":"thought","data":" user"}
+{"type":"thought","data":" query"}
+{"type":"thought","data":" is"}
+{"type":"thought","data":":"}
+{"type":"thought","data":" \""}
+{"type":"thought","data":"Reply"}
+{"type":"thought","data":" with"}
+{"type":"thought","data":" exactly"}
+{"type":"thought","data":" HEL"}
+{"type":"thought","data":"LO"}
+{"type":"thought","data":"_G"}
+{"type":"thought","data":"RO"}
+{"type":"thought","data":"K"}
+{"type":"thought","data":"_FIX"}
+{"type":"thought","data":"TURE"}
+{"type":"thought","data":" and"}
+{"type":"thought","data":" nothing"}
+{"type":"thought","data":" else"}
+{"type":"thought","data":".\n"}
+{"type":"text","data":"HEL"}
+{"type":"text","data":"LO"}
+{"type":"text","data":"_G"}
+{"type":"text","data":"RO"}
+{"type":"text","data":"K"}
+{"type":"text","data":"_FIX"}
+{"type":"text","data":"TURE"}
+{"type":"end","stopReason":"EndTurn","sessionId":"019ed119-dbb5-7271-a16e-316a12838ec5","requestId":"a6a18ccc-328c-434f-b599-413dfd370e70"}

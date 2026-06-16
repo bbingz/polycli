@@ -6,9 +6,8 @@ import { spawnStreamingCommand } from "./spawn.js";
 const GROK_BIN = process.env.GROK_CLI_BIN || "grok";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
-// `grok models` reports `Default model: grok-composer-2.5-fast` ("compose 2.5"); `grok-build` is
-// the other available model. Callers pass `-m <model>` to switch.
-const DEFAULT_GROK_MODEL = "grok-composer-2.5-fast";
+// `grok models` reports `Default model: grok-build`; callers pass `-m <model>` to switch.
+const DEFAULT_GROK_MODEL = "grok-build";
 const GROK_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|not logged in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 const SUCCESS_STOP_REASONS = new Set(["endturn", "end_turn", "stop", "stop_sequence", "complete", "completed", "done", "finished"]);
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
