@@ -90,7 +90,7 @@ The same four operations, across all four host adapters plus the Terminal CLI.
 
 ## Why the surfaces differ
 
-Claude Code first-classes user-visible slash-commands, so eleven separate command files produce better autocomplete and discoverability. Codex and Copilot express the same capabilities as a skill with an `$ARGUMENTS`-style dispatcher — the subcommand is data, not a separate registered handler. Codex does not register a user slash command for `polycli-codex`; install it from `/plugins` and invoke it as a skill. OpenCode is a tool-calling host, so the natural surface is JSON-schema'd tool functions. See `docs/roadmap.md` Q3 for the deeper question of whether to converge these surfaces; the current answer is "no, document the asymmetry instead."
+Claude Code first-classes user-visible slash-commands, so twelve separate command files produce better autocomplete and discoverability. Codex and Copilot express the same capabilities as a skill with an `$ARGUMENTS`-style dispatcher — the subcommand is data, not a separate registered handler. Codex does not register a user slash command for `polycli-codex`; install it from `/plugins` and invoke it as a skill. OpenCode is a tool-calling host, so the natural surface is JSON-schema'd tool functions. See `docs/roadmap.md` Q3 for the deeper question of whether to converge these surfaces; the current answer is "no, document the asymmetry instead."
 
 ## When this doc goes stale
 

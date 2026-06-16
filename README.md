@@ -25,7 +25,7 @@
 
 `polycli` lets you drive **`claude`**, **`gemini`**, **`kimi`**, **`qwen`**, **`copilot`**, **`opencode`**, **`pi`**, **`cmd`** (Command Code), **`agy`** (Antigravity), **`grok`** (xAI Grok), and **`mmx-cli`** (MiniMax) from a single command vocabulary — `health`, `ask`, `review`, `rescue`, `timing`, `debug`, background-job controls, and terminal inspection — inside whichever AI host you already use: Claude Code, Codex, GitHub Copilot CLI, or OpenCode.
 
-> **polycli is primarily an in-host plugin.** Each host adapter exposes the same `health / ask / review / rescue / timing / debug` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, an installed `polycli` skill in Codex). For environments without a supported host, the optional `@bbingz/polycli` terminal package adds a PATH-callable wrapper around the same companion. See [Outside a supported host](#outside-a-supported-host).
+> **polycli is primarily an in-host plugin.** Each host adapter exposes the same `health / ask / review / rescue / timing / debug / sessions` vocabulary through that host's native invocation style (e.g. `/polycli:health` in Claude Code, an installed `polycli` skill in Codex). For environments without a supported host, the optional `@bbingz/polycli` terminal package adds a PATH-callable wrapper around the same companion. See [Outside a supported host](#outside-a-supported-host).
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
@@ -181,6 +181,7 @@ All commands work identically across hosts:
 | `adversarial-review` | Attack-surface-oriented review |
 | `timing` | Inspect timing history and aggregates |
 | `debug` | Inspect redacted run-ledger history with `runs`, `show`, and `explain` |
+| `sessions` | List or `--confirm` purge upstream session artifacts recorded by polycli |
 | `tui` | Terminal-only read-only inspector for run-ledger/debug data |
 | `status` / `result` / `cancel` | Background-job control |
 

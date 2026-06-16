@@ -82,9 +82,9 @@ Stable semantics in v1:
 `@bbingz/polycli` is the v1 terminal/operator entry point. The stable contract is:
 
 - A `polycli` bin that forwards `argv` to the bundled companion.
-- The companion subcommand vocabulary: `setup`, `health`, `ask`, `rescue`, `review`, `adversarial-review`, `status`, `result`, `cancel`, `timing`, `debug`.
+- The companion subcommand vocabulary: `setup`, `health`, `ask`, `rescue`, `review`, `adversarial-review`, `status`, `result`, `cancel`, `timing`, `debug`, `sessions`.
 - Global `--run-id <id>` (or `POLYCLI_RUN_ID` env var) for joining a sequence of commands into one ledger run.
-- `review` and `adversarial-review` accept an optional `--max-diff-bytes <n>`. **Default is no cap** — the full git diff is sent to the provider. Pass a positive integer to opt into byte-truncation when the caller knows its own context budget is tight; the prompt then includes a `Diff truncated to N bytes before sending to provider.` notice. Zero or negative values are rejected with `code: "invalid_max_diff_bytes"`.
+- `review` and `adversarial-review` accept an optional `--max-diff-bytes <n>`. **Default is no cap** — the full git diff is sent to the provider. Omit the flag or pass `0` for no cap. Pass a positive integer to opt into byte-truncation when the caller knows its own context budget is tight; the prompt then includes a `Diff truncated to N bytes before sending to provider.` notice. Negative or non-numeric values are rejected with `code: "invalid_max_diff_bytes"`.
 
 Non-goals for this package:
 

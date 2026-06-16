@@ -1,4 +1,4 @@
-const TERMINAL_DECISION_STATUSES = new Set(["adopted", "failed", "skipped", "cancelled"]);
+const TERMINAL_DECISION_STATUSES = new Set(["adopted", "failed", "skipped", "cancelled", "passed"]);
 const TERMINAL_ATTEMPT_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 export function truncateMiddle(value, width) {

@@ -86,9 +86,9 @@ export function writeFileAtomic(filePath, contents, options = {}) {
   return filePath;
 }
 
-export function writeJsonAtomic(filePath, value, { spaces = 2, finalNewline = true } = {}) {
+export function writeJsonAtomic(filePath, value, { spaces = 2, finalNewline = true, mode = 0o666 } = {}) {
   const text = JSON.stringify(value, null, spaces) + (finalNewline ? "\n" : "");
-  return writeFileAtomic(filePath, text, "utf8");
+  return writeFileAtomic(filePath, text, { encoding: "utf8", mode });
 }
 
 function unlinkIfExists(filePath) {

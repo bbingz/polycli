@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -15,6 +15,10 @@ import {
   resolveRunLedgerFile,
   summarizeRunLedger,
 } from '../lib/run-ledger.mjs';
+
+async function fileMode(filePath) {
+  return (await stat(filePath)).mode & 0o777;
+}
 
 async function withTempWorkspace(fn) {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'polycli-ledger-'));
@@ -136,6 +140,21 @@ test('appendRunLedgerEvent round-trips sessionArtifactPath through NDJSON read-b
     assert.equal(events.length, 2);
     assert.equal(events[0].sessionArtifactPath, '/home/u/.claude/projects/-x/sess-art.jsonl');
     assert.equal(events[1].sessionArtifactPath, null);
+  });
+});
+
+test('appendRunLedgerEvent writes the run ledger privately', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-private-mode',
+      command: 'ask',
+      phase: 'attempt_result',
+      provider: 'qwen',
+      status: 'completed',
+      hostSurface: 'terminal',
+    });
+
+    assert.equal(await fileMode(resolveRunLedgerFile(workspaceRoot)), 0o600);
   });
 });
 

@@ -10,6 +10,7 @@ import {
 test("tui view model classifies provider decisions and unfinished worker attempts", () => {
   const events = [
     { runId: "run-a", provider: "qwen", phase: "provider_decision", status: "adopted", jobId: "job-q" },
+    { runId: "run-a", provider: "grok", phase: "provider_decision", status: "passed", reason: "health_ok" },
     { runId: "run-a", provider: "cmd", phase: "provider_decision", status: "failed", reason: "ask_failed", jobId: "job-c" },
     { runId: "run-a", provider: "pi", phase: "provider_decision", status: "skipped", reason: "health_failed" },
     { runId: "run-a", provider: "kimi", phase: "attempt_started", status: "started", jobId: "job-k", logFile: "/tmp/job-k.log" },
@@ -18,6 +19,8 @@ test("tui view model classifies provider decisions and unfinished worker attempt
   const states = classifyProviderStates(events);
 
   assert.equal(states.qwen.status, "adopted");
+  assert.equal(states.grok.status, "passed");
+  assert.equal(states.grok.reason, "health_ok");
   assert.equal(states.cmd.status, "failed");
   assert.equal(states.cmd.reason, "ask_failed");
   assert.equal(states.pi.status, "skipped");

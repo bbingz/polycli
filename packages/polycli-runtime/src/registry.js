@@ -336,6 +336,12 @@ export function listProviderRuntimes() {
   return PROVIDER_IDS.map((providerId) => getProviderRuntime(providerId));
 }
 
+function applyModelFallback(result, { model = null, defaultModel = null } = {}) {
+  if (result.model) return result;
+  const fallbackModel = model || defaultModel;
+  return fallbackModel ? { ...result, model: fallbackModel } : result;
+}
+
 export async function runProviderPrompt({
   provider,
   kind = "prompt",
@@ -350,9 +356,10 @@ export async function runProviderPrompt({
   const selectedRuntime = runtime ?? getProviderRuntime(provider);
   const result = await selectedRuntime.runPrompt({ ...options, defaultModel });
   const runtimePersistence = inferRuntimePersistence(provider, result);
-  const resultWithModel = result.model || !defaultModel
-    ? result
-    : { ...result, model: defaultModel };
+  const resultWithModel = applyModelFallback(result, {
+    model: options.model,
+    defaultModel,
+  });
   return attachPromptTiming(resultWithModel, {
     provider,
     kind,
@@ -404,9 +411,10 @@ export async function runProviderPromptStreaming({
   });
 
   const finishedAt = nowMs();
-  const resultWithModel = result.model || !defaultModel
-    ? result
-    : { ...result, model: defaultModel };
+  const resultWithModel = applyModelFallback(result, {
+    model: options.model,
+    defaultModel,
+  });
   const runtimePersistence = inferRuntimePersistence(provider, resultWithModel);
   return attachPromptTiming(resultWithModel, {
     provider,

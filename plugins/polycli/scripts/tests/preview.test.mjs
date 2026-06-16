@@ -10,6 +10,10 @@ import {
   resetPreviewTailCache,
 } from "../lib/preview.mjs";
 
+function fileMode(filePath) {
+  return fs.statSync(filePath).mode & 0o777;
+}
+
 test("previewText slices by code point without splitting emoji", () => {
   assert.equal(previewText("A😀BCDE", 5), "A😀BC…");
 });
@@ -44,4 +48,17 @@ test("appendPreview records agy text delta events", () => {
   appendPreview(logFile, "agy", { type: "text_delta", delta: "plain text" });
 
   assert.equal(fs.readFileSync(logFile, "utf8"), "plain text\n");
+  assert.equal(fileMode(logFile), 0o600);
+});
+
+test("appendPreview tightens an existing log file", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-preview-"));
+  const logFile = path.join(root, "preview.log");
+  fs.writeFileSync(logFile, "old\n", { encoding: "utf8", mode: 0o644 });
+
+  resetPreviewTailCache();
+  appendPreview(logFile, "agy", { type: "text_delta", delta: "new text" });
+
+  assert.equal(fs.readFileSync(logFile, "utf8"), "old\nnew text\n");
+  assert.equal(fileMode(logFile), 0o600);
 });

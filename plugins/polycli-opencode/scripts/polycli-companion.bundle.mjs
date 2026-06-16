@@ -161,9 +161,9 @@ function writeFileAtomic(filePath, contents, options = {}) {
   writeFileAtomicSync(filePath, contents, options);
   return filePath;
 }
-function writeJsonAtomic(filePath, value, { spaces = 2, finalNewline = true } = {}) {
+function writeJsonAtomic(filePath, value, { spaces = 2, finalNewline = true, mode = 438 } = {}) {
   const text = JSON.stringify(value, null, spaces) + (finalNewline ? "\n" : "");
-  return writeFileAtomic(filePath, text, "utf8");
+  return writeFileAtomic(filePath, text, { encoding: "utf8", mode });
 }
 function unlinkIfExists(filePath) {
   try {
@@ -2373,6 +2373,7 @@ function buildQwenInvocation({
   unsafeFlag = false,
   background = false,
   maxSteps = 20,
+  model,
   appendSystem,
   appendDirs,
   extraArgs = [],
@@ -2392,6 +2393,7 @@ function buildQwenInvocation({
   if (sessionId) args.push("--session-id", sessionId);
   else if (resumeLast) args.push("-c");
   else if (resumeId) args.push("-r", resumeId);
+  if (model) args.push("--model", model);
   args.push("--output-format", "stream-json");
   args.push("--approval-mode", effectiveApprovalMode);
   args.push("--max-session-turns", String(maxSteps));
@@ -2544,6 +2546,7 @@ function runQwenPrompt({
   unsafeFlag = false,
   background = false,
   maxSteps = 20,
+  model,
   appendSystem,
   appendDirs,
   extraArgs = [],
@@ -2558,6 +2561,7 @@ function runQwenPrompt({
     unsafeFlag,
     background,
     maxSteps,
+    model,
     appendSystem,
     appendDirs,
     extraArgs,
@@ -2604,6 +2608,7 @@ function runQwenPromptStreaming({
   unsafeFlag = false,
   background = false,
   maxSteps = 20,
+  model,
   appendSystem,
   appendDirs,
   extraArgs = [],
@@ -2621,6 +2626,7 @@ function runQwenPromptStreaming({
     unsafeFlag,
     background,
     maxSteps,
+    model,
     appendSystem,
     appendDirs,
     extraArgs,
@@ -3868,6 +3874,7 @@ var DEFAULT_TIMEOUT_MS11 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS11 = 3e4;
 var DEFAULT_GROK_MODEL = "grok-composer-2.5-fast";
 var GROK_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|not logged in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+var SUCCESS_STOP_REASONS = /* @__PURE__ */ new Set(["endturn", "end_turn", "stop", "stop_sequence", "complete", "completed", "done", "finished"]);
 var TRANSIENT_PROBE_ERROR_PATTERNS11 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
@@ -3901,11 +3908,32 @@ function extractGrokText(event) {
   if (event.type === "text" && typeof event.data === "string") return event.data;
   return "";
 }
+function normalizeStopReason(stopReason) {
+  return String(stopReason ?? "").trim().toLowerCase();
+}
+function isNonSuccessStopReason(stopReason) {
+  if (stopReason == null || stopReason === "") return false;
+  return !SUCCESS_STOP_REASONS.has(normalizeStopReason(stopReason));
+}
+function extractTerminalError(value) {
+  if (!value || typeof value !== "object") return null;
+  if (typeof value.error === "string" && value.error.trim()) return value.error.trim();
+  if (value.error && typeof value.error === "object") {
+    return extractTerminalError(value.error);
+  }
+  if (value.is_error === true || value.isError === true || value.type === "error") {
+    if (typeof value.message === "string" && value.message.trim()) return value.message.trim();
+    if (typeof value.data === "string" && value.data.trim()) return value.data.trim();
+    return "grok emitted a terminal error";
+  }
+  return null;
+}
 function parseGrokStreamText(text) {
   const events = [];
   let response = "";
   let sessionId = null;
   let stopReason = null;
+  let providerError = null;
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
     const trimmed = rawLine.trim();
     if (!trimmed.startsWith("{")) continue;
@@ -3916,6 +3944,7 @@ function parseGrokStreamText(text) {
       continue;
     }
     events.push(event);
+    providerError = providerError || extractTerminalError(event);
     if (event.type === "text" && typeof event.data === "string") {
       response += event.data;
     } else if (event.type === "end") {
@@ -3923,7 +3952,7 @@ function parseGrokStreamText(text) {
       stopReason = event.stopReason ?? stopReason;
     }
   }
-  return { events, response, sessionId, stopReason };
+  return { events, response, sessionId, stopReason, providerError };
 }
 function parseGrokJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
   const text = String(stdout ?? "");
@@ -3939,14 +3968,18 @@ function parseGrokJsonResult(stdout, stderr, status, { defaultModel = null } = {
     const parsed = JSON.parse(text.slice(jsonStart));
     const response = typeof parsed.text === "string" ? parsed.text : "";
     const hasVisibleText = Boolean(response.trim());
+    const providerError = extractTerminalError(parsed);
+    const stopReason = parsed.stopReason ?? null;
+    const stopReasonError = isNonSuccessStopReason(stopReason) ? `grok stopped with ${stopReason}` : null;
+    const error = providerError || stopReasonError || (hasVisibleText ? null : "grok produced no visible text");
     return {
-      ok: hasVisibleText,
+      ok: hasVisibleText && !providerError && !stopReasonError,
       response,
       // grok emits the session id structurally; never scan prose for a UUID.
       sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : null,
       model: defaultModel ?? DEFAULT_GROK_MODEL,
-      stopReason: parsed.stopReason ?? null,
-      error: hasVisibleText ? null : "grok produced no visible text",
+      stopReason,
+      error,
       status
     };
   } catch (error) {
@@ -4069,8 +4102,9 @@ function runGrokPromptStreaming({
   }).then((result) => {
     const parsed = parseGrokStreamText(result.stdout);
     const hasVisibleText = Boolean(parsed.response.trim());
-    const ok = result.ok && hasVisibleText;
-    const error = ok ? null : result.ok ? "grok produced no visible text" : result.error;
+    const stopReasonError = isNonSuccessStopReason(parsed.stopReason) ? `grok stopped with ${parsed.stopReason}` : null;
+    const ok = result.ok && hasVisibleText && !parsed.providerError && !stopReasonError;
+    const error = ok ? null : parsed.providerError || stopReasonError || (result.ok ? "grok produced no visible text" : result.error);
     return {
       ...result,
       ...parsed,
@@ -4727,6 +4761,11 @@ function getProviderRuntime(providerId) {
 function listProviderRuntimes() {
   return PROVIDER_IDS.map((providerId) => getProviderRuntime(providerId));
 }
+function applyModelFallback(result, { model = null, defaultModel = null } = {}) {
+  if (result.model) return result;
+  const fallbackModel = model || defaultModel;
+  return fallbackModel ? { ...result, model: fallbackModel } : result;
+}
 async function runProviderPromptStreaming({
   provider,
   kind = "prompt",
@@ -4765,7 +4804,10 @@ async function runProviderPromptStreaming({
     }
   });
   const finishedAt = nowMs();
-  const resultWithModel = result.model || !defaultModel ? result : { ...result, model: defaultModel };
+  const resultWithModel = applyModelFallback(result, {
+    model: options.model,
+    defaultModel
+  });
   const runtimePersistence = inferRuntimePersistence(provider, resultWithModel);
   return attachPromptTiming(resultWithModel, {
     provider,
@@ -4891,7 +4933,10 @@ var JOBS_DIR_NAME = "jobs";
 var MAX_JOBS = 100;
 var POLYCLI_STATE_ROOT_ENV = "POLYCLI_STATE_ROOT";
 var PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
-var FALLBACK_STATE_ROOT = path3.join(os2.tmpdir(), "polycli-companion");
+var PRIVATE_DIR_MODE = 448;
+var PRIVATE_FILE_MODE = 384;
+var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["queued", "running"]);
+var FALLBACK_STATE_ROOT = path3.join(os2.homedir() || os2.tmpdir(), ".polycli", "state");
 function runCommand2(command, args = [], options = {}) {
   const result = spawnSync2(command, args, {
     cwd: options.cwd,
@@ -4950,7 +4995,7 @@ function describeStateRoot() {
   }
   return {
     stateRoot: FALLBACK_STATE_ROOT,
-    source: "temp"
+    source: "home"
   };
 }
 function stateRootDir() {
@@ -4981,8 +5026,26 @@ function resolveJobLogFile(workspaceRoot, jobId) {
 function resolveJobConfigFile(workspaceRoot, jobId) {
   return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
 }
+function chmodPrivateDir(dir) {
+  try {
+    fs3.chmodSync(dir, PRIVATE_DIR_MODE);
+  } catch {
+  }
+}
+function ensurePrivateDir(dir) {
+  fs3.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
+  chmodPrivateDir(dir);
+}
 function ensureStateDir(workspaceRoot) {
-  fs3.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
+  ensurePrivateDir(stateRootDir());
+  ensurePrivateDir(resolveStateDir(workspaceRoot));
+  ensurePrivateDir(resolveJobsDir(workspaceRoot));
+}
+function pruneJobsForSave(jobs) {
+  const sorted = jobs.slice().sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
+  const active = sorted.filter((job) => ACTIVE_STATUSES.has(job.status));
+  const terminal = sorted.filter((job) => !ACTIVE_STATUSES.has(job.status)).slice(0, MAX_JOBS);
+  return [...active, ...terminal].sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
 }
 function loadState(workspaceRoot) {
   const stateFile = resolveStateFile(workspaceRoot);
@@ -5011,9 +5074,9 @@ function loadState(workspaceRoot) {
 }
 function saveState(workspaceRoot, state) {
   ensureStateDir(workspaceRoot);
-  const jobs = state.jobs.slice().sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || "")).slice(0, MAX_JOBS);
+  const jobs = pruneJobsForSave(state.jobs);
   const config = state.config && typeof state.config === "object" ? state.config : {};
-  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs });
+  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs }, { mode: PRIVATE_FILE_MODE });
   return { version: STATE_VERSION, config, jobs };
 }
 function updateState(workspaceRoot, mutate) {
@@ -5041,7 +5104,7 @@ function updateJobAtomically(workspaceRoot, jobId, buildNext) {
       return { written: false, job: null, envelope: next.envelope ?? null };
     }
     if (Object.prototype.hasOwnProperty.call(next, "envelope")) {
-      writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), next.envelope);
+      writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), next.envelope, { mode: PRIVATE_FILE_MODE });
     }
     if (index >= 0) {
       state.jobs[index] = job;
@@ -5102,7 +5165,7 @@ function recordLastUsedProvider(workspaceRoot, provider) {
 }
 function writeJobFile(workspaceRoot, jobId, payload) {
   ensureStateDir(workspaceRoot);
-  writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), payload);
+  writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
   return resolveJobFile(workspaceRoot, jobId);
 }
 function readJobFile(jobFile) {
@@ -5114,7 +5177,7 @@ function readJobFile(jobFile) {
 }
 function writeJobConfigFile(workspaceRoot, jobId, payload) {
   ensureStateDir(workspaceRoot);
-  writeJsonAtomic(resolveJobConfigFile(workspaceRoot, jobId), payload);
+  writeJsonAtomic(resolveJobConfigFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
   return resolveJobConfigFile(workspaceRoot, jobId);
 }
 function readJobConfigFile(configFile) {
@@ -5144,6 +5207,13 @@ function safeParseLine(line) {
     return null;
   }
 }
+function chmodIfRequested(filePath, mode) {
+  if (mode === 438) return;
+  try {
+    fs4.chmodSync(filePath, mode);
+  } catch {
+  }
+}
 function readNdjson(filePath) {
   let text;
   try {
@@ -5168,7 +5238,7 @@ function readNdjson(filePath) {
   }
   return records;
 }
-function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs = 25, maxBytes = null, keepRatio = 0.5 } = {}) {
+function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs = 25, maxBytes = null, keepRatio = 0.5, mode = 438 } = {}) {
   const lockPath = `${filePath}.lock`;
   return withLockfile(lockPath, () => {
     ensureParentDir(filePath);
@@ -5192,7 +5262,8 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
     }
     const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}
 `;
-    fs4.appendFileSync(filePath, line, "utf8");
+    fs4.appendFileSync(filePath, line, { encoding: "utf8", mode });
+    chmodIfRequested(filePath, mode);
     if (maxBytes != null) {
       const stat = fs4.statSync(filePath);
       if (stat.size > maxBytes) {
@@ -5201,7 +5272,8 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
         const keepFrom = Math.floor(valid.length * (1 - keepRatio));
         const kept = valid.slice(keepFrom);
         writeFileAtomic(filePath, `${kept.join("\n")}
-`, "utf8");
+`, { encoding: "utf8", mode });
+        chmodIfRequested(filePath, mode);
       }
     }
     return true;
@@ -5211,6 +5283,7 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
 // plugins/polycli/scripts/lib/run-ledger.mjs
 var MAX_LEDGER_BYTES = 2e6;
 var KEEP_RATIO = 0.5;
+var PRIVATE_FILE_MODE2 = 384;
 var RUN_ID_RE = /^[A-Za-z0-9_.-]{1,96}$/;
 var SECRET_LONG_OPT_RE = /(token|secret|password|api-?key|access-?key|credential)/i;
 var SECRET_ENV_KEY_RE = /(TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_KEY|CREDENTIAL)/i;
@@ -5394,7 +5467,7 @@ function appendRunLedgerEvent(workspaceRoot, event) {
     workspaceRoot: workspaceRoot ?? event.workspaceRoot ?? null,
     workspaceSlug: event.workspaceSlug ?? workspaceSlug
   });
-  appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO });
+  appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO, mode: PRIVATE_FILE_MODE2 });
   return full;
 }
 function readRunLedgerEvents(workspaceRoot) {
@@ -5695,7 +5768,7 @@ function defaultHomedir() {
 }
 
 // plugins/polycli/scripts/lib/job-control.mjs
-var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["queued", "running"]);
+var ACTIVE_STATUSES2 = /* @__PURE__ */ new Set(["queued", "running"]);
 var TERMINAL_STATUSES = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
 var DEFAULT_STATUS_LIMIT = 8;
 function isProcessAlive(pid) {
@@ -5733,7 +5806,11 @@ function hasLedgerPhase(events, runId, jobId, phase) {
 function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason = "worker_exited" } = {}) {
   const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
   const runContext = config?.runContext;
-  if (!runContext?.runId) return;
+  if (!runContext?.runId) {
+    cleanupRuntimePaths(config);
+    removeJobConfigFile(workspaceRoot, job.jobId);
+    return;
+  }
   const recoverLock = `${resolveRunLedgerFile(workspaceRoot)}.recover.lock`;
   withLockfile(recoverLock, () => writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result, reason }));
 }
@@ -5742,8 +5819,9 @@ function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
   const command = runContext.command || config?.execution?.kind || job.kind || null;
   const provider = runContext.provider || config?.execution?.provider || job.provider || null;
   const kind = runContext.kind || config?.execution?.kind || job.kind || command;
-  const status = result?.ok ? "completed" : "failed";
-  const decisionStatus = result?.ok ? "adopted" : "failed";
+  const cancelled = reason === "cancelled" || job.status === "cancelled" || result?.error === "cancelled";
+  const status = cancelled ? "cancelled" : result?.ok ? "completed" : "failed";
+  const decisionStatus = cancelled ? "cancelled" : result?.ok ? "adopted" : "failed";
   const decisionReason = result?.ok ? null : reason;
   const errorMessage = result?.ok ? null : result?.error || job.error || "worker exited before writing a result envelope";
   const recoveredSessionId = result?.sessionId ?? job.sessionId ?? null;
@@ -5799,10 +5877,22 @@ function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
       reason: decisionReason
     });
   }
+  cleanupRuntimePaths(config);
   removeJobConfigFile(workspaceRoot, job.jobId);
 }
+function cleanupRuntimePaths(config) {
+  const cleanupPaths = config?.execution?.runtimeOptions?.cleanupPaths;
+  if (!Array.isArray(cleanupPaths)) return;
+  for (const cleanupPath of cleanupPaths) {
+    if (typeof cleanupPath !== "string" || !cleanupPath) continue;
+    try {
+      fs6.rmSync(cleanupPath, { recursive: true, force: true });
+    } catch {
+    }
+  }
+}
 function refreshJob(workspaceRoot, job) {
-  if (!job || !ACTIVE_STATUSES.has(job.status)) {
+  if (!job || !ACTIVE_STATUSES2.has(job.status)) {
     return job ? enrichJob(workspaceRoot, job) : null;
   }
   if (!job.pid || isProcessAlive(job.pid)) {
@@ -5842,7 +5932,7 @@ function buildStatusSnapshot(workspaceRoot, { showAll = false } = {}) {
   const limited = showAll ? refreshed : refreshed.slice(0, DEFAULT_STATUS_LIMIT);
   return {
     totalJobs: refreshed.length,
-    running: limited.filter((job) => ACTIVE_STATUSES.has(job.status)),
+    running: limited.filter((job) => ACTIVE_STATUSES2.has(job.status)),
     recent: limited.filter((job) => TERMINAL_STATUSES.has(job.status))
   };
 }
@@ -5861,7 +5951,7 @@ function resolveJobReference(workspaceRoot, reference, predicate = () => true) {
   return null;
 }
 function resolveLatestActiveJob(workspaceRoot) {
-  return resolveJobReference(workspaceRoot, null, (job) => ACTIVE_STATUSES.has(job.status));
+  return resolveJobReference(workspaceRoot, null, (job) => ACTIVE_STATUSES2.has(job.status));
 }
 function resolveLatestTerminalJob(workspaceRoot) {
   return resolveJobReference(workspaceRoot, null, (job) => TERMINAL_STATUSES.has(job.status));
@@ -5874,7 +5964,7 @@ async function waitForJob(workspaceRoot, jobId, { timeoutMs = 24e4, pollInterval
       return { error: "job_not_found", job: null, waitTimedOut: false };
     }
     const refreshed = refreshJob(workspaceRoot, current);
-    if (!ACTIVE_STATUSES.has(refreshed.status)) {
+    if (!ACTIVE_STATUSES2.has(refreshed.status)) {
       return { job: refreshed, waitTimedOut: false };
     }
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
@@ -5891,7 +5981,7 @@ async function cancelJob(workspaceRoot, jobId) {
       reason = "not_found";
       return null;
     }
-    if (!ACTIVE_STATUSES.has(current.status)) {
+    if (!ACTIVE_STATUSES2.has(current.status)) {
       reason = "not_cancellable";
       return null;
     }
@@ -5916,6 +6006,10 @@ async function cancelJob(workspaceRoot, jobId) {
   if (!write.written) {
     return { cancelled: false, reason: reason || "not_cancellable", jobId };
   }
+  recoverLedgerTerminalEvents(workspaceRoot, write.job, {
+    result: write.envelope?.result || { ok: false, error: "cancelled" },
+    reason: "cancelled"
+  });
   if (pidToKill) {
     try {
       await terminateProcessTree(pidToKill, {
@@ -6379,6 +6473,7 @@ function buildReviewPrompt({
 import path7 from "node:path";
 var TIMING_FILE_NAME = "timings.ndjson";
 var MAX_TIMING_BYTES = 2e6;
+var PRIVATE_FILE_MODE3 = 384;
 function resolveTimingHistoryFile(workspaceRoot) {
   return path7.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
 }
@@ -6401,7 +6496,8 @@ function appendTimingRecord(workspaceRoot, record) {
   ensureStateDir(workspaceRoot);
   appendNdjson(resolveTimingHistoryFile(workspaceRoot), record, {
     maxBytes: MAX_TIMING_BYTES,
-    keepRatio: 0.5
+    keepRatio: 0.5,
+    mode: PRIVATE_FILE_MODE3
   });
   return true;
 }
@@ -6420,6 +6516,7 @@ function summarizeTimingRecords(records) {
 import fs8 from "node:fs";
 var PREVIEW_MAX_LINES = 10;
 var PREVIEW_TAIL_CACHE = /* @__PURE__ */ new Map();
+var PRIVATE_FILE_MODE4 = 384;
 function collapseWhitespace(text) {
   return String(text ?? "").replace(/\s+/g, " ").trim();
 }
@@ -6515,7 +6612,13 @@ function appendPreview(logFile, provider, event, { fsImpl = fs8, tailCache = PRE
     return;
   }
   fsImpl.appendFileSync(logFile, `${lines.join("\n")}
-`, "utf8");
+`, { encoding: "utf8", mode: PRIVATE_FILE_MODE4 });
+  if (fsImpl === fs8) {
+    try {
+      fs8.chmodSync(logFile, PRIVATE_FILE_MODE4);
+    } catch {
+    }
+  }
   tailCache.set(logFile, [...currentTail, ...lines].slice(-PREVIEW_MAX_LINES));
 }
 
@@ -6692,9 +6795,9 @@ function readCachedProviderModel(workspaceRoot, provider) {
 function cacheProviderModel(workspaceRoot, provider, model) {
   if (typeof model !== "string" || !model.trim()) return;
   const cacheFile = resolveProviderModelCacheFile(workspaceRoot);
-  fs9.mkdirSync(path8.dirname(cacheFile), { recursive: true });
+  fs9.mkdirSync(path8.dirname(cacheFile), { recursive: true, mode: 448 });
   withLockfile(`${cacheFile}.lock`, () => {
-    writeJsonAtomic(cacheFile, { ...readProviderModelCache(workspaceRoot), [provider]: model });
+    writeJsonAtomic(cacheFile, { ...readProviderModelCache(workspaceRoot), [provider]: model }, { mode: 384 });
   });
 }
 async function inspectProvider(provider) {
@@ -7131,8 +7234,11 @@ async function startBackgroundExecution(execution, asJson) {
     runContext
   });
   fs9.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
-`, "utf8");
-  const logFd = fs9.openSync(job.logFile, "a");
+`, {
+    encoding: "utf8",
+    mode: 384
+  });
+  const logFd = fs9.openSync(job.logFile, "a", 384);
   const child = spawn2(process5.execPath, [COMPANION_PATH, "_job-worker", resolveJobConfigFile(workspaceRoot, job.jobId)], {
     cwd: execution.cwd,
     env: { ...process5.env },
@@ -7141,11 +7247,18 @@ async function startBackgroundExecution(execution, asJson) {
   });
   child.unref();
   fs9.closeSync(logFd);
-  const runningJob = upsertJob(workspaceRoot, {
-    ...job,
-    status: "running",
-    pid: child.pid ?? null
+  const runningWrite = updateJobAtomically(workspaceRoot, job.jobId, (latest) => {
+    if (!latest || latest.status !== "queued") return null;
+    return {
+      job: {
+        ...latest,
+        status: "running",
+        pid: child.pid ?? null,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    };
   });
+  const runningJob = runningWrite.written ? runningWrite.job : getJob(workspaceRoot, job.jobId) || job;
   if (runContext) {
     await recordRunEventForContext(workspaceRoot, runContext, {
       command: execution.kind,

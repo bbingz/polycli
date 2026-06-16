@@ -12,6 +12,7 @@ import {
 
 const TIMING_FILE_NAME = "timings.ndjson";
 const MAX_TIMING_BYTES = 2_000_000;
+const PRIVATE_FILE_MODE = 0o600;
 
 export function resolveTimingHistoryFile(workspaceRoot) {
   return path.join(resolveStateDir(workspaceRoot), TIMING_FILE_NAME);
@@ -38,6 +39,7 @@ export function appendTimingRecord(workspaceRoot, record) {
   appendNdjson(resolveTimingHistoryFile(workspaceRoot), record, {
     maxBytes: MAX_TIMING_BYTES,
     keepRatio: 0.5,
+    mode: PRIVATE_FILE_MODE,
   });
   return true;
 }

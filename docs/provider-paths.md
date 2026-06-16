@@ -23,7 +23,7 @@ This table is a routing reference for humans and host adapters. It is not an aut
 
 ## Review procedure
 
-Run:
+Run the automated review-flag subset first, then the manual provider-path probes:
 
 ```bash
 npm run check:provider-paths
@@ -40,6 +40,8 @@ pi --help
 agy --help
 grok --help
 ```
+
+`npm run check:provider-paths` currently aliases `check-review-cli-drift`; it verifies the automatable review hard-constraint flags only. The remaining commands in this section are the manual provider-path review.
 
 If a CLI is not installed locally, record it as skipped rather than failing the release. If a checked flag disappears, update `plugins/polycli/scripts/lib/review.mjs`, `plugins/polycli/scripts/lib/prompt-runtime.mjs`, tests, and this table in the same change.
 

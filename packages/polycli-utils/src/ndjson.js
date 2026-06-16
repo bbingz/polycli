@@ -10,6 +10,15 @@ function safeParseLine(line) {
   }
 }
 
+function chmodIfRequested(filePath, mode) {
+  if (mode === 0o666) return;
+  try {
+    fs.chmodSync(filePath, mode);
+  } catch {
+    // best-effort hardening for existing files
+  }
+}
+
 export function readNdjson(filePath) {
   let text;
   try {
@@ -48,7 +57,7 @@ export function tailNdjson(filePath, count) {
 export function appendNdjson(
   filePath,
   record,
-  { timeoutMs = 10_000, staleMs = 30_000, pollMs = 25, maxBytes = null, keepRatio = 0.5 } = {}
+  { timeoutMs = 10_000, staleMs = 30_000, pollMs = 25, maxBytes = null, keepRatio = 0.5, mode = 0o666 } = {}
 ) {
   const lockPath = `${filePath}.lock`;
   return withLockfile(lockPath, () => {
@@ -74,7 +83,8 @@ export function appendNdjson(
     }
 
     const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}\n`;
-    fs.appendFileSync(filePath, line, "utf8");
+    fs.appendFileSync(filePath, line, { encoding: "utf8", mode });
+    chmodIfRequested(filePath, mode);
 
     if (maxBytes != null) {
       const stat = fs.statSync(filePath);
@@ -86,7 +96,8 @@ export function appendNdjson(
         const valid = lines.filter((entry) => safeParseLine(entry) != null);
         const keepFrom = Math.floor(valid.length * (1 - keepRatio));
         const kept = valid.slice(keepFrom);
-        writeFileAtomic(filePath, `${kept.join("\n")}\n`, "utf8");
+        writeFileAtomic(filePath, `${kept.join("\n")}\n`, { encoding: "utf8", mode });
+        chmodIfRequested(filePath, mode);
       }
     }
 

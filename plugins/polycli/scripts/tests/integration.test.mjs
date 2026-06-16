@@ -2534,6 +2534,73 @@ test("integration: debug explain returns provider decisions", async (t) => {
   assert.match(json.text, /qwen adopted/);
 });
 
+test("integration: sessions list and purge wire through companion argv and recorded ledger paths", async (t) => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "polycli-home-")));
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-sessions-state-"));
+  const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "polycli-sessions-cwd-")));
+  t.after(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(pluginData, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+  const env = cleanEnv({ HOME: home, CLAUDE_PLUGIN_DATA: pluginData });
+  const sessionId = "11111111-1111-4111-8111-111111111111";
+  const artifactDir = path.join(home, ".claude", "projects", cwd.replaceAll("/", "-"));
+  const artifact = path.join(artifactDir, `${sessionId}.jsonl`);
+  fs.mkdirSync(artifactDir, { recursive: true });
+  fs.writeFileSync(artifact, "{}\n", "utf8");
+
+  const previousPluginData = process.env.CLAUDE_PLUGIN_DATA;
+  process.env.CLAUDE_PLUGIN_DATA = pluginData;
+  try {
+    await appendRunLedgerEvent(cwd, {
+      runId: "run-sessions",
+      command: "ask",
+      phase: "attempt_result",
+      provider: "claude",
+      status: "completed",
+      sessionId,
+      sessionArtifactPath: artifact,
+      hostSurface: "terminal",
+    });
+    await appendRunLedgerEvent(cwd, {
+      runId: "run-sessions",
+      command: "ask",
+      phase: "attempt_result",
+      provider: "gemini",
+      status: "completed",
+      sessionId: "gemini-session",
+      sessionArtifactPath: null,
+      hostSurface: "terminal",
+    });
+  } finally {
+    if (previousPluginData == null) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = previousPluginData;
+  }
+
+  const list = await runCompanion(["sessions", "list", "--json"], { cwd, env });
+  assert.equal(list.code, 0, list.stderr);
+  const listed = JSON.parse(list.stdout);
+  assert.equal(listed.recorded.length, 1);
+  assert.equal(listed.recorded[0].sessionArtifactPath, artifact);
+  assert.equal(listed.nonPurgeable.length, 1);
+  assert.equal(listed.nonPurgeable[0].provider, "gemini");
+
+  const dryRun = await runCompanion(["sessions", "purge", "--json"], { cwd, env });
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  const dryPayload = JSON.parse(dryRun.stdout);
+  assert.equal(dryPayload.confirmed, false);
+  assert.equal(dryPayload.plan.deletable.length, 1);
+  assert.equal(fs.existsSync(artifact), true);
+
+  const confirm = await runCompanion(["sessions", "purge", "--confirm", "--json"], { cwd, env });
+  assert.equal(confirm.code, 0, confirm.stderr);
+  const confirmPayload = JSON.parse(confirm.stdout);
+  assert.equal(confirmPayload.confirmed, true);
+  assert.equal(confirmPayload.summary.deleted, 1);
+  assert.equal(fs.existsSync(artifact), false);
+});
+
 function createBackgroundLedgerContext(t, extraEnv = {}) {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "polycli-bg-ledger-cwd-")));

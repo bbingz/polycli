@@ -76,7 +76,11 @@ function hasLedgerPhase(events, runId, jobId, phase) {
 function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason = "worker_exited" } = {}) {
   const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
   const runContext = config?.runContext;
-  if (!runContext?.runId) return;
+  if (!runContext?.runId) {
+    cleanupRuntimePaths(config);
+    removeJobConfigFile(workspaceRoot, job.jobId);
+    return;
+  }
 
   // Serialize the whole read -> hasLedgerPhase -> append -> removeConfig across processes.
   // appendRunLedgerEvent only locks its own single append, so two concurrent refreshJob() callers
@@ -92,8 +96,9 @@ function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
   const command = runContext.command || config?.execution?.kind || job.kind || null;
   const provider = runContext.provider || config?.execution?.provider || job.provider || null;
   const kind = runContext.kind || config?.execution?.kind || job.kind || command;
-  const status = result?.ok ? "completed" : "failed";
-  const decisionStatus = result?.ok ? "adopted" : "failed";
+  const cancelled = reason === "cancelled" || job.status === "cancelled" || result?.error === "cancelled";
+  const status = cancelled ? "cancelled" : (result?.ok ? "completed" : "failed");
+  const decisionStatus = cancelled ? "cancelled" : (result?.ok ? "adopted" : "failed");
   const decisionReason = result?.ok ? null : reason;
   const errorMessage = result?.ok ? null : (result?.error || job.error || "worker exited before writing a result envelope");
 
@@ -162,7 +167,21 @@ function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
     });
   }
 
+  cleanupRuntimePaths(config);
   removeJobConfigFile(workspaceRoot, job.jobId);
+}
+
+function cleanupRuntimePaths(config) {
+  const cleanupPaths = config?.execution?.runtimeOptions?.cleanupPaths;
+  if (!Array.isArray(cleanupPaths)) return;
+  for (const cleanupPath of cleanupPaths) {
+    if (typeof cleanupPath !== "string" || !cleanupPath) continue;
+    try {
+      fs.rmSync(cleanupPath, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup; cancellation must remain idempotent
+    }
+  }
 }
 
 export function refreshJob(workspaceRoot, job) {
@@ -295,6 +314,10 @@ export async function cancelJob(workspaceRoot, jobId) {
   if (!write.written) {
     return { cancelled: false, reason: reason || "not_cancellable", jobId };
   }
+  recoverLedgerTerminalEvents(workspaceRoot, write.job, {
+    result: write.envelope?.result || { ok: false, error: "cancelled" },
+    reason: "cancelled",
+  });
 
   if (pidToKill) {
     try {

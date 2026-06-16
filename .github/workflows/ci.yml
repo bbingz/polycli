@@ -53,5 +53,6 @@ jobs:
       - name: Check public package tarballs
         run: |
           npm pack ./plugins/polycli-opencode --dry-run
+          npm pack ./packages/polycli-terminal --dry-run
           npm pack ./packages/polycli-utils --dry-run
           npm pack ./packages/polycli-timing --dry-run

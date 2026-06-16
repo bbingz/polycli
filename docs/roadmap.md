@@ -43,16 +43,16 @@ Status: closed as an active guardrail. CI, release publication, npm registry sta
 Current guardrails:
 
 - `npm run validate:bundles` checks that all five generated companion bundles are byte-identical after `npm test` rebuilds them.
-- `npm run validate:fixtures` checks real runtime fixture metadata has provider/name/capturedAt/version/argv/expected response fields.
+- `npm run validate:fixtures` checks real runtime fixture metadata has provider/name/capturedAt/version/argv/expected response fields, matching stream captures, and explicit allowlist rows for missing success fixtures.
 - `npm run validate:manifests` keeps host plugin versions and marketplace entries aligned.
 - `npm run validate:host-map` keeps host command docs and registered command surfaces aligned.
 - `npm run validate:codex-adapter` keeps Codex provider triggers, raw-CLI fallback rules, and health/status/result/timing observability guidance aligned.
 - `scripts/tests/open-source-hygiene.test.mjs` scans tracked files for maintainer-local paths and provider-private metadata.
 - `scripts/tests/open-source-packaging.test.mjs` verifies public package export targets, license files, and explicit publish surfaces.
-- GitHub Actions runs Node 20 install, audit, tests, generated-bundle validation, fixture metadata validation, release manifest validation, host-map validation, Codex adapter validation, and tarball dry-runs.
+- GitHub Actions runs Node 20 install, audit, tests, generated-bundle validation, fixture metadata validation, release manifest validation, host-map validation, Codex adapter validation, and tarball dry-runs for all public npm packages including the terminal CLI.
 - `npm run check:review-drift` watches provider review hard-constraint flags that can be checked from local CLI help.
 - `npm run check:fixture-freshness` warns when version-pinned fixtures lag locally installed provider CLIs; it is intentionally warn-only by default.
-- `npm run check:provider-paths` is the periodic provider-path review command; keep it aligned with `docs/provider-paths.md`.
+- `npm run check:provider-paths` is the automatable review-flag subset of the periodic provider-path review; keep it aligned with the manual checklist in `docs/provider-paths.md`.
 
 Watch items:
 

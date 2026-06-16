@@ -17,6 +17,8 @@ import {
   runClaudePromptStreaming,
 } from "../src/index.js";
 
+const TMUX_TEST_TIMEOUT_MS = 5_000;
+
 function withFakeClaudeBin(source, fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-claude-sync-"));
   const bin = path.join(root, "claude");
@@ -482,7 +484,7 @@ process.exit(0);
         tmuxBin: bin,
         tmuxSessionName: "polycli-claude-signal",
         executionMode: "tmux-tui",
-        timeout: 1_000,
+        timeout: TMUX_TEST_TIMEOUT_MS,
         env: { ...process.env, TMUX_ARGV_LOG: logFile },
         signalEmitter: new ImmediateSigtermEmitter(),
       });
@@ -524,7 +526,7 @@ process.exit(0);
         tmuxBin: bin,
         tmuxSessionName: "polycli-claude-not-ready",
         executionMode: "tmux-tui",
-        timeout: 1_000,
+        timeout: TMUX_TEST_TIMEOUT_MS,
         env: { ...process.env, TMUX_ARGV_LOG: logFile },
       });
 
@@ -568,7 +570,7 @@ process.exit(0);
         tmuxBin: bin,
         tmuxSessionName: "polycli-claude-no-paste",
         executionMode: "tmux-tui",
-        timeout: 1_000,
+        timeout: TMUX_TEST_TIMEOUT_MS,
         env: { ...process.env, TMUX_ARGV_LOG: logFile, TMUX_STATE_FILE: stateFile },
       });
 
@@ -612,7 +614,7 @@ process.exit(0);
         tmuxBin: bin,
         tmuxSessionName: "polycli-claude-paste-fails",
         executionMode: "tmux-tui",
-        timeout: 1_000,
+        timeout: TMUX_TEST_TIMEOUT_MS,
         env: { ...process.env, TMUX_ARGV_LOG: logFile },
       });
 

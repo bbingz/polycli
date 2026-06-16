@@ -335,3 +335,70 @@ test("cancelJob rejects terminal jobs", async () => {
     assert.equal(report.reason, "not_cancellable");
   });
 });
+
+test("cancelJob records cancelled ledger events, removes config, and cleans runtime paths", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const cleanupDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-cancel-cleanup-"));
+    fs.writeFileSync(path.join(cleanupDir, "review.diff"), "private diff\n", "utf8");
+    const logFile = resolveJobLogFile(workspaceRoot, "job-cancel");
+
+    upsertJob(workspaceRoot, {
+      jobId: "job-cancel",
+      provider: "gemini",
+      kind: "review",
+      status: "running",
+      pid: null,
+      logFile,
+    });
+    writeJobConfigFile(workspaceRoot, "job-cancel", {
+      workspaceRoot,
+      jobId: "job-cancel",
+      execution: {
+        provider: "gemini",
+        kind: "review",
+        model: "gemini-test",
+        runtimeOptions: {
+          cleanupPaths: [cleanupDir],
+        },
+      },
+      runContext: {
+        runId: "run-cancel",
+        command: "review",
+        hostSurface: "terminal",
+        rawArgs: ["review", "--provider", "gemini", "<prompt:redacted>"],
+        jobId: "job-cancel",
+        provider: "gemini",
+        kind: "review",
+        model: "gemini-test",
+        logFile,
+      },
+    });
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: "run-cancel",
+      command: "review",
+      commands: ["review"],
+      kind: "review",
+      provider: "gemini",
+      phase: "attempt_started",
+      status: "started",
+      jobId: "job-cancel",
+      hostSurface: "terminal",
+      logFile,
+    });
+
+    const report = await cancelJob(workspaceRoot, "job-cancel");
+
+    assert.equal(report.cancelled, true);
+    assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "job-cancel")), false);
+    assert.equal(fs.existsSync(cleanupDir), false);
+
+    const events = (await readRunLedgerEvents(workspaceRoot)).filter((event) => event.runId === "run-cancel");
+    assert.deepEqual(
+      events.map((event) => [event.phase, event.status, event.reason]).slice(-2),
+      [
+        ["attempt_result", "cancelled", "cancelled"],
+        ["provider_decision", "cancelled", "cancelled"],
+      ],
+    );
+  });
+});

@@ -15,7 +15,10 @@ const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 100;
 const POLYCLI_STATE_ROOT_ENV = "POLYCLI_STATE_ROOT";
 const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
-const FALLBACK_STATE_ROOT = path.join(os.tmpdir(), "polycli-companion");
+const PRIVATE_DIR_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+const ACTIVE_STATUSES = new Set(["queued", "running"]);
+const FALLBACK_STATE_ROOT = path.join(os.homedir() || os.tmpdir(), ".polycli", "state");
 
 function runCommand(command, args = [], options = {}) {
   const result = spawnSync(command, args, {
@@ -83,7 +86,7 @@ export function describeStateRoot() {
 
   return {
     stateRoot: FALLBACK_STATE_ROOT,
-    source: "temp",
+    source: "home",
   };
 }
 
@@ -123,8 +126,33 @@ export function resolveJobConfigFile(workspaceRoot, jobId) {
   return path.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
 }
 
+function chmodPrivateDir(dir) {
+  try {
+    fs.chmodSync(dir, PRIVATE_DIR_MODE);
+  } catch {
+    // best-effort for existing host-managed directories
+  }
+}
+
+function ensurePrivateDir(dir) {
+  fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
+  chmodPrivateDir(dir);
+}
+
 export function ensureStateDir(workspaceRoot) {
-  fs.mkdirSync(resolveJobsDir(workspaceRoot), { recursive: true });
+  ensurePrivateDir(stateRootDir());
+  ensurePrivateDir(resolveStateDir(workspaceRoot));
+  ensurePrivateDir(resolveJobsDir(workspaceRoot));
+}
+
+function pruneJobsForSave(jobs) {
+  const sorted = jobs
+    .slice()
+    .sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
+  const active = sorted.filter((job) => ACTIVE_STATUSES.has(job.status));
+  const terminal = sorted.filter((job) => !ACTIVE_STATUSES.has(job.status)).slice(0, MAX_JOBS);
+  return [...active, ...terminal]
+    .sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
 }
 
 export function loadState(workspaceRoot) {
@@ -157,12 +185,9 @@ export function loadState(workspaceRoot) {
 
 export function saveState(workspaceRoot, state) {
   ensureStateDir(workspaceRoot);
-  const jobs = state.jobs
-    .slice()
-    .sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""))
-    .slice(0, MAX_JOBS);
+  const jobs = pruneJobsForSave(state.jobs);
   const config = state.config && typeof state.config === "object" ? state.config : {};
-  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs });
+  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs }, { mode: PRIVATE_FILE_MODE });
   return { version: STATE_VERSION, config, jobs };
 }
 
@@ -195,7 +220,7 @@ export function updateJobAtomically(workspaceRoot, jobId, buildNext) {
     }
 
     if (Object.prototype.hasOwnProperty.call(next, "envelope")) {
-      writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), next.envelope);
+      writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), next.envelope, { mode: PRIVATE_FILE_MODE });
     }
 
     if (index >= 0) {
@@ -271,7 +296,7 @@ export function readLastUsedProvider(workspaceRoot) {
 
 export function writeJobFile(workspaceRoot, jobId, payload) {
   ensureStateDir(workspaceRoot);
-  writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), payload);
+  writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
   return resolveJobFile(workspaceRoot, jobId);
 }
 
@@ -293,7 +318,7 @@ export function removeJobFile(workspaceRoot, jobId) {
 
 export function writeJobConfigFile(workspaceRoot, jobId, payload) {
   ensureStateDir(workspaceRoot);
-  writeJsonAtomic(resolveJobConfigFile(workspaceRoot, jobId), payload);
+  writeJsonAtomic(resolveJobConfigFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
   return resolveJobConfigFile(workspaceRoot, jobId);
 }
 

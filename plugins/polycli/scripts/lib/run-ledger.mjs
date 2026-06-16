@@ -6,6 +6,7 @@ import { computeWorkspaceSlug, resolveStateDir } from './state.mjs';
 
 const MAX_LEDGER_BYTES = 2_000_000;
 const KEEP_RATIO = 0.5;
+const PRIVATE_FILE_MODE = 0o600;
 const RUN_ID_RE = /^[A-Za-z0-9_.-]{1,96}$/;
 const SECRET_LONG_OPT_RE = /(token|secret|password|api-?key|access-?key|credential)/i;
 const SECRET_ENV_KEY_RE = /(TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_KEY|CREDENTIAL)/i;
@@ -200,7 +201,7 @@ export function appendRunLedgerEvent(workspaceRoot, event) {
     workspaceRoot: workspaceRoot ?? event.workspaceRoot ?? null,
     workspaceSlug: event.workspaceSlug ?? workspaceSlug,
   });
-  appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO });
+  appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO, mode: PRIVATE_FILE_MODE });
   return full;
 }
 

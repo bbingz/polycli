@@ -260,12 +260,12 @@ function readCachedProviderModel(workspaceRoot, provider) {
 function cacheProviderModel(workspaceRoot, provider, model) {
   if (typeof model !== "string" || !model.trim()) return;
   const cacheFile = resolveProviderModelCacheFile(workspaceRoot);
-  fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+  fs.mkdirSync(path.dirname(cacheFile), { recursive: true, mode: 0o700 });
   // Serialize the read-modify-write under a lock and write atomically. A bare writeFileSync RMW
   // let two concurrent invocations against the same workspace each read the old cache, add only
   // their own provider, and last-writer-wins — silently dropping the other's freshly-cached model.
   withLockfile(`${cacheFile}.lock`, () => {
-    writeJsonAtomic(cacheFile, { ...readProviderModelCache(workspaceRoot), [provider]: model });
+    writeJsonAtomic(cacheFile, { ...readProviderModelCache(workspaceRoot), [provider]: model }, { mode: 0o600 });
   });
 }
 
@@ -737,8 +737,11 @@ async function startBackgroundExecution(execution, asJson) {
     runContext,
   });
 
-  fs.writeFileSync(job.logFile, `[${new Date().toISOString()}] started ${job.provider} ${job.kind}\n`, "utf8");
-  const logFd = fs.openSync(job.logFile, "a");
+  fs.writeFileSync(job.logFile, `[${new Date().toISOString()}] started ${job.provider} ${job.kind}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  const logFd = fs.openSync(job.logFile, "a", 0o600);
   const child = spawn(process.execPath, [COMPANION_PATH, "_job-worker", resolveJobConfigFile(workspaceRoot, job.jobId)], {
     cwd: execution.cwd,
     env: { ...process.env },
@@ -748,11 +751,18 @@ async function startBackgroundExecution(execution, asJson) {
   child.unref();
   fs.closeSync(logFd);
 
-  const runningJob = upsertJob(workspaceRoot, {
-    ...job,
-    status: "running",
-    pid: child.pid ?? null,
+  const runningWrite = updateJobAtomically(workspaceRoot, job.jobId, (latest) => {
+    if (!latest || latest.status !== "queued") return null;
+    return {
+      job: {
+        ...latest,
+        status: "running",
+        pid: child.pid ?? null,
+        updatedAt: new Date().toISOString(),
+      },
+    };
   });
+  const runningJob = runningWrite.written ? runningWrite.job : (getJob(workspaceRoot, job.jobId) || job);
 
   if (runContext) {
     await recordRunEventForContext(workspaceRoot, runContext, {

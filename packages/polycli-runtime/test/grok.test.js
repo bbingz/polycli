@@ -61,6 +61,18 @@ test("parseGrokJsonResult fails on a non-zero exit even with valid JSON", () => 
   assert.equal(parsed.ok, false);
 });
 
+test("parseGrokJsonResult fails on terminal error metadata even with visible text", () => {
+  const parsed = parseGrokJsonResult(
+    JSON.stringify({ text: "partial", stopReason: "error", error: "permission denied" }),
+    "",
+    0
+  );
+
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.response, "partial");
+  assert.equal(parsed.error, "permission denied");
+});
+
 test("parseGrokStreamText concatenates text deltas and reads sessionId from the end event", () => {
   const parsed = parseGrokStreamText(
     [
@@ -74,6 +86,20 @@ test("parseGrokStreamText concatenates text deltas and reads sessionId from the 
   assert.equal(parsed.sessionId, "019e862e-63fd-7333-8f4c-4add60220323");
   assert.equal(extractGrokText({ type: "text", data: "z" }), "z");
   assert.equal(extractGrokText({ type: "thought", data: "z" }), "");
+});
+
+test("parseGrokStreamText records terminal error events and non-success stop reasons", () => {
+  const parsed = parseGrokStreamText(
+    [
+      '{"type":"text","data":"partial"}',
+      '{"type":"error","error":"permission denied"}',
+      '{"type":"end","stopReason":"Cancelled","sessionId":"019e862e-63fd-7333-8f4c-4add60220323"}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "partial");
+  assert.equal(parsed.stopReason, "Cancelled");
+  assert.equal(parsed.providerError, "permission denied");
 });
 
 test("runGrokPrompt parses json output and ignores transient stderr worker noise on success", () => {
@@ -162,4 +188,30 @@ test("runGrokPromptStreaming emits events and reads the structured session id fr
   assert.equal(result.response, "OK");
   assert.equal(result.sessionId, "019e862e-63fd-7333-8f4c-4add60220323");
   assert.equal(events.length, 2);
+});
+
+test("runGrokPromptStreaming fails when partial text is followed by a terminal error", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runGrokPromptStreaming({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"text","data":"partial"}\n');
+        child.stdout.emit("data", '{"type":"error","error":"permission denied"}\n');
+        child.stdout.emit("data", '{"type":"end","stopReason":"Cancelled","sessionId":"019e862e-63fd-7333-8f4c-4add60220323"}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response, "partial");
+  assert.equal(result.error, "permission denied");
+  assert.equal(result.stopReason, "Cancelled");
 });

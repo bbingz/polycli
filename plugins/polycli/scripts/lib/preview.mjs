@@ -2,6 +2,7 @@ import fs from "node:fs";
 
 const PREVIEW_MAX_LINES = 10;
 const PREVIEW_TAIL_CACHE = new Map();
+const PRIVATE_FILE_MODE = 0o600;
 
 function collapseWhitespace(text) {
   return String(text ?? "").replace(/\s+/g, " ").trim();
@@ -131,7 +132,14 @@ export function appendPreview(logFile, provider, event, { fsImpl = fs, tailCache
     return;
   }
 
-  fsImpl.appendFileSync(logFile, `${lines.join("\n")}\n`, "utf8");
+  fsImpl.appendFileSync(logFile, `${lines.join("\n")}\n`, { encoding: "utf8", mode: PRIVATE_FILE_MODE });
+  if (fsImpl === fs) {
+    try {
+      fs.chmodSync(logFile, PRIVATE_FILE_MODE);
+    } catch {
+      // best-effort hardening for existing log files
+    }
+  }
   tailCache.set(logFile, [...currentTail, ...lines].slice(-PREVIEW_MAX_LINES));
 }
 

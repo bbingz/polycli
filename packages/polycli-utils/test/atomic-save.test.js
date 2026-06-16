@@ -7,7 +7,11 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
-import { LockfileTimeoutError, withLockfile, writeFileAtomic } from "../src/atomic-save.js";
+import { LockfileTimeoutError, withLockfile, writeFileAtomic, writeJsonAtomic } from "../src/atomic-save.js";
+
+function fileMode(filePath) {
+  return fs.statSync(filePath).mode & 0o777;
+}
 
 test("writeFileAtomic fsyncs the temp file before rename and fsyncs the parent dir after rename", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-atomic-save-"));
@@ -72,6 +76,16 @@ test("writeFileAtomic removes the temp file when rename fails", (t) => {
   );
   assert.equal(fs.existsSync(tmpPath), false);
   assert.equal(fs.existsSync(filePath), false);
+});
+
+test("writeJsonAtomic accepts a private file mode", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-json-save-mode-"));
+  const filePath = path.join(dir, "state.json");
+
+  writeJsonAtomic(filePath, { ok: true }, { mode: 0o600 });
+
+  assert.equal(JSON.parse(fs.readFileSync(filePath, "utf8")).ok, true);
+  assert.equal(fileMode(filePath), 0o600);
 });
 
 test("withLockfile does not reclaim a live owner pid", () => {

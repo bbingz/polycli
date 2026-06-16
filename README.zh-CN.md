@@ -27,6 +27,10 @@
 
 这是一个 **utility-only 的 Path B monorepo**：不假装能抹平 provider 之间的差异，也不引入 runtime 基类。它把官方上游 CLI 作为子进程组合起来，统一命令面，并通过四态 timing schema 如实暴露能力差异。
 
+## 最新版本：v0.6.24
+
+当前公开版本保持 Claude `ask` / `review` 的 headless `claude -p` 默认路径，并修复了多 provider 发布审查发现的 `status --wait` timeout 语义。详情见英文 release notes：[`docs/release-notes-v0.6.24.md`](./docs/release-notes-v0.6.24.md)。
+
 ## 为什么要用 polycli？
 
 大多数"多 AI 编排器"为了凑出统一 API，会对能力差异说谎。polycli 反着来：
@@ -78,7 +82,7 @@ opencode plugin @bbingz/polycli-opencode
 
 装完之后在 host 里验证：
 
-> **polycli 优先是 in-host plugin，也提供可选终端 CLI。** 每个 host 适配器在该 host 自己的命令体系里暴露同一套 `health / ask / review / rescue / timing / debug` 词汇；不在这 4 个 host 内时，可以安装 `@bbingz/polycli` 获得 PATH 可调用的 `polycli` wrapper。见英文 README 的 [Outside a supported host](./README.md#outside-a-supported-host) 段。
+> **polycli 优先是 in-host plugin，也提供可选终端 CLI。** 每个 host 适配器在该 host 自己的命令体系里暴露同一套 `health / ask / review / rescue / timing / debug / sessions` 词汇；不在这 4 个 host 内时，可以安装 `@bbingz/polycli` 获得 PATH 可调用的 `polycli` wrapper。见英文 README 的 [Outside a supported host](./README.md#outside-a-supported-host) 段。
 
 ```text
 # Claude Code（slash command）
@@ -120,6 +124,7 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 | `adversarial-review` | 偏攻击面的审查 |
 | `timing` | 查看 timing 历史和聚合 |
 | `debug` | 查看 redacted run ledger：`runs` / `show` / `explain` |
+| `sessions` | 列出或按 `--confirm` 清理 polycli 记录过的上游 session artifact |
 | `tui` | 只读终端 inspector，渲染 run ledger / debug 数据 |
 | `status` / `result` / `cancel` | 后台 job 控制 |
 

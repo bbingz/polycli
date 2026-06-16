@@ -27,6 +27,10 @@
 
 これは **ユーティリティ専用の Path B モノレポ** です。プロバイダ間の差異を偽の抽象化で覆い隠したり、ランタイム基底クラスを発明したりはしません。公式の上流 CLI をサブプロセスとして組み合わせ、単一のコマンド面を公開し、4 状態の timing スキーマで能力の違いを正直に表現します。
 
+## 最新リリース: v0.6.24
+
+現在の公開版は Claude `ask` / `review` の headless `claude -p` 既定経路を維持しつつ、multi-provider release review で見つかった `status --wait` timeout セマンティクスを修正しています。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.24.md`](./docs/release-notes-v0.6.24.md)。
+
 ## なぜ polycli を使うのか？
 
 多くの「マルチ AI オーケストレーター」は、統一 API に合わせるため能力差について嘘をつきます。polycli は逆のアプローチを取ります:
@@ -78,7 +82,7 @@ opencode plugin @bbingz/polycli-opencode
 
 インストール後、ホスト内で動作確認します:
 
-> **polycli は主に in-host plugin であり、任意の Terminal CLI も提供します。** 各ホストアダプタは、そのホスト固有の呼び出し方法で同じ `health / ask / review / rescue / timing / debug` ボキャブラリを公開します。4 つの対応ホスト外では、`@bbingz/polycli` をインストールすると PATH から呼べる `polycli` wrapper を使えます。英語版 README の [Outside a supported host](./README.md#outside-a-supported-host) も参照してください。
+> **polycli は主に in-host plugin であり、任意の Terminal CLI も提供します。** 各ホストアダプタは、そのホスト固有の呼び出し方法で同じ `health / ask / review / rescue / timing / debug / sessions` ボキャブラリを公開します。4 つの対応ホスト外では、`@bbingz/polycli` をインストールすると PATH から呼べる `polycli` wrapper を使えます。英語版 README の [Outside a supported host](./README.md#outside-a-supported-host) も参照してください。
 
 ```text
 # Claude Code (slash command)
@@ -120,6 +124,7 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 | `adversarial-review` | 攻撃面寄りのレビュー |
 | `timing` | timing の履歴と集計を確認 |
 | `debug` | redacted run ledger を `runs` / `show` / `explain` で確認 |
+| `sessions` | polycli が記録した上流 session artifact を一覧表示し、`--confirm` 付きで削除 |
 | `tui` | run ledger / debug データの読み取り専用 Terminal inspector |
 | `status` / `result` / `cancel` | バックグラウンドジョブの制御 |
 

@@ -66,6 +66,7 @@ export function buildQwenInvocation({
   unsafeFlag = false,
   background = false,
   maxSteps = 20,
+  model,
   appendSystem,
   appendDirs,
   extraArgs = [],
@@ -87,6 +88,7 @@ export function buildQwenInvocation({
   else if (resumeLast) args.push("-c");
   else if (resumeId) args.push("-r", resumeId);
 
+  if (model) args.push("--model", model);
   args.push("--output-format", "stream-json");
   args.push("--approval-mode", effectiveApprovalMode);
   args.push("--max-session-turns", String(maxSteps));
@@ -261,6 +263,7 @@ export function runQwenPrompt({
   unsafeFlag = false,
   background = false,
   maxSteps = 20,
+  model,
   appendSystem,
   appendDirs,
   extraArgs = [],
@@ -275,6 +278,7 @@ export function runQwenPrompt({
     unsafeFlag,
     background,
     maxSteps,
+    model,
     appendSystem,
     appendDirs,
     extraArgs,
@@ -333,6 +337,7 @@ export function runQwenPromptStreaming({
   unsafeFlag = false,
   background = false,
   maxSteps = 20,
+  model,
   appendSystem,
   appendDirs,
   extraArgs = [],
@@ -349,6 +354,7 @@ export function runQwenPromptStreaming({
     unsafeFlag,
     background,
     maxSteps,
+    model,
     appendSystem,
     appendDirs,
     extraArgs,

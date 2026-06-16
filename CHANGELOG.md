@@ -6,6 +6,17 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-16 — Codex — workflow review remediation sweep
+
+- Remediated the confirmed medium/low findings from the workflow deep review batch without changing the Path B architecture: no shared provider base class, no provider parser promotion into `polycli-utils`, and no timing-state collapse.
+- Hardened local privacy defaults: terminal fallback state now uses `~/.polycli/state` instead of shared OS temp; state/workspace/job dirs are created private; state, job config/result, ledger, timing, preview, and provider model cache writes use private modes where applicable.
+- Fixed background job lifecycle gaps: cancellation now records cancelled terminal ledger events, removes per-job config, cleans runtime `cleanupPaths`, and `MAX_JOBS` pruning preserves queued/running jobs. The queued-to-running parent write now uses a stale-write guard so an already-terminal worker result is not overwritten.
+- Fixed host/provider semantics: OpenCode host adapter treats every non-zero companion exit as failure even with stdout; Qwen forwards explicit `--model`; registry model fallback now prefers provider output, then explicit model, then cached/default model; Grok marks terminal error metadata or non-success stop reasons as failed while preserving partial text.
+- Closed observability/test/doc gaps: TUI recognizes `provider_decision:passed`, all captured runtime fixtures are replayed through provider parsers, fixture metadata now reports the explicit Grok success-fixture allowlist, sessions list/purge has companion wiring integration coverage, README/public-surface/host-map/docs drift was aligned, and CI now dry-runs the terminal package tarball.
+- Stabilized the Claude tmux TUI fake-bin tests under full-suite parallel load by widening the test-only tmux timeout budget; this fixes the `tmux.jsonl` ENOENT flake seen during full-suite verification.
+- Verification: focused RED/GREEN tests for permissions, cancel cleanup, active job pruning, OpenCode non-zero exits, Qwen model forwarding, Grok terminal errors, TUI passed status, fixture replay/metadata, sessions CLI wiring, and queued-to-running stale writes; `node --test packages/polycli-runtime/test/claude.test.js` passed 28/28 after test stabilization; `npm test` passed 535/535; `npm run release:check` exit 0, including bundle/fixture/manifest/host-map/Codex adapter/review-drift checks, Claude plugin validation, and npm pack dry-runs for opencode/utils/timing/terminal.
+- Residual risk: Grok still lacks a real captured success fixture; this is now explicit in `validate:fixtures` output as an allowlisted missing fixture. Not published; this is current unreleased workspace work after v0.6.24.
+
 ## 2026-06-16 — Codex — post-v0.6.24 latest-package review cleanup
 
 - Ran `@bbingz/polycli@0.6.24` from npm against the `v0.6.23..HEAD` release diff: `health --json` found gemini, qwen, minimax, claude, copilot, opencode, pi, cmd, agy, and grok healthy; kimi remained quota-blocked with 403.

@@ -38,6 +38,8 @@ The skill runs the bundled companion at `scripts/polycli-companion.bundle.mjs`, 
 - `result`
 - `cancel`
 - `timing`
+- `debug`
+- `sessions`
 
 ## Common Examples
 
@@ -51,6 +53,8 @@ polycli status --wait
 polycli result pr-1234abcd
 polycli cancel pr-1234abcd
 polycli timing --provider qwen --json
+polycli debug runs
+polycli sessions list --json
 ```
 
 ## Background Flow

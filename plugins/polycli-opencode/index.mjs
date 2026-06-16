@@ -21,10 +21,11 @@ function runCompanion(argv) {
   if (result.error) {
     throw result.error;
   }
-  if (result.status !== 0 && !result.stdout) {
-    const detail = String(result.stderr || "").trim() || `polycli companion exited with status ${result.status}`;
+  if (result.status !== 0) {
+    const detail = String(result.stdout || result.stderr || "").trim() || `polycli companion exited with status ${result.status}`;
     const error = new Error(detail);
     error.status = result.status;
+    error.stdout = result.stdout;
     error.stderr = result.stderr;
     throw error;
   }

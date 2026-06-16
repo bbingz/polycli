@@ -117,18 +117,23 @@ test("opencode adapter exports a plugin function", async () => {
   assert.equal(typeof plugin.tool.polycli_timing.execute, "function");
 });
 
-test("opencode adapter returns structured companion errors from stdout", async () => {
+test("opencode adapter rejects non-zero companion status even when stdout has structured JSON", async () => {
   const moduleUrl = pathToFileURL(path.join(REPO_ROOT, "plugins/polycli-opencode/index.mjs")).href;
   const module = await import(moduleUrl);
   const plugin = await module.PolycliPlugin();
 
-  const output = await plugin.tool.polycli_run.execute({
-    argv: ["timing", "--provider", "definitely-not-a-provider", "--json"],
-  });
-  const payload = JSON.parse(output);
-
-  assert.equal(payload.code, "unknown_provider");
-  assert.match(payload.error, /definitely-not-a-provider/);
+  await assert.rejects(
+    () => plugin.tool.polycli_run.execute({
+      argv: ["timing", "--provider", "definitely-not-a-provider", "--json"],
+    }),
+    (error) => {
+      assert.notEqual(error.status, 0);
+      const payload = JSON.parse(error.stdout);
+      assert.equal(payload.code, "unknown_provider");
+      assert.match(payload.error, /definitely-not-a-provider/);
+      return true;
+    },
+  );
 });
 
 test("opencode package resolves through node package resolution", () => {

@@ -10,6 +10,7 @@ const AUTH_CHECK_TIMEOUT_MS = 30_000;
 // the other available model. Callers pass `-m <model>` to switch.
 const DEFAULT_GROK_MODEL = "grok-composer-2.5-fast";
 const GROK_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|not logged in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
+const SUCCESS_STOP_REASONS = new Set(["endturn", "end_turn", "stop", "stop_sequence", "complete", "completed", "done", "finished"]);
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
 ];
@@ -50,11 +51,35 @@ export function extractGrokText(event) {
   return "";
 }
 
+function normalizeStopReason(stopReason) {
+  return String(stopReason ?? "").trim().toLowerCase();
+}
+
+function isNonSuccessStopReason(stopReason) {
+  if (stopReason == null || stopReason === "") return false;
+  return !SUCCESS_STOP_REASONS.has(normalizeStopReason(stopReason));
+}
+
+function extractTerminalError(value) {
+  if (!value || typeof value !== "object") return null;
+  if (typeof value.error === "string" && value.error.trim()) return value.error.trim();
+  if (value.error && typeof value.error === "object") {
+    return extractTerminalError(value.error);
+  }
+  if (value.is_error === true || value.isError === true || value.type === "error") {
+    if (typeof value.message === "string" && value.message.trim()) return value.message.trim();
+    if (typeof value.data === "string" && value.data.trim()) return value.data.trim();
+    return "grok emitted a terminal error";
+  }
+  return null;
+}
+
 export function parseGrokStreamText(text) {
   const events = [];
   let response = "";
   let sessionId = null;
   let stopReason = null;
+  let providerError = null;
 
   for (const rawLine of String(text ?? "").split(/\r?\n/)) {
     const trimmed = rawLine.trim();
@@ -66,6 +91,7 @@ export function parseGrokStreamText(text) {
       continue;
     }
     events.push(event);
+    providerError = providerError || extractTerminalError(event);
     if (event.type === "text" && typeof event.data === "string") {
       response += event.data;
     } else if (event.type === "end") {
@@ -74,7 +100,7 @@ export function parseGrokStreamText(text) {
     }
   }
 
-  return { events, response, sessionId, stopReason };
+  return { events, response, sessionId, stopReason, providerError };
 }
 
 export function parseGrokJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
@@ -91,14 +117,20 @@ export function parseGrokJsonResult(stdout, stderr, status, { defaultModel = nul
     const parsed = JSON.parse(text.slice(jsonStart));
     const response = typeof parsed.text === "string" ? parsed.text : "";
     const hasVisibleText = Boolean(response.trim());
+    const providerError = extractTerminalError(parsed);
+    const stopReason = parsed.stopReason ?? null;
+    const stopReasonError = isNonSuccessStopReason(stopReason)
+      ? `grok stopped with ${stopReason}`
+      : null;
+    const error = providerError || stopReasonError || (hasVisibleText ? null : "grok produced no visible text");
     return {
-      ok: hasVisibleText,
+      ok: hasVisibleText && !providerError && !stopReasonError,
       response,
       // grok emits the session id structurally; never scan prose for a UUID.
       sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : null,
       model: defaultModel ?? DEFAULT_GROK_MODEL,
-      stopReason: parsed.stopReason ?? null,
-      error: hasVisibleText ? null : "grok produced no visible text",
+      stopReason,
+      error,
       status,
     };
   } catch (error) {
@@ -239,10 +271,13 @@ export function runGrokPromptStreaming({
   }).then((result) => {
     const parsed = parseGrokStreamText(result.stdout);
     const hasVisibleText = Boolean(parsed.response.trim());
-    const ok = result.ok && hasVisibleText;
+    const stopReasonError = isNonSuccessStopReason(parsed.stopReason)
+      ? `grok stopped with ${parsed.stopReason}`
+      : null;
+    const ok = result.ok && hasVisibleText && !parsed.providerError && !stopReasonError;
     const error = ok
       ? null
-      : (result.ok ? "grok produced no visible text" : result.error);
+      : (parsed.providerError || stopReasonError || (result.ok ? "grok produced no visible text" : result.error));
     return {
       ...result,
       ...parsed,

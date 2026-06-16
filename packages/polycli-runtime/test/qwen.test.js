@@ -104,6 +104,19 @@ test("buildQwenInvocation appends extra args after the prompt for array options"
   ]);
 });
 
+test("buildQwenInvocation forwards an explicit model before the prompt", () => {
+  const invocation = buildQwenInvocation({
+    prompt: "review this diff",
+    model: "qwen-plus",
+  });
+
+  const modelIndex = invocation.args.indexOf("--model");
+  const promptIndex = invocation.args.indexOf("review this diff");
+  assert.notEqual(modelIndex, -1);
+  assert.equal(invocation.args[modelIndex + 1], "qwen-plus");
+  assert.ok(modelIndex < promptIndex);
+});
+
 test("buildQwenEnv injects proxy settings without overwriting explicit env", () => {
   const env = buildQwenEnv(
     { proxy: "http://127.0.0.1:7890" },
@@ -465,6 +478,35 @@ test("runQwenPromptStreaming returns a structured failure on spawn error", async
 
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+});
+
+test("runQwenPromptStreaming passes explicit model to the qwen invocation", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+  child.unref = () => {};
+  let spawnedArgs = null;
+
+  const result = await runQwenPromptStreaming({
+    prompt: "ping",
+    model: "qwen-plus",
+    spawnImpl(_bin, args) {
+      spawnedArgs = args;
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"system","subtype":"init","session_id":"q-2","model":"qwen-plus"}\n');
+        child.stdout.emit("data", '{"type":"assistant","message":{"content":[{"type":"text","text":"pong"}]}}\n');
+        child.stdout.emit("data", '{"type":"result","subtype":"success"}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(spawnedArgs.includes("--model"), true);
+  assert.equal(spawnedArgs[spawnedArgs.indexOf("--model") + 1], "qwen-plus");
 });
 
 test("runQwenPromptStreaming returns an explicit error when no visible assistant text is emitted", async () => {

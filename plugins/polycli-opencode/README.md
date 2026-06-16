@@ -52,6 +52,8 @@ Then either:
 - `result`
 - `cancel`
 - `timing`
+- `debug`
+- `sessions`
 
 ## Operator Notes
 

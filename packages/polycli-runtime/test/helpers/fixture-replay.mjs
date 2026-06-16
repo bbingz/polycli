@@ -13,3 +13,17 @@ export function loadStreamFixture(provider, name) {
   const logText = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : null;
   return { stream, logText, meta };
 }
+
+export function listStreamFixtures() {
+  const fixtures = [];
+  for (const provider of fs.readdirSync(FIXTURE_ROOT).sort()) {
+    const providerDir = path.join(FIXTURE_ROOT, provider);
+    if (!fs.statSync(providerDir).isDirectory()) continue;
+    for (const entry of fs.readdirSync(providerDir).sort()) {
+      if (!entry.endsWith(".meta.json")) continue;
+      const name = entry.slice(0, -".meta.json".length);
+      fixtures.push({ provider, name });
+    }
+  }
+  return fixtures;
+}

@@ -53,6 +53,8 @@ The skill runs `scripts/polycli-companion.bundle.mjs`, so the plugin remains sel
 - `result`
 - `cancel`
 - `timing`
+- `debug`
+- `sessions`
 
 ## Common Examples
 
@@ -65,6 +67,8 @@ Choose Polycli with @, then ask it to run: review --provider qwen --scope staged
 Choose Polycli with @, then ask it to run: status --wait
 Choose Polycli with @, then ask it to run: result pr-1234abcd
 Choose Polycli with @, then ask it to run: timing --provider qwen --json
+Choose Polycli with @, then ask it to run: debug runs
+Choose Polycli with @, then ask it to run: sessions list --json
 ```
 
 ## Operator Notes
