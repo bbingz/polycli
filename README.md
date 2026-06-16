@@ -29,16 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.22
+## Latest release: v0.6.23
 
-The latest patch restores Claude `ask`/`review` to the synchronous `claude -p` path by default after Anthropic paused the Agent SDK credit change:
+The latest patch keeps the v0.6.22 Claude `ask`/`review` print-mode defaults and fixes two control-plane issues found by a real full-provider Polycli smoke review:
 
-- Claude `ask` and `review` now use headless `claude -p` by default with plan/no-tools/no-MCP constraints, so they return a synchronous model answer again.
-- The detached tmux TUI path remains in runtime for explicit/internal callers; in that mode responses expose `tmuxSession` / `attachCommand`, startup-only `total` timing, and `ttft` / `gen` / `tail` as `unsupported`.
-- Hardened the review gate, lockfile/tempfile cleanup, session lifecycle cleanup, auth-status probing, fixture freshness checks, and release docs.
+- `health --provider opencode` now preserves `PATH` while still injecting the deny-all OpenCode review/ask config, avoiding false `spawn opencode ENOENT` health failures.
+- `status --all --wait` now waits for every active job and returns an all-job snapshot instead of ignoring `--all`.
+- Claude `ask` and `review` still use headless `claude -p` by default with plan/no-tools/no-MCP constraints, while explicit/internal tmux TUI runtime support remains covered.
 - Utility packages stay on their independent v1.x cadence.
 
-See [`docs/release-notes-v0.6.22.md`](./docs/release-notes-v0.6.22.md).
+See [`docs/release-notes-v0.6.23.md`](./docs/release-notes-v0.6.23.md).
 
 ## Why polycli?
 

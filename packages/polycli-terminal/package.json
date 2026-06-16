@@ -1,6 +1,6 @@
 {
   "name": "@bbingz/polycli",
-  "version": "0.6.22",
+  "version": "0.6.23",
   "description": "Terminal CLI for Polycli provider diagnostics and host-compatible commands.",
   "type": "module",
   "bin": {
