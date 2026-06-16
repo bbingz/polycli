@@ -29,16 +29,17 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.23
+## Latest release: v0.6.24
 
-The latest patch keeps the v0.6.22 Claude `ask`/`review` print-mode defaults and fixes two control-plane issues found by a real full-provider Polycli smoke review:
+The latest patch keeps the v0.6.22 Claude `ask`/`review` print-mode defaults and hardens status wait behavior found by multi-provider release review:
 
-- `health --provider opencode` now preserves `PATH` while still injecting the deny-all OpenCode review/ask config, avoiding false `spawn opencode ENOENT` health failures.
-- `status --all --wait` now waits for every active job and returns an all-job snapshot instead of ignoring `--all`.
+- `status --all --wait --json` now exits 2 when it times out instead of returning success with `waitTimedOut:true`.
+- Invalid `--timeout-ms` values are rejected as positive-integer errors instead of becoming `NaN`.
+- Text `status --all --wait` timeout output now says it timed out before rendering the running-jobs snapshot.
 - Claude `ask` and `review` still use headless `claude -p` by default with plan/no-tools/no-MCP constraints, while explicit/internal tmux TUI runtime support remains covered.
 - Utility packages stay on their independent v1.x cadence.
 
-See [`docs/release-notes-v0.6.23.md`](./docs/release-notes-v0.6.23.md).
+See [`docs/release-notes-v0.6.24.md`](./docs/release-notes-v0.6.24.md).
 
 ## Why polycli?
 

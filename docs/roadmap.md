@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-06-16 (v0.6.23 is the latest public release; it keeps Claude ask/review on headless `claude -p` defaults and fixes post-release control-plane smoke findings).
+Snapshot: 2026-06-16 (v0.6.24 is the latest public release; it keeps Claude ask/review on headless `claude -p` defaults and hardens status wait timeout behavior found by multi-provider release review).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,7 +10,7 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.23** — see `docs/release-notes-v0.6.23.md`. It keeps default Claude ask/review on `claude -p`, fixes opencode health env hydration, and makes `status --all --wait` wait all active jobs.
+- Latest public release: **v0.6.24** — see `docs/release-notes-v0.6.24.md`. It keeps default Claude ask/review on `claude -p` and hardens status wait timeout behavior for JSON, text, and invalid timeout values.
 - 11 providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok). v0.6.21 shipped Claude detached tmux TUI defaults and the third-party review remediation set.
 - Current unreleased workspace work: none.
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.

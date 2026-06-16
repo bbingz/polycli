@@ -12,7 +12,7 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 - Fixed confirmed `status --all --wait` timeout findings: JSON mode now exits 2 on timeout, text mode prints `Timed out waiting for all jobs.`, invalid `--timeout-ms` values are rejected as positive-integer errors, and the all-job waiter no longer performs an unused initial snapshot read.
 - Applied the same timeout parser and timeout exit-code handling to the existing single-job `status --wait` path.
 - Hardened the explicit Claude tmux TUI worker regression assertion against missing `timing.meta`.
-- Verification so far: focused red/green regressions; `node --test plugins/polycli/scripts/tests/integration.test.mjs` passed 60/60; `npm test` passed 516/516. Full release gate pending after this record.
+- Verification: focused red/green regressions; `node --test plugins/polycli/scripts/tests/integration.test.mjs` passed 60/60; `npm test` passed 516/516; `npm run release:check` exit 0, including bundle/fixture/manifest/host-map/Codex adapter/review-drift checks, Claude plugin validation, and npm pack dry-runs.
 
 ## 2026-06-16 — Codex — post-release full-provider smoke fixes
 
