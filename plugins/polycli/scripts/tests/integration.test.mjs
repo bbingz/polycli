@@ -2192,7 +2192,7 @@ test("integration: status --all --wait reports timeout in json and text modes", 
       QWEN_CLI_BIN: fake.bin,
     });
     const start = await runCompanion(
-      ["rescue", "--provider", "qwen", "--background", "--json", "__delay=1200 __reply=SLOW_DONE"],
+      ["rescue", "--provider", "qwen", "--background", "--json", "__delay=3000 __reply=SLOW_DONE"],
       { cwd: process.cwd(), env }
     );
     assert.equal(start.code, 0, start.stderr);
@@ -2214,6 +2214,15 @@ test("integration: status --all --wait reports timeout in json and text modes", 
     assert.equal(textWait.code, 2, textWait.stdout);
     assert.match(textWait.stdout, /Timed out waiting for all jobs\./);
 
+    const singleWait = await runCompanion(["status", job.jobId, "--wait", "--timeout-ms", "1", "--json"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(singleWait.code, 2, singleWait.stdout);
+    const singlePayload = JSON.parse(singleWait.stdout);
+    assert.equal(singlePayload.waitTimedOut, true);
+    assert.equal(singlePayload.job.jobId, job.jobId);
+
     const cancel = await runCompanion(["cancel", "--json", job.jobId], { cwd: process.cwd(), env });
     assert.equal(cancel.code, 0, cancel.stderr);
   } finally {
@@ -2225,12 +2234,25 @@ test("integration: status --all --wait reports timeout in json and text modes", 
 test("integration: status --wait rejects invalid timeout values", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   try {
+    const invalidWithoutWait = await runCompanion(["status", "--all", "--timeout-ms", "abc", "--json"], {
+      cwd: process.cwd(),
+      env: cleanEnv({ CLAUDE_PLUGIN_DATA: pluginData }),
+    });
+    assert.equal(invalidWithoutWait.code, 0, invalidWithoutWait.stderr);
+
     const invalidAll = await runCompanion(["status", "--all", "--wait", "--timeout-ms", "abc", "--json"], {
       cwd: process.cwd(),
       env: cleanEnv({ CLAUDE_PLUGIN_DATA: pluginData }),
     });
     assert.equal(invalidAll.code, 1);
     assert.match(JSON.parse(invalidAll.stdout).error, /--timeout-ms must be a positive integer/);
+
+    const invalidSingle = await runCompanion(["status", "pv-missing", "--wait", "--timeout-ms", "abc", "--json"], {
+      cwd: process.cwd(),
+      env: cleanEnv({ CLAUDE_PLUGIN_DATA: pluginData }),
+    });
+    assert.equal(invalidSingle.code, 1);
+    assert.match(JSON.parse(invalidSingle.stdout).error, /--timeout-ms must be a positive integer/);
   } finally {
     fs.rmSync(pluginData, { recursive: true, force: true });
   }

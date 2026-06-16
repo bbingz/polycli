@@ -6,6 +6,15 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-16 — Codex — post-v0.6.24 latest-package review cleanup
+
+- Ran `@bbingz/polycli@0.6.24` from npm against the `v0.6.23..HEAD` release diff: `health --json` found gemini, qwen, minimax, claude, copilot, opencode, pi, cmd, agy, and grok healthy; kimi remained quota-blocked with 403.
+- Dispatched independent background reviews through claude, copilot, opencode, pi, cmd, gemini, qwen, minimax, and grok. All 9 completed; `agy review` correctly rejected because agy cannot enforce non-interactive read-only plan mode. Five providers reported no issues; four raised low/medium candidates.
+- Adjudication: overturned package-lock drift because root workspaces are only `packages/*`, so `plugins/polycli-opencode` has no lockfile package entry; overturned stale `docs/release-notes-v0.6.23.md` `latest` wording as historical release-note state, not current release state.
+- Fixed the confirmed compatibility regression where `status --all --timeout-ms abc --json` failed without `--wait`; timeout values are now parsed only for wait paths, preserving the previous no-wait status behavior.
+- Hardened regression coverage: single-job `status <jobId> --wait --timeout-ms 1 --json` now asserts exit code 2 and `waitTimedOut:true`; invalid timeout coverage now checks both all-job and single-job wait paths; the fake delayed job timeout test uses a wider 3000ms delay to avoid slow-runner flakes.
+- Verification: focused RED/GREEN test for status wait timeout cases; `node --test plugins/polycli/scripts/tests/integration.test.mjs` passed 60/60; `npm test` passed 516/516; `npm run release:check` exit 0, including bundle/fixture/manifest/host-map/Codex adapter/review-drift checks, Claude plugin validation, and npm pack dry-runs. Not published; this is current unreleased workspace work after v0.6.24.
+
 ## 2026-06-16 — Codex — status wait timeout hardening
 
 - Ran a second real multi-provider review of the v0.6.23 release surface. Reviews completed through claude, copilot, opencode, pi, cmd, gemini, qwen, minimax, and grok; kimi remained quota-blocked; agy correctly rejected `/review` because it cannot enforce a read-only non-interactive plan mode.

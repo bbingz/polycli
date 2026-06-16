@@ -12,7 +12,7 @@ Living document — update when items land, when priorities shift, or when a def
 
 - Latest public release: **v0.6.24** — see `docs/release-notes-v0.6.24.md`. It keeps default Claude ask/review on `claude -p` and hardens status wait timeout behavior for JSON, text, and invalid timeout values.
 - 11 providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok). v0.6.21 shipped Claude detached tmux TUI defaults and the third-party review remediation set.
-- Current unreleased workspace work: none.
+- Current unreleased workspace work: post-v0.6.24 status wait compatibility/test hardening after latest-package multi-provider review; not yet published.
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
 

@@ -7550,7 +7550,7 @@ async function runStatus(rawArgs) {
   });
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
   const reference = positionals[0] || null;
-  const timeoutMs = parseStatusTimeoutMs(options["timeout-ms"]);
+  const timeoutMs = options.wait ? parseStatusTimeoutMs(options["timeout-ms"]) : void 0;
   if (options.wait && options.all && !reference) {
     const waited = await waitForAllJobs(workspaceRoot, {
       timeoutMs
