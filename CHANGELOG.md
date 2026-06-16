@@ -13,6 +13,8 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 - Applied the same timeout parser and timeout exit-code handling to the existing single-job `status --wait` path.
 - Hardened the explicit Claude tmux TUI worker regression assertion against missing `timing.meta`.
 - Verification: focused red/green regressions; `node --test plugins/polycli/scripts/tests/integration.test.mjs` passed 60/60; `npm test` passed 516/516; `npm run release:check` exit 0, including bundle/fixture/manifest/host-map/Codex adapter/review-drift checks, Claude plugin validation, and npm pack dry-runs.
+- Published GitHub release `v0.6.24`: https://github.com/bbingz/polycli/releases/tag/v0.6.24 (`publishedAt` `2026-06-16T07:26:49Z`).
+- npm `latest` verified as `0.6.24` for both public host packages: `@bbingz/polycli-opencode@0.6.24` (`time.modified` `2026-06-16T07:28:01.606Z`, shasum `5da8640b1bba6b3da6309bd87692596c9cc8fb34`) and `@bbingz/polycli@0.6.24` (`time.modified` `2026-06-16T07:28:13.403Z`, shasum `8a766b320a3f5ed18b6e083ab98b87c6fc753b9e`).
 
 ## 2026-06-16 — Codex — post-release full-provider smoke fixes
 
