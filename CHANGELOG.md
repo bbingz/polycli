@@ -13,6 +13,8 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 - Fixed `status --all --wait`: the command now waits for every active job and returns an all-job status snapshot instead of waiting only for the latest active job and returning a single-job envelope.
 - Added companion-level coverage for the explicitly retained Claude `executionMode: "tmux-tui"` worker path, plus regressions for opencode health env hydration and `status --all --wait`.
 - Verification: focused red/green regressions; live `polycli health --provider opencode --json` returned healthy; `node --test plugins/polycli/scripts/tests/integration.test.mjs` passed 58/58; `npm test` passed 514/514; `npm run release:check` exit 0, including bundle/fixture/manifest/host-map/Codex adapter/review-drift checks, Claude plugin validation, and npm pack dry-runs.
+- Published GitHub release `v0.6.23`: https://github.com/bbingz/polycli/releases/tag/v0.6.23 (`publishedAt` `2026-06-16T06:44:46Z`).
+- npm `latest` verified as `0.6.23` for both public host packages: `@bbingz/polycli-opencode@0.6.23` (`time.modified` `2026-06-16T06:49:58.445Z`, shasum `96a99bb18f69fd40dd8a3c78506311fc89b0d0d7`) and `@bbingz/polycli@0.6.23` (`time.modified` `2026-06-16T06:50:22.282Z`, shasum `02d016850b5998eabb2bb3faefa6c12ca7e4bfcc`).
 
 ## 2026-06-16 — Codex — v0.6.22 published (Claude print defaults)
 

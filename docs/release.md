@@ -8,13 +8,13 @@ This repository publishes in three different ways:
 
 ## Current Release State
 
-As of `2026-06-16`, the current public release is **v0.6.22**:
+As of `2026-06-16`, the current public release is **v0.6.23**:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
-- GitHub release: `v0.6.22` — https://github.com/bbingz/polycli/releases/tag/v0.6.22 (`publishedAt` `2026-06-16T02:52:57Z`)
+- GitHub release: `v0.6.23` — https://github.com/bbingz/polycli/releases/tag/v0.6.23 (`publishedAt` `2026-06-16T06:44:46Z`)
 - Published npm packages:
-  - `@bbingz/polycli-opencode@0.6.22` (`latest`, `time.modified` `2026-06-16T02:51:05.698Z`, shasum `09e36dbd10d2bc72257f3c27ed3b6b910809901e`)
-  - `@bbingz/polycli@0.6.22` (`latest`, `time.modified` `2026-06-16T02:51:14.262Z`, shasum `28b00344f743ec0b37342242c80b81867b293c73`)
+  - `@bbingz/polycli-opencode@0.6.23` (`latest`, `time.modified` `2026-06-16T06:49:58.445Z`, shasum `96a99bb18f69fd40dd8a3c78506311fc89b0d0d7`)
+  - `@bbingz/polycli@0.6.23` (`latest`, `time.modified` `2026-06-16T06:50:22.282Z`, shasum `02d016850b5998eabb2bb3faefa6c12ca7e4bfcc`)
 - Utility packages remain unchanged: `@bbingz/polycli-utils@1.0.2` and `@bbingz/polycli-timing@1.0.1`.
 - `@bbingz/polycli-timing@1.0.1` unchanged (already on the registry; not republished).
 

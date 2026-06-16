@@ -34,8 +34,8 @@ The v0.6.22 Claude behavior remains unchanged: ordinary Claude `ask` / `review` 
 
 ## Release artifacts
 
-- GitHub release `v0.6.23`: https://github.com/bbingz/polycli/releases/tag/v0.6.23
-- npm `@bbingz/polycli-opencode@0.6.23`
-- npm `@bbingz/polycli@0.6.23`
+- GitHub release `v0.6.23`: https://github.com/bbingz/polycli/releases/tag/v0.6.23 (`publishedAt` `2026-06-16T06:44:46Z`)
+- npm `@bbingz/polycli-opencode@0.6.23` (`latest`, `time.modified` `2026-06-16T06:49:58.445Z`, shasum `96a99bb18f69fd40dd8a3c78506311fc89b0d0d7`)
+- npm `@bbingz/polycli@0.6.23` (`latest`, `time.modified` `2026-06-16T06:50:22.282Z`, shasum `02d016850b5998eabb2bb3faefa6c12ca7e4bfcc`)
 
 Utility packages stay on the independent v1.x cadence (`@bbingz/polycli-utils@1.0.2`, `@bbingz/polycli-timing@1.0.1`).
