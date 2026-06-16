@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-16 — Codex — post-release full-provider smoke fixes
+
+- Ran a real Polycli full-provider smoke review of the v0.6.22 diff (`--base v0.6.21 --scope branch`) and adjudicated provider reports against source. The release diff itself had no confirmed correctness/security regression; the smoke exposed two Polycli control-plane bugs.
+- Fixed `health --provider opencode`: health probes now hydrate provider runtime env before calling `runProviderPromptStreaming`, preserving `PATH` when prompt constraints inject `OPENCODE_CONFIG_CONTENT`. This removes the false `spawn opencode ENOENT` result while keeping the deny-all opencode config in place.
+- Fixed `status --all --wait`: the command now waits for every active job and returns an all-job status snapshot instead of waiting only for the latest active job and returning a single-job envelope.
+- Added companion-level coverage for the explicitly retained Claude `executionMode: "tmux-tui"` worker path, plus regressions for opencode health env hydration and `status --all --wait`.
+- Verification: focused red/green regressions; live `polycli health --provider opencode --json` returned healthy; `node --test plugins/polycli/scripts/tests/integration.test.mjs` passed 58/58; `npm test` passed 514/514; `npm run release:check` exit 0, including bundle/fixture/manifest/host-map/Codex adapter/review-drift checks, Claude plugin validation, and npm pack dry-runs.
+
 ## 2026-06-16 — Codex — v0.6.22 published (Claude print defaults)
 
 - Anthropic paused the Agent SDK / `claude -p` dedicated-credit change, so the previous default tradeoff no longer holds for ordinary Claude `ask` / `review`.

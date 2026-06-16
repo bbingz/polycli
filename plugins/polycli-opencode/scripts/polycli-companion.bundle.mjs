@@ -7028,6 +7028,19 @@ function renderStatusSnapshot(snapshot) {
   }
   return lines.join("\n");
 }
+async function waitForAllJobs(workspaceRoot, { timeoutMs = 24e4, pollIntervalMs = 500 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let snapshot = buildStatusSnapshot(workspaceRoot, { showAll: true });
+  while (Date.now() < deadline) {
+    snapshot = buildStatusSnapshot(workspaceRoot, { showAll: true });
+    if (snapshot.running.length === 0) {
+      return { ...snapshot, waitTimedOut: false };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  snapshot = buildStatusSnapshot(workspaceRoot, { showAll: true });
+  return { ...snapshot, waitTimedOut: snapshot.running.length > 0 };
+}
 function renderResultEnvelope(envelope) {
   const result = envelope.result ?? envelope;
   const lines = [
@@ -7242,10 +7255,10 @@ async function probeProviderHealth({
         kind: "health",
         measurementScope: "request",
         meta: { health: true },
-        ...buildPromptRuntimeOptions({
+        ...hydrateRuntimeOptions(buildPromptRuntimeOptions({
           provider,
           kind: "ask"
-        }),
+        })),
         onEvent() {
         }
       });
@@ -7523,6 +7536,20 @@ async function runStatus(rawArgs) {
   });
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
   const reference = positionals[0] || null;
+  if (options.wait && options.all && !reference) {
+    const waited = await waitForAllJobs(workspaceRoot, {
+      timeoutMs: options["timeout-ms"] ? Number.parseInt(options["timeout-ms"], 10) : void 0
+    });
+    if (options.json) {
+      output(waited, true);
+      return;
+    }
+    if (waited.waitTimedOut) {
+      process5.exitCode = 2;
+    }
+    output(renderStatusSnapshot(waited), false);
+    return;
+  }
   if (options.wait) {
     const target = reference ? resolveJobReference(workspaceRoot, reference) : resolveLatestActiveJob(workspaceRoot);
     if (!target) {

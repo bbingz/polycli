@@ -398,6 +398,7 @@ if (process.env.OPENCODE_ARGV_LOG) {
 if (process.env.OPENCODE_ENV_LOG) {
   fs.writeFileSync(process.env.OPENCODE_ENV_LOG, JSON.stringify({
     OPENCODE_CONFIG_CONTENT: process.env.OPENCODE_CONFIG_CONTENT || null,
+    PATH: process.env.PATH || null,
   }) + "\\n");
 }
 if (args[0] !== "run") {
@@ -786,6 +787,37 @@ test("integration: health verifies qwen with an end-to-end probe and records tim
     const timingPayload = JSON.parse(timing.stdout);
     assert.equal(timingPayload.records.length, 1);
     assert.equal(timingPayload.records[0].kind, "health");
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: health preserves PATH when prompt constraints inject provider env", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeOpenCodeBin();
+  const envLog = path.join(pluginData, "opencode-health-env.jsonl");
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      OPENCODE_FIXED_REPLY: "POLYCLI_HEALTH_OK",
+      OPENCODE_ENV_LOG: envLog,
+      PATH: `${fake.root}${path.delimiter}${process.env.PATH || ""}`,
+    });
+    const health = await runCompanion(["health", "--json", "--provider", "opencode"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(health.code, 0, health.stderr);
+    const payload = JSON.parse(health.stdout);
+    assert.equal(payload.ok, true);
+    assert.deepEqual(payload.healthyProviders, ["opencode"]);
+    const report = payload.results[0];
+    assert.equal(report.probe.responseMatched, true);
+
+    const loggedEnv = readJsonLine(envLog);
+    assert.ok(loggedEnv.OPENCODE_CONFIG_CONTENT, "opencode prompt constraints should still inject config");
+    assert.match(loggedEnv.PATH, new RegExp(fake.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
@@ -1609,7 +1641,7 @@ test("integration: review runs claude print mode with no tools", async () => {
     assert.equal(payload.response, "CLAUDE_REVIEW_OK");
     assert.equal(payload.detached, undefined);
     assert.equal(payload.responseKind, undefined);
-    assert.equal(payload.timing.meta.tmuxDetached, undefined);
+    assert.equal((payload.timing.meta || {}).tmuxDetached, undefined);
 
     const logged = readJsonLines(argLog);
     const args = logged[0].argv;
@@ -1625,6 +1657,92 @@ test("integration: review runs claude print mode with no tools", async () => {
     fake.cleanup();
     reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: _job-worker preserves explicit claude tmux TUI runtime path", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "polycli-explicit-tmux-cwd-")));
+  const fakeTmux = createFakeTmuxBin();
+  const tmuxLog = path.join(pluginData, "explicit-tmux.jsonl");
+  const previousPluginData = process.env.CLAUDE_PLUGIN_DATA;
+  try {
+    process.env.CLAUDE_PLUGIN_DATA = pluginData;
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+    });
+    const workspaceRoot = resolveWorkspaceRoot(cwd);
+    const jobId = "pv-explicit-tmux";
+    const now = new Date().toISOString();
+    const logFile = resolveJobLogFile(workspaceRoot, jobId);
+    upsertJob(workspaceRoot, {
+      jobId,
+      workspaceRoot,
+      provider: "claude",
+      kind: "ask",
+      model: null,
+      defaultModel: null,
+      status: "running",
+      promptPreview: "explicit tmux",
+      logFile,
+      createdAt: now,
+      updatedAt: now,
+      sessionId: null,
+      pid: null,
+    });
+    fs.writeFileSync(logFile, `[${now}] started claude ask\n`, "utf8");
+    const configFile = writeJobConfigFile(workspaceRoot, jobId, {
+      workspaceRoot,
+      jobId,
+      runContext: null,
+      execution: {
+        provider: "claude",
+        kind: "ask",
+        prompt: "explicit tmux prompt",
+        userPrompt: "explicit tmux prompt",
+        model: null,
+        defaultModel: null,
+        cwd,
+        timeout: 2_000,
+        measurementScope: "job",
+        meta: { background: true, jobId },
+        jobMeta: {},
+        runtimeOptions: {
+          executionMode: "tmux-tui",
+          bin: "/usr/bin/false",
+          tmuxBin: fakeTmux.bin,
+          tmuxSessionName: "polycli-explicit-tmux",
+          permissionMode: "plan",
+          extraArgs: ["--tools", "", "--mcp-config", "{\"mcpServers\":{}}", "--strict-mcp-config"],
+          env: { TMUX_ARGV_LOG: tmuxLog },
+        },
+      },
+    });
+
+    const worker = await runCompanion(["_job-worker", configFile], { cwd, env, timeout: 5_000 });
+    assert.equal(worker.code, 0, worker.stderr);
+
+    const stored = await runCompanion(["result", "--json", jobId], { cwd, env });
+    assert.equal(stored.code, 0, stored.stderr);
+    const payload = JSON.parse(stored.stdout);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.detached, true);
+    assert.equal(payload.responseKind, "tmux_tui_session_started");
+    assert.equal(payload.timing.meta.tmuxDetached, true);
+    assert.equal(payload.timing.metrics.ttft.status, "unsupported");
+    assert.equal(payload.timing.metrics.gen.status, "unsupported");
+    assert.equal(payload.timing.metrics.tail.status, "unsupported");
+
+    const commands = readJsonLines(tmuxLog).map((entry) => entry.argv);
+    assert.deepEqual(commands[0].slice(0, 4), ["new-session", "-d", "-s", "polycli-explicit-tmux"]);
+    assert.equal(commands.some((argv) => argv[0] === "load-buffer"), true);
+    assert.equal(commands.some((argv) => argv[0] === "paste-buffer"), true);
+  } finally {
+    if (previousPluginData == null) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = previousPluginData;
+    fakeTmux.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
   }
 });
 
@@ -2014,6 +2132,51 @@ test("integration: rescue --background can be polled and fetched via result", as
     assert.equal(parsed.response, "PONG");
     assert.equal(parsed.ok, true);
     assert.ok(parsed.timing);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: status --all --wait waits for every active job and returns a snapshot", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeQwenBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+    });
+    const slow = await runCompanion(
+      ["rescue", "--provider", "qwen", "--background", "--json", "__delay=700 __reply=SLOW_DONE"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(slow.code, 0, slow.stderr);
+    const slowJob = JSON.parse(slow.stdout).job;
+
+    const fast = await runCompanion(
+      ["rescue", "--provider", "qwen", "--background", "--json", "__delay=10 __reply=FAST_DONE"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(fast.code, 0, fast.stderr);
+    const fastJob = JSON.parse(fast.stdout).job;
+
+    const waited = await runCompanion(["status", "--all", "--wait", "--timeout-ms", "10000", "--json"], {
+      cwd: process.cwd(),
+      env,
+      timeout: 15_000,
+    });
+    assert.equal(waited.code, 0, waited.stderr);
+    const payload = JSON.parse(waited.stdout);
+    assert.equal(payload.waitTimedOut, false);
+    assert.equal(payload.totalJobs, 2);
+    assert.deepEqual(payload.running, []);
+    assert.deepEqual(
+      [...payload.recent].map((job) => [job.jobId, job.status]).sort(),
+      [
+        [slowJob.jobId, "completed"],
+        [fastJob.jobId, "completed"],
+      ].sort()
+    );
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
