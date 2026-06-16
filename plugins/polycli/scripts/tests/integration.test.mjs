@@ -1728,7 +1728,7 @@ test("integration: _job-worker preserves explicit claude tmux TUI runtime path",
     assert.equal(payload.ok, true);
     assert.equal(payload.detached, true);
     assert.equal(payload.responseKind, "tmux_tui_session_started");
-    assert.equal(payload.timing.meta.tmuxDetached, true);
+    assert.equal((payload.timing.meta || {}).tmuxDetached, true);
     assert.equal(payload.timing.metrics.ttft.status, "unsupported");
     assert.equal(payload.timing.metrics.gen.status, "unsupported");
     assert.equal(payload.timing.metrics.tail.status, "unsupported");
@@ -2179,6 +2179,59 @@ test("integration: status --all --wait waits for every active job and returns a 
     );
   } finally {
     fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: status --all --wait reports timeout in json and text modes", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeQwenBin();
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+    });
+    const start = await runCompanion(
+      ["rescue", "--provider", "qwen", "--background", "--json", "__delay=1200 __reply=SLOW_DONE"],
+      { cwd: process.cwd(), env }
+    );
+    assert.equal(start.code, 0, start.stderr);
+    const job = JSON.parse(start.stdout).job;
+
+    const jsonWait = await runCompanion(["status", "--all", "--wait", "--timeout-ms", "1", "--json"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(jsonWait.code, 2, jsonWait.stdout);
+    const payload = JSON.parse(jsonWait.stdout);
+    assert.equal(payload.waitTimedOut, true);
+    assert.equal(payload.running.some((running) => running.jobId === job.jobId), true);
+
+    const textWait = await runCompanion(["status", "--all", "--wait", "--timeout-ms", "1"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(textWait.code, 2, textWait.stdout);
+    assert.match(textWait.stdout, /Timed out waiting for all jobs\./);
+
+    const cancel = await runCompanion(["cancel", "--json", job.jobId], { cwd: process.cwd(), env });
+    assert.equal(cancel.code, 0, cancel.stderr);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: status --wait rejects invalid timeout values", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  try {
+    const invalidAll = await runCompanion(["status", "--all", "--wait", "--timeout-ms", "abc", "--json"], {
+      cwd: process.cwd(),
+      env: cleanEnv({ CLAUDE_PLUGIN_DATA: pluginData }),
+    });
+    assert.equal(invalidAll.code, 1);
+    assert.match(JSON.parse(invalidAll.stdout).error, /--timeout-ms must be a positive integer/);
+  } finally {
     fs.rmSync(pluginData, { recursive: true, force: true });
   }
 });

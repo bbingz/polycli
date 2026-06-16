@@ -613,14 +613,16 @@ function renderJobDetail(job) {
 
 function renderStatusSnapshot(snapshot) {
   const rows = [...snapshot.running, ...snapshot.recent];
+  const lines = [
+    ...(snapshot.waitTimedOut ? ["Timed out waiting for all jobs."] : []),
+  ];
   if (rows.length === 0) {
-    return "No jobs found.";
+    lines.push("No jobs found.");
+    return lines.join("\n");
   }
 
-  const lines = [
-    "| jobId | provider | kind | status | prompt |",
-    "|---|---|---|---|---|",
-  ];
+  lines.push("| jobId | provider | kind | status | prompt |");
+  lines.push("|---|---|---|---|---|");
   for (const job of rows) {
     lines.push(`| ${job.jobId} | ${job.provider} | ${job.kind} | ${job.status} | ${job.promptPreview || ""} |`);
     if (job.progressPreview && snapshot.running.some((running) => running.jobId === job.jobId)) {
@@ -632,7 +634,7 @@ function renderStatusSnapshot(snapshot) {
 
 async function waitForAllJobs(workspaceRoot, { timeoutMs = 240_000, pollIntervalMs = 500 } = {}) {
   const deadline = Date.now() + timeoutMs;
-  let snapshot = buildStatusSnapshot(workspaceRoot, { showAll: true });
+  let snapshot;
   while (Date.now() < deadline) {
     snapshot = buildStatusSnapshot(workspaceRoot, { showAll: true });
     if (snapshot.running.length === 0) {
@@ -642,6 +644,19 @@ async function waitForAllJobs(workspaceRoot, { timeoutMs = 240_000, pollInterval
   }
   snapshot = buildStatusSnapshot(workspaceRoot, { showAll: true });
   return { ...snapshot, waitTimedOut: snapshot.running.length > 0 };
+}
+
+function parseStatusTimeoutMs(rawValue) {
+  if (rawValue == null) return undefined;
+  const value = String(rawValue);
+  if (!/^[1-9]\d*$/.test(value)) {
+    throw new Error("--timeout-ms must be a positive integer.");
+  }
+  const timeoutMs = Number(value);
+  if (!Number.isSafeInteger(timeoutMs)) {
+    throw new Error("--timeout-ms must be a positive integer.");
+  }
+  return timeoutMs;
 }
 
 function renderResultEnvelope(envelope) {
@@ -1177,17 +1192,18 @@ async function runStatus(rawArgs) {
   });
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
   const reference = positionals[0] || null;
+  const timeoutMs = parseStatusTimeoutMs(options["timeout-ms"]);
 
   if (options.wait && options.all && !reference) {
     const waited = await waitForAllJobs(workspaceRoot, {
-      timeoutMs: options["timeout-ms"] ? Number.parseInt(options["timeout-ms"], 10) : undefined,
+      timeoutMs,
     });
+    if (waited.waitTimedOut) {
+      process.exitCode = 2;
+    }
     if (options.json) {
       output(waited, true);
       return;
-    }
-    if (waited.waitTimedOut) {
-      process.exitCode = 2;
     }
     output(renderStatusSnapshot(waited), false);
     return;
@@ -1199,8 +1215,11 @@ async function runStatus(rawArgs) {
       throw new Error(reference ? `Job '${reference}' not found.` : "No active job found.");
     }
     const waited = await waitForJob(workspaceRoot, target.jobId, {
-      timeoutMs: options["timeout-ms"] ? Number.parseInt(options["timeout-ms"], 10) : undefined,
+      timeoutMs,
     });
+    if (waited.waitTimedOut) {
+      process.exitCode = 2;
+    }
     if (options.json) {
       output(waited, true);
       return;

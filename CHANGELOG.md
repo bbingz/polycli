@@ -6,6 +6,14 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-16 — Codex — status wait timeout hardening
+
+- Ran a second real multi-provider review of the v0.6.23 release surface. Reviews completed through claude, copilot, opencode, pi, cmd, gemini, qwen, minimax, and grok; kimi remained quota-blocked; agy correctly rejected `/review` because it cannot enforce a read-only non-interactive plan mode.
+- Fixed confirmed `status --all --wait` timeout findings: JSON mode now exits 2 on timeout, text mode prints `Timed out waiting for all jobs.`, invalid `--timeout-ms` values are rejected as positive-integer errors, and the all-job waiter no longer performs an unused initial snapshot read.
+- Applied the same timeout parser and timeout exit-code handling to the existing single-job `status --wait` path.
+- Hardened the explicit Claude tmux TUI worker regression assertion against missing `timing.meta`.
+- Verification so far: focused red/green regressions; `node --test plugins/polycli/scripts/tests/integration.test.mjs` passed 60/60; `npm test` passed 516/516. Full release gate pending after this record.
+
 ## 2026-06-16 — Codex — post-release full-provider smoke fixes
 
 - Ran a real Polycli full-provider smoke review of the v0.6.22 diff (`--base v0.6.21 --scope branch`) and adjudicated provider reports against source. The release diff itself had no confirmed correctness/security regression; the smoke exposed two Polycli control-plane bugs.
