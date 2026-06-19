@@ -121,6 +121,12 @@ Items:
 - **Q9b — `polycli sessions` / `polycli purge` command** (landed 2026-05-29): a manual, on-demand command that lists/deletes ONLY upstream session artifacts whose path appears in polycli's run ledger. No daemon; honest-default — never auto-deletes, requires an explicit purge invocation.
 - **Q9c — opt-in per-run session isolation** (deferred, needs design): scoped `HOME`/`XDG_CONFIG_HOME`/config-dir env at the `spawn.js` boundary, gated on `runtimePersistence==='session'`, default OFF. DEFERRED because a naive `HOME` override also hides credentials (breaks auth) and prior sessions (breaks `--resume`); needs a per-provider design that relocates only session state while preserving auth. `codex --ephemeral` exists but codex lives in the separate `polycli-codex` plugin.
 
+### Q10 — cc-X domestic-model endpoint recipes
+
+Source: 2026-06-19 cc-X research (point Claude Code / opencode at a domestic vendor's Anthropic-compatible endpoint via `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_MODEL`).
+
+Status: landed as docs + reference data, Path-B-pure. `docs/cc-x-endpoints.md` + machine-readable `docs/cc-x-recipes.json` (guarded by `scripts/validate-cc-x-recipes.mjs` + its paired test) encode the core-lab endpoint matrix, the operational gotchas (silent prompt-cache degradation, `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` pin, `CLAUDE_CODE_AUTO_COMPACT_WINDOW` sizing, marketplace model-identity instability, data-sovereignty gate), and the honest-default refusal to pin a model/version for the Baidu/Tencent marketplace endpoints. cc-X rides the EXISTING `claude`/`opencode` runtimes via standard env vars — verified zero runtime change needed (`claude.js` already forwards the `ANTHROPIC_*` trio on both the `claude -p` and tmux paths). NO cc-X provider/adapter/runtime was added; that refusal is the decision, recorded in Explicit non-goals below.
+
 ---
 
 ## Explicit non-goals
@@ -131,6 +137,7 @@ These are principled refusals, not backlog. Do not schedule them without an expl
 - **No unified event schema that collapses provider-specific semantics.** `extractProviderEventText` dispatches per provider for a reason.
 - **No `cold` / `retry` timing metrics.** Upstream CLIs do not emit stable signals; any implementation would be a fake. Stays `unsupported`. (Memory: `project_cold_retry_unmeasured.md`.)
 - **No "monitor" / daemon / long-lived polycli process.** Each invocation is a short-lived CLI run against a live provider. Daemon mode would compress orthogonal axes (runtimePersistence / measurementScope) that the current timing contract explicitly keeps separate.
+- **No per-vendor cc-X "coding plan" provider adapter/runtime.** Domestic-model Anthropic-compatible endpoints are DOCUMENTED `ANTHROPIC_BASE_URL` recipes (`docs/cc-x-endpoints.md` / `docs/cc-x-recipes.json`) that ride the existing `claude`/`opencode` runtimes, not new providers. Building a glm/deepseek/minimax "coding" adapter would violate Path B; do not "finish" the recipes into a framework.
 
 ---
 

@@ -6,6 +6,8 @@
 
 The repo now contains provider runtime code for host plugin builds, but that code is outside the v1 public package surface. The public contract is intentionally limited to utility helpers, timing semantics, and the terminal CLI's command vocabulary.
 
+The cc-X domestic-model endpoint recipes (`docs/cc-x-endpoints.md` / `docs/cc-x-recipes.json`) are out-of-contract reference documentation: they ride the existing `claude`/`opencode` runtimes via standard `ANTHROPIC_*` env vars and add no new public package, runtime, or command surface.
+
 ## v1 Package Surface
 
 ### `@bbingz/polycli-utils`

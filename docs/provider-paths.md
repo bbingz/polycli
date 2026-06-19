@@ -21,6 +21,12 @@ This table is a routing reference for humans and host adapters. It is not an aut
 | Copilot / Codex-backed fallback | `copilot` | OpenAI Responses API / Agents SDK for new direct integrations | Keep Copilot provider as a fallback, but Polycli ask/review must not pass allow-all tool/path/url flags. Use restricted `--excluded-tools` and retain `--no-ask-user` only for programmatic execution. |
 | OpenAI GPT / Codex direct programmatic work | not a Polycli CLI provider today | OpenAI Responses API, Agents SDK | For new stateless direct integrations, official SDK/API is more appropriate than wrapping another CLI. |
 
+## cc-X endpoint recipes (no native CLI cluster)
+
+For domestic/Chinese LLMs with no competitive native coding CLI (MiniMax, DeepSeek, Zhipu/GLM, StepFun) the path is **cc-X**: point the existing `claude` runtime (BYOK) or `opencode` (OpenAI-compatible models) at the vendor's Anthropic-compatible endpoint via `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_MODEL`. This is documented in [`cc-x-endpoints.md`](./cc-x-endpoints.md) (machine-readable source: [`cc-x-recipes.json`](./cc-x-recipes.json)). cc-X is **not** a polycli provider — it rides the existing runtimes with standard env vars; polycli adds no cc-X adapter.
+
+Note: the `MiniMax text / multimodal` row above is the polycli `minimax` provider (stateless `mmx-cli` text/media call), **not** the MiniMax cc-X coding path. For MiniMax as a coding agent, use the cc-X recipe, not the `minimax` provider.
+
 ## Review procedure
 
 Run the automated review-flag subset first, then the manual provider-path probes:
@@ -58,3 +64,4 @@ If a CLI is not installed locally, record it as skipped rather than failing the 
 - MiniMax CLI docs: https://platform.minimax.io/docs/token-plan/minimax-cli and https://github.com/MiniMax-AI/cli
 - xAI Grok Build CLI docs: https://docs.x.ai/docs/grok-build/introduction
 - OpenAI Responses API: https://platform.openai.com/docs/api-reference/responses/create
+- cc-X endpoint recipes (no native CLI cluster): ./cc-x-endpoints.md (per-vendor source URLs live in ./cc-x-recipes.json)
