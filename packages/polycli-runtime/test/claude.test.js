@@ -429,7 +429,7 @@ process.exit(0);
         tmuxBin: bin,
         tmuxSessionName: "polycli-claude-folded-paste",
         executionMode: "tmux-tui",
-        timeout: 2_000,
+        timeout: TMUX_TEST_TIMEOUT_MS,
         env: { ...process.env, TMUX_ARGV_LOG: logFile },
       });
 
