@@ -27,9 +27,9 @@
 
 これは **ユーティリティ専用の Path B モノレポ** です。プロバイダ間の差異を偽の抽象化で覆い隠したり、ランタイム基底クラスを発明したりはしません。公式の上流 CLI をサブプロセスとして組み合わせ、単一のコマンド面を公開し、4 状態の timing スキーマで能力の違いを正直に表現します。
 
-## 最新リリース: v0.6.24
+## 最新リリース: v0.6.26
 
-現在の公開版は Claude `ask` / `review` の headless `claude -p` 既定経路を維持しつつ、multi-provider release review で見つかった `status --wait` timeout セマンティクスを修正しています。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.24.md`](./docs/release-notes-v0.6.24.md)。
+v0.6.25 の cc-X エンドポイントレシピを土台に、review で見つかった Grok のバグとリリース文書のドリフトを修正しました。Grok のネストされた error オブジェクト（`{error:{message:...}}`、可視テキストあり）は `ok:true` ではなく正しく失敗として扱われます。cc-X バリデータは `status` を `verified` / `marketplace-unstable` に限定し、文書では構造 + source の裏付けのみを保証し現時点の真正性は保証しないことを明記しました。v0.6.24 を指したままだった README 三言語と roadmap スナップショットも同期しました。Claude `ask` / `review` は引き続き headless `claude -p` 既定経路です。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.26.md`](./docs/release-notes-v0.6.26.md)。
 
 ## なぜ polycli を使うのか？
 
