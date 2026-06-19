@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import { appendNdjson, readNdjson } from '@bbingz/polycli-utils/ndjson';
-import { computeWorkspaceSlug, resolveStateDir } from './state.mjs';
+import { computeWorkspaceSlug, ensureStateDir, resolveStateDir } from './state.mjs';
 
 const MAX_LEDGER_BYTES = 2_000_000;
 const KEEP_RATIO = 0.5;
@@ -194,6 +194,10 @@ export function createRunLedgerEvent(event = {}) {
 }
 
 export function appendRunLedgerEvent(workspaceRoot, event) {
+  // Create the state dir privately (0o700) BEFORE the ndjson append lands. appendNdjson reaches the
+  // directory via the mode-less ensureParentDir, which would otherwise create ~/.polycli/state/<slug>
+  // world-traversable (0o755) on the run_started event that main() fires before any other state write.
+  if (workspaceRoot) ensureStateDir(workspaceRoot);
   const file = resolveRunLedgerFile(workspaceRoot);
   const workspaceSlug = workspaceRoot ? computeWorkspaceSlug(workspaceRoot) : null;
   const full = createRunLedgerEvent({

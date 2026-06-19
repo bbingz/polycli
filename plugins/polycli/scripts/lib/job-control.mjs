@@ -73,11 +73,11 @@ function hasLedgerPhase(events, runId, jobId, phase) {
   return events.some((event) => event.runId === runId && event.jobId === jobId && event.phase === phase);
 }
 
-function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason = "worker_exited" } = {}) {
+function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason = "worker_exited", skipRuntimeCleanup = false } = {}) {
   const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
   const runContext = config?.runContext;
   if (!runContext?.runId) {
-    cleanupRuntimePaths(config);
+    if (!skipRuntimeCleanup) cleanupRuntimePaths(config);
     removeJobConfigFile(workspaceRoot, job.jobId);
     return;
   }
@@ -88,10 +88,10 @@ function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason
   // recover lock is a distinct path from the ndjson append lock, so there is no deadlock.
   const recoverLock = `${resolveRunLedgerFile(workspaceRoot)}.recover.lock`;
   withLockfile(recoverLock, () =>
-    writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result, reason }));
+    writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result, reason, skipRuntimeCleanup }));
 }
 
-function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited" } = {}) {
+function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited", skipRuntimeCleanup = false } = {}) {
   const events = readRunLedgerEvents(workspaceRoot);
   const command = runContext.command || config?.execution?.kind || job.kind || null;
   const provider = runContext.provider || config?.execution?.provider || job.provider || null;
@@ -167,7 +167,7 @@ function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
     });
   }
 
-  cleanupRuntimePaths(config);
+  if (!skipRuntimeCleanup) cleanupRuntimePaths(config);
   removeJobConfigFile(workspaceRoot, job.jobId);
 }
 
@@ -276,7 +276,7 @@ export async function waitForJob(workspaceRoot, jobId, { timeoutMs = 240_000, po
   return { job: timed ? refreshJob(workspaceRoot, timed) : null, waitTimedOut: true };
 }
 
-export async function cancelJob(workspaceRoot, jobId) {
+export async function cancelJob(workspaceRoot, jobId, { terminate = terminateProcessTree } = {}) {
   // Flip the job to cancelled and capture its pid atomically under the state lock FIRST, then
   // signal that pid. Previously cancelJob read the job WITHOUT a lock and killed job.pid before
   // re-validating, so a stale pre-lock snapshot could signal a pid the worker had already freed
@@ -314,22 +314,27 @@ export async function cancelJob(workspaceRoot, jobId) {
   if (!write.written) {
     return { cancelled: false, reason: reason || "not_cancellable", jobId };
   }
-  recoverLedgerTerminalEvents(workspaceRoot, write.job, {
-    result: write.envelope?.result || { ok: false, error: "cancelled" },
-    reason: "cancelled",
-  });
-
+  // Kill the worker FIRST, then clean up its runtime paths. cleanupRuntimePaths deletes
+  // config.execution.runtimeOptions.cleanupPaths, which for a review job IS the worker's live cwd
+  // (review.mjs sets cleanupPaths:[cwd]); deleting it before the kill lands would yank the working
+  // directory out from under a still-running process. If the kill fails the worker may still be
+  // alive, so skip the runtime-path deletion and only record the cancellation.
+  let killWarning = null;
   if (pidToKill) {
     try {
-      await terminateProcessTree(pidToKill, {
+      await terminate(pidToKill, {
         signal: "SIGINT",
         forceSignal: "SIGKILL",
         forceAfterMs: 2_000,
       });
     } catch (error) {
-      // The job is already recorded as cancelled; surface the kill problem without un-cancelling.
-      return { cancelled: true, jobId, killWarning: error.message };
+      killWarning = error.message;
     }
   }
-  return { cancelled: true, jobId };
+  recoverLedgerTerminalEvents(workspaceRoot, write.job, {
+    result: write.envelope?.result || { ok: false, error: "cancelled" },
+    reason: "cancelled",
+    skipRuntimeCleanup: killWarning != null,
+  });
+  return killWarning ? { cancelled: true, jobId, killWarning } : { cancelled: true, jobId };
 }

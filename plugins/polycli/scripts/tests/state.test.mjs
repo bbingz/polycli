@@ -112,6 +112,30 @@ test("state directories and sensitive state files use private permissions", () =
   });
 });
 
+test("ensureStateDir tightens pre-existing world-readable state directories to 0700", () => {
+  withPluginData((pluginData) => {
+    const workspaceRoot = "/tmp/polycli-loose-state";
+    const stateRoot = path.join(pluginData, "state");
+    const stateDir = resolveStateDir(workspaceRoot);
+    const jobsDir = resolveJobsDir(workspaceRoot);
+
+    // Simulate a host-managed / permissive-umask layout where the dirs already exist at 0755 before
+    // polycli runs (e.g. ~/.polycli created by another tool). Only the force-chmod in
+    // chmodPrivateDir can tighten an EXISTING directory — recursive mkdir is a no-op on its mode —
+    // so this is the case that proves the security-relevant part of the hardening.
+    fs.mkdirSync(jobsDir, { recursive: true });
+    fs.chmodSync(stateRoot, 0o755);
+    fs.chmodSync(stateDir, 0o755);
+    fs.chmodSync(jobsDir, 0o755);
+
+    ensureStateDir(workspaceRoot);
+
+    assert.equal(fileMode(stateRoot), 0o700);
+    assert.equal(fileMode(stateDir), 0o700);
+    assert.equal(fileMode(jobsDir), 0o700);
+  });
+});
+
 test("saveState preserves active jobs while pruning terminal history", () => {
   withPluginData(() => {
     const workspaceRoot = "/tmp/polycli-active-prune";

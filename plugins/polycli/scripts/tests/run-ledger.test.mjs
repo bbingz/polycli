@@ -15,6 +15,7 @@ import {
   resolveRunLedgerFile,
   summarizeRunLedger,
 } from '../lib/run-ledger.mjs';
+import { resolveStateDir } from '../lib/state.mjs';
 
 async function fileMode(filePath) {
   return (await stat(filePath)).mode & 0o777;
@@ -155,6 +156,23 @@ test('appendRunLedgerEvent writes the run ledger privately', async () => {
     });
 
     assert.equal(await fileMode(resolveRunLedgerFile(workspaceRoot)), 0o600);
+  });
+});
+
+test('appendRunLedgerEvent hardens the containing state directory to 0700', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    // No prior ensureStateDir: this is the run_started path that fires before any other state write.
+    // The directory holding the ledger/timing/model-cache must be created private, not 0o755.
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-dir-mode',
+      command: 'ask',
+      phase: 'run_started',
+      provider: 'qwen',
+      status: 'started',
+      hostSurface: 'terminal',
+    });
+
+    assert.equal(await fileMode(resolveStateDir(workspaceRoot)), 0o700);
   });
 });
 

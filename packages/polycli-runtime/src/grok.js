@@ -9,7 +9,12 @@ const AUTH_CHECK_TIMEOUT_MS = 30_000;
 // `grok models` reports `Default model: grok-build`; callers pass `-m <model>` to switch.
 const DEFAULT_GROK_MODEL = "grok-build";
 const GROK_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|not logged in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-const SUCCESS_STOP_REASONS = new Set(["endturn", "end_turn", "stop", "stop_sequence", "complete", "completed", "done", "finished"]);
+// grok-build's StopReason serde enum is {EndTurn, MaxTokens, MaxTurnRequests, Refusal, ToolUse,
+// Cancelled} (verified against the installed binary). A MaxTokens stop means the answer was merely
+// truncated at the output-token cap — a complete, visible answer from the user's perspective — so it
+// must stay ok=true. Genuine non-success reasons (refusal, cancelled, tool_use, max_turn_requests)
+// are deliberately excluded so they still fail the run while partial text is preserved.
+const SUCCESS_STOP_REASONS = new Set(["endturn", "end_turn", "stop", "stop_sequence", "complete", "completed", "done", "finished", "maxtokens", "max_tokens", "length"]);
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
 ];

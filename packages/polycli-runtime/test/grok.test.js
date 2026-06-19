@@ -73,6 +73,34 @@ test("parseGrokJsonResult fails on terminal error metadata even with visible tex
   assert.equal(parsed.error, "permission denied");
 });
 
+test("parseGrokJsonResult fails on a non-success stopReason alone (no error metadata) and keeps partial text", () => {
+  // stopReason-only failure: no error field/event, so providerError is null and the failure must be
+  // driven solely by isNonSuccessStopReason. Reverting that branch would flip ok back to true.
+  const parsed = parseGrokJsonResult(
+    JSON.stringify({ text: "partial answer", stopReason: "Cancelled", sessionId: "019e8685-1031-70a0-9ac4-37dcbcefc163" }),
+    "",
+    0
+  );
+
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error, "grok stopped with Cancelled");
+  assert.equal(parsed.response, "partial answer");
+});
+
+test("parseGrokJsonResult treats a MaxTokens truncation stopReason as success", () => {
+  // grok emits MaxTokens when the answer is truncated at the output-token cap — a complete, visible
+  // answer from the user's perspective, so it must stay ok=true rather than being marked failed.
+  const parsed = parseGrokJsonResult(
+    JSON.stringify({ text: "a long but truncated answer", stopReason: "MaxTokens", sessionId: "019e8685-1031-70a0-9ac4-37dcbcefc163" }),
+    "",
+    0
+  );
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.error, null);
+  assert.equal(parsed.response, "a long but truncated answer");
+});
+
 test("parseGrokStreamText concatenates text deltas and reads sessionId from the end event", () => {
   const parsed = parseGrokStreamText(
     [
@@ -213,5 +241,32 @@ test("runGrokPromptStreaming fails when partial text is followed by a terminal e
   assert.equal(result.ok, false);
   assert.equal(result.response, "partial");
   assert.equal(result.error, "permission denied");
+  assert.equal(result.stopReason, "Cancelled");
+});
+
+test("runGrokPromptStreaming fails on a non-success stopReason alone (no error event) and keeps partial text", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  // No error event — only a Cancelled stopReason. providerError is null so the failure must come
+  // solely from isNonSuccessStopReason; this is the streaming mirror of the json stopReason-only path.
+  const result = await runGrokPromptStreaming({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"text","data":"partial"}\n');
+        child.stdout.emit("data", '{"type":"end","stopReason":"Cancelled","sessionId":"019e862e-63fd-7333-8f4c-4add60220323"}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.response, "partial");
+  assert.equal(result.error, "grok stopped with Cancelled");
   assert.equal(result.stopReason, "Cancelled");
 });

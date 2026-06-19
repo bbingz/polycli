@@ -402,3 +402,73 @@ test("cancelJob records cancelled ledger events, removes config, and cleans runt
     );
   });
 });
+
+test("cancelJob kills the worker before deleting its runtime paths", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const cleanupDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-cancel-order-"));
+    upsertJob(workspaceRoot, {
+      jobId: "job-order",
+      provider: "gemini",
+      kind: "review",
+      status: "running",
+      pid: 4242,
+    });
+    writeJobConfigFile(workspaceRoot, "job-order", {
+      workspaceRoot,
+      jobId: "job-order",
+      execution: {
+        provider: "gemini",
+        kind: "review",
+        runtimeOptions: { cleanupPaths: [cleanupDir] },
+      },
+      runContext: { runId: "run-order", command: "review", hostSurface: "terminal", jobId: "job-order", provider: "gemini", kind: "review" },
+    });
+
+    let dirExistedAtKill = null;
+    const report = await cancelJob(workspaceRoot, "job-order", {
+      terminate: async () => {
+        // The cleanup path (a review's live cwd) must still exist when the kill runs.
+        dirExistedAtKill = fs.existsSync(cleanupDir);
+      },
+    });
+
+    assert.equal(report.cancelled, true);
+    assert.equal(dirExistedAtKill, true);
+    assert.equal(fs.existsSync(cleanupDir), false);
+  });
+});
+
+test("cancelJob preserves runtime paths when the kill fails (worker may be alive)", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const cleanupDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-cancel-killfail-"));
+    upsertJob(workspaceRoot, {
+      jobId: "job-killfail",
+      provider: "gemini",
+      kind: "review",
+      status: "running",
+      pid: 4242,
+    });
+    writeJobConfigFile(workspaceRoot, "job-killfail", {
+      workspaceRoot,
+      jobId: "job-killfail",
+      execution: {
+        provider: "gemini",
+        kind: "review",
+        runtimeOptions: { cleanupPaths: [cleanupDir] },
+      },
+      runContext: { runId: "run-killfail", command: "review", hostSurface: "terminal", jobId: "job-killfail", provider: "gemini", kind: "review" },
+    });
+
+    const report = await cancelJob(workspaceRoot, "job-killfail", {
+      terminate: async () => {
+        throw new Error("kill failed");
+      },
+    });
+
+    assert.equal(report.cancelled, true);
+    assert.equal(report.killWarning, "kill failed");
+    // Worker may still be alive, so its runtime paths must NOT be deleted.
+    assert.equal(fs.existsSync(cleanupDir), true);
+    fs.rmSync(cleanupDir, { recursive: true, force: true });
+  });
+});

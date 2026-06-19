@@ -13,6 +13,15 @@ function tool(input) {
 
 tool.schema = z;
 
+// Exit code 2 is the companion's documented soft signal, not a hard failure: `health` with no
+// healthy provider and `status --wait` timeouts both exit 2 while still emitting a valid JSON
+// envelope on stdout. The adapter must surface that envelope so the opencode agent can reason about
+// it (anyHealthy:false / waitTimedOut:true) instead of seeing a thrown tool error. Every other
+// non-zero exit (1/4/5/crash) is a real failure and is propagated.
+export function isHardCompanionFailure(status) {
+  return status !== 0 && status !== 2;
+}
+
 function runCompanion(argv) {
   const result = spawnSync(process.execPath, [COMPANION, ...argv], {
     cwd: process.cwd(),
@@ -21,7 +30,7 @@ function runCompanion(argv) {
   if (result.error) {
     throw result.error;
   }
-  if (result.status !== 0) {
+  if (isHardCompanionFailure(result.status)) {
     const detail = String(result.stdout || result.stderr || "").trim() || `polycli companion exited with status ${result.status}`;
     const error = new Error(detail);
     error.status = result.status;
