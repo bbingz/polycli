@@ -44,6 +44,12 @@ function assertNonEmptyString(value, label) {
 function validateMeta(relativePath, meta, { fixtureRoot }) {
   assertNonEmptyString(meta.provider, `${relativePath}: provider`);
   assertNonEmptyString(meta.name, `${relativePath}: name`);
+  // Path/meta consistency (docs/capture-fixtures.md): provider matches the fixture directory and
+  // name matches the file stem before .meta.json.
+  const expectedProvider = relativePath.split("/")[0];
+  const expectedName = path.basename(relativePath, ".meta.json");
+  assert.equal(meta.provider, expectedProvider, `${relativePath}: provider must match the fixture directory ("${expectedProvider}")`);
+  assert.equal(meta.name, expectedName, `${relativePath}: name must match the file stem ("${expectedName}")`);
   assertNonEmptyString(meta.capturedAt, `${relativePath}: capturedAt`);
   assert.doesNotThrow(() => new Date(meta.capturedAt).toISOString(), `${relativePath}: capturedAt must be an ISO timestamp`);
   assertNonEmptyString(meta.version, `${relativePath}: version`);

@@ -22,8 +22,8 @@ export function isHardCompanionFailure(status) {
   return status !== 0 && status !== 2;
 }
 
-function runCompanion(argv) {
-  const result = spawnSync(process.execPath, [COMPANION, ...argv], {
+export function runCompanion(argv, { spawn = spawnSync } = {}) {
+  const result = spawn(process.execPath, [COMPANION, ...argv], {
     cwd: process.cwd(),
     encoding: "utf8",
   });
