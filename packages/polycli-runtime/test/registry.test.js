@@ -285,6 +285,30 @@ test("runProviderPromptStreaming prefers explicit model before defaultModel fall
   assert.equal(result.model, "explicit-model");
 });
 
+test("runProviderPrompt prefers explicit model before defaultModel fallback", async () => {
+  const result = await runProviderPrompt({
+    provider: "qwen",
+    prompt: "ping",
+    cwd: process.cwd(),
+    timeout: 5_000,
+    model: "explicit-model",
+    defaultModel: "cached-default-model",
+    runtime: {
+      runPrompt: async ({ model, defaultModel }) => {
+        assert.equal(model, "explicit-model");
+        assert.equal(defaultModel, "cached-default-model");
+        return {
+          ok: true,
+          response: "pong",
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.model, "explicit-model");
+});
+
 test("runProviderPromptStreaming marks claude tmux TUI text timings as unsupported", async () => {
   let now = 1_000;
   const result = await runProviderPromptStreaming({

@@ -3874,7 +3874,7 @@ var DEFAULT_TIMEOUT_MS11 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS11 = 3e4;
 var DEFAULT_GROK_MODEL = "grok-build";
 var GROK_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|not logged in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
-var SUCCESS_STOP_REASONS = /* @__PURE__ */ new Set(["endturn", "end_turn", "stop", "stop_sequence", "complete", "completed", "done", "finished"]);
+var SUCCESS_STOP_REASONS = /* @__PURE__ */ new Set(["endturn", "end_turn", "stop", "stop_sequence", "complete", "completed", "done", "finished", "maxtokens", "max_tokens", "length"]);
 var TRANSIENT_PROBE_ERROR_PATTERNS11 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
 ];
@@ -5460,6 +5460,7 @@ function createRunLedgerEvent(event = {}) {
   };
 }
 function appendRunLedgerEvent(workspaceRoot, event) {
+  if (workspaceRoot) ensureStateDir(workspaceRoot);
   const file = resolveRunLedgerFile(workspaceRoot);
   const workspaceSlug = workspaceRoot ? computeWorkspaceSlug(workspaceRoot) : null;
   const full = createRunLedgerEvent({
@@ -5803,18 +5804,18 @@ function enrichJob(workspaceRoot, job) {
 function hasLedgerPhase(events, runId, jobId, phase) {
   return events.some((event) => event.runId === runId && event.jobId === jobId && event.phase === phase);
 }
-function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason = "worker_exited" } = {}) {
+function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason = "worker_exited", skipRuntimeCleanup = false } = {}) {
   const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
   const runContext = config?.runContext;
   if (!runContext?.runId) {
-    cleanupRuntimePaths(config);
+    if (!skipRuntimeCleanup) cleanupRuntimePaths(config);
     removeJobConfigFile(workspaceRoot, job.jobId);
     return;
   }
   const recoverLock = `${resolveRunLedgerFile(workspaceRoot)}.recover.lock`;
-  withLockfile(recoverLock, () => writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result, reason }));
+  withLockfile(recoverLock, () => writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result, reason, skipRuntimeCleanup }));
 }
-function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited" } = {}) {
+function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited", skipRuntimeCleanup = false } = {}) {
   const events = readRunLedgerEvents(workspaceRoot);
   const command = runContext.command || config?.execution?.kind || job.kind || null;
   const provider = runContext.provider || config?.execution?.provider || job.provider || null;
@@ -5877,7 +5878,7 @@ function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
       reason: decisionReason
     });
   }
-  cleanupRuntimePaths(config);
+  if (!skipRuntimeCleanup) cleanupRuntimePaths(config);
   removeJobConfigFile(workspaceRoot, job.jobId);
 }
 function cleanupRuntimePaths(config) {
@@ -5972,7 +5973,7 @@ async function waitForJob(workspaceRoot, jobId, { timeoutMs = 24e4, pollInterval
   const timed = getJob(workspaceRoot, jobId);
   return { job: timed ? refreshJob(workspaceRoot, timed) : null, waitTimedOut: true };
 }
-async function cancelJob(workspaceRoot, jobId) {
+async function cancelJob(workspaceRoot, jobId, { terminate = terminateProcessTree } = {}) {
   let pidToKill = null;
   let reason = null;
   const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -6006,22 +6007,24 @@ async function cancelJob(workspaceRoot, jobId) {
   if (!write.written) {
     return { cancelled: false, reason: reason || "not_cancellable", jobId };
   }
-  recoverLedgerTerminalEvents(workspaceRoot, write.job, {
-    result: write.envelope?.result || { ok: false, error: "cancelled" },
-    reason: "cancelled"
-  });
+  let killWarning = null;
   if (pidToKill) {
     try {
-      await terminateProcessTree(pidToKill, {
+      await terminate(pidToKill, {
         signal: "SIGINT",
         forceSignal: "SIGKILL",
         forceAfterMs: 2e3
       });
     } catch (error) {
-      return { cancelled: true, jobId, killWarning: error.message };
+      killWarning = error.message;
     }
   }
-  return { cancelled: true, jobId };
+  recoverLedgerTerminalEvents(workspaceRoot, write.job, {
+    result: write.envelope?.result || { ok: false, error: "cancelled" },
+    reason: "cancelled",
+    skipRuntimeCleanup: killWarning != null
+  });
+  return killWarning ? { cancelled: true, jobId, killWarning } : { cancelled: true, jobId };
 }
 
 // plugins/polycli/scripts/lib/prompt-runtime.mjs
