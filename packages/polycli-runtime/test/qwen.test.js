@@ -243,6 +243,31 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result
   );
 });
 
+test("runQwenPrompt forwards an explicit --model through to the spawned argv", () => {
+  withFakeQwenBin(
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+if (process.env.QWEN_ARGV_LOG) fs.writeFileSync(process.env.QWEN_ARGV_LOG, JSON.stringify(process.argv.slice(2)));
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", result: "ok", is_error: false }) + "\\n");
+`,
+    ({ root, env }) => {
+      const argvLog = path.join(root, "argv.json");
+      const result = runQwenPrompt({
+        prompt: "ping",
+        cwd: root,
+        model: "qwen-explicit-model",
+        env: { ...env, QWEN_ARGV_LOG: argvLog },
+      });
+
+      assert.equal(result.ok, true);
+      const argv = JSON.parse(fs.readFileSync(argvLog, "utf8"));
+      const modelIndex = argv.indexOf("--model");
+      assert.ok(modelIndex >= 0, "spawned argv should include --model");
+      assert.equal(argv[modelIndex + 1], "qwen-explicit-model");
+    }
+  );
+});
+
 test("runQwenPrompt surfaces result-only errors", () => {
   withFakeQwenBin(
     `#!/usr/bin/env node
