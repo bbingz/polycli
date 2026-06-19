@@ -25,6 +25,7 @@ function validateRecipe(index, recipe) {
   assert.equal(typeof recipe.marketplace, "boolean", `${at}: marketplace must be boolean`);
   assertNonEmptyString(recipe.cachingNote, `${at}: cachingNote`);
   assertNonEmptyString(recipe.status, `${at}: status`);
+  assert.ok(["verified", "marketplace-unstable"].includes(recipe.status), `${at}: status must be "verified" or "marketplace-unstable" (got "${recipe.status}")`);
   assert.ok(recipe.source && typeof recipe.source === "object", `${at}: source must be an object`);
   assertNonEmptyString(recipe.source.url, `${at}: source.url`);
   assertNonEmptyString(recipe.source.date, `${at}: source.date`);
@@ -35,8 +36,11 @@ function validateRecipe(index, recipe) {
   if (recipe.marketplace === true) {
     assert.equal(recipe.autoCompactWindow, null, `${at}: marketplace recipes must leave autoCompactWindow null (no fabricated pin)`);
     assert.equal(recipe.status, "marketplace-unstable", `${at}: marketplace recipes must declare status "marketplace-unstable"`);
-  } else if (recipe.autoCompactWindow !== null) {
-    assert.ok(Number.isInteger(recipe.autoCompactWindow) && recipe.autoCompactWindow > 0, `${at}: autoCompactWindow must be null or a positive integer`);
+  } else {
+    assert.equal(recipe.status, "verified", `${at}: non-marketplace recipes must declare status "verified"`);
+    if (recipe.autoCompactWindow !== null) {
+      assert.ok(Number.isInteger(recipe.autoCompactWindow) && recipe.autoCompactWindow > 0, `${at}: autoCompactWindow must be null or a positive integer`);
+    }
   }
 }
 

@@ -58,6 +58,12 @@ test("validateCcXRecipes rejects a marketplace entry with a fabricated autoCompa
   assert.throws(() => validateCcXRecipes({ recipesPath: writeDoc(baseDoc(recipes)) }), /autoCompactWindow null/);
 });
 
+test("validateCcXRecipes rejects an unknown status (e.g. draft)", () => {
+  const recipes = Array.from({ length: 7 }, (_, i) => baseRecipe({ vendor: `Vendor${i}` }));
+  recipes[0] = baseRecipe({ vendor: "Draft", status: "draft" });
+  assert.throws(() => validateCcXRecipes({ recipesPath: writeDoc(baseDoc(recipes)) }), /status must be "verified" or "marketplace-unstable"/);
+});
+
 test("validateCcXRecipes requires at least the 7 verified core-lab recipes", () => {
   const recipes = Array.from({ length: 6 }, (_, i) => baseRecipe({ vendor: `Vendor${i}` }));
   assert.throws(() => validateCcXRecipes({ recipesPath: writeDoc(baseDoc(recipes)) }), /at least the 7 verified/);
