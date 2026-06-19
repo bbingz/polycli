@@ -6,6 +6,11 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-19 — Claude — release: v0.6.27 published (review residual cleanup)
+
+- Published **v0.6.27** to npm: `@bbingz/polycli@0.6.27` (shasum `397b2349bd3c952c2b612c7f762a9db48e09cb09`) and `@bbingz/polycli-opencode@0.6.27` (shasum `e38d544a851ad67302aa50b7f75d028b80cb6100`), both `latest`. GitHub release `v0.6.27` (`publishedAt` `2026-06-19T09:29:35Z`) + tag `v0.6.27`. Utility packages unchanged.
+- Cleared the remaining v0.6.26-review residuals via PR #13 (Node 20 CI green, rebase-merged): fixed a background-job disk leak (`saveState` now reclaims the result/config/log artifacts of terminal jobs pruned past `MAX_JOBS`, wiring the previously-dead `removeJobFile` + a new `removeJobLogFile`); enforced the `docs/capture-fixtures.md` path/meta contract in `validate-fixture-metadata.mjs` (provider==dir, name==stem); added OpenCode exit-2 execution-path coverage (`runCompanion` exported with an injectable spawn); and synced the `docs/roadmap.md` Current-state section that still said the latest release was v0.6.24. A repo-wide scan confirmed no other release-state claim was stale. See `docs/release-notes-v0.6.27.md`.
+
 ## 2026-06-19 — Claude — release: v0.6.26 published (review fixes)
 
 - Published **v0.6.26** to npm: `@bbingz/polycli@0.6.26` (shasum `b1ec2bcf366f1974e6850c42ca8c3ee81695999a`) and `@bbingz/polycli-opencode@0.6.26` (shasum `f1e86227af994c281d0fe860c59809b04c103470`), both `latest`. GitHub release `v0.6.26` (`publishedAt` `2026-06-19T09:03:11Z`) + tag `v0.6.26`. Utility packages unchanged.
