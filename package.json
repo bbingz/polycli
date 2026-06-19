@@ -17,6 +17,7 @@
     "validate:manifests": "node scripts/validate-release-manifests.mjs",
     "validate:host-map": "node scripts/validate-host-command-map.mjs",
     "validate:codex-adapter": "node scripts/validate-codex-adapter.mjs",
+    "validate:cc-x-recipes": "node scripts/validate-cc-x-recipes.mjs",
     "check:review-drift": "node scripts/check-review-cli-drift.mjs",
     "check:provider-paths": "node scripts/check-review-cli-drift.mjs",
     "check:fixture-freshness": "node scripts/check-fixture-freshness.mjs",
