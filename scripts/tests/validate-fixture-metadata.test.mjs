@@ -63,6 +63,42 @@ test("validateFixtureMetadata rejects missing required fields", () => {
   );
 });
 
+test("validateFixtureMetadata rejects a provider that does not match the directory", () => {
+  const root = makeTempRoot();
+  writeMeta(root, "qwen/stream-success.meta.json", {
+    provider: "claude",
+    name: "stream-success",
+    capturedAt: "2026-04-22T12:44:18.282Z",
+    version: "0.14.5",
+    argv: ["prompt"],
+    expected: { response: "HELLO_QWEN_FIXTURE" },
+  });
+  writeStream(root, "qwen/stream-success.stream.txt");
+
+  assert.throws(
+    () => validateFixtureMetadata({ fixtureRoot: root, requiredSuccessProviders: ["qwen"] }),
+    /provider must match the fixture directory \("qwen"\)/
+  );
+});
+
+test("validateFixtureMetadata rejects a name that does not match the file stem", () => {
+  const root = makeTempRoot();
+  writeMeta(root, "qwen/stream-success.meta.json", {
+    provider: "qwen",
+    name: "wrong-success",
+    capturedAt: "2026-04-22T12:44:18.282Z",
+    version: "0.14.5",
+    argv: ["prompt"],
+    expected: { response: "HELLO_QWEN_FIXTURE" },
+  });
+  writeStream(root, "qwen/stream-success.stream.txt");
+
+  assert.throws(
+    () => validateFixtureMetadata({ fixtureRoot: root, requiredSuccessProviders: ["qwen"] }),
+    /name must match the file stem \("stream-success"\)/
+  );
+});
+
 test("validateFixtureMetadata rejects sessionId values that are not strings", () => {
   const root = makeTempRoot();
   writeMeta(root, "qwen/stream-success.meta.json", {
