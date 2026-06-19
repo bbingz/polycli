@@ -68,7 +68,14 @@ function extractTerminalError(value) {
   if (!value || typeof value !== "object") return null;
   if (typeof value.error === "string" && value.error.trim()) return value.error.trim();
   if (value.error && typeof value.error === "object") {
-    return extractTerminalError(value.error);
+    // A nested error OBJECT is itself a terminal-error signal even without a type/is_error marker.
+    // Recurse for deeper nesting, then pull its message/data, and fall back to a generic marker when
+    // the object is non-empty but unlabeled. (An empty {} is not treated as an error.)
+    const nested = extractTerminalError(value.error);
+    if (nested) return nested;
+    if (typeof value.error.message === "string" && value.error.message.trim()) return value.error.message.trim();
+    if (typeof value.error.data === "string" && value.error.data.trim()) return value.error.data.trim();
+    return Object.keys(value.error).length > 0 ? "grok emitted a terminal error" : null;
   }
   if (value.is_error === true || value.isError === true || value.type === "error") {
     if (typeof value.message === "string" && value.message.trim()) return value.message.trim();
