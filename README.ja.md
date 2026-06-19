@@ -27,9 +27,9 @@
 
 これは **ユーティリティ専用の Path B モノレポ** です。プロバイダ間の差異を偽の抽象化で覆い隠したり、ランタイム基底クラスを発明したりはしません。公式の上流 CLI をサブプロセスとして組み合わせ、単一のコマンド面を公開し、4 状態の timing スキーマで能力の違いを正直に表現します。
 
-## 最新リリース: v0.6.26
+## 最新リリース: v0.6.27
 
-v0.6.25 の cc-X エンドポイントレシピを土台に、review で見つかった Grok のバグとリリース文書のドリフトを修正しました。Grok のネストされた error オブジェクト（`{error:{message:...}}`、可視テキストあり）は `ok:true` ではなく正しく失敗として扱われます。cc-X バリデータは `status` を `verified` / `marketplace-unstable` に限定し、文書では構造 + source の裏付けのみを保証し現時点の真正性は保証しないことを明記しました。v0.6.24 を指したままだった README 三言語と roadmap スナップショットも同期しました。Claude `ask` / `review` は引き続き headless `claude -p` 既定経路です。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.26.md`](./docs/release-notes-v0.6.26.md)。
+v0.6.26 の Grok ネストエラー修正を土台に、残りの review 残件を解消しました。バックグラウンドジョブのディスクリークを修正（`saveState` は `MAX_JOBS` を超えて削除される terminal ジョブの result/config/log を回収します）。fixture-metadata バリデータは path/meta 契約（`provider` がディレクトリ、`name` がファイル stem に一致）を強制し、cc-X バリデータと OpenCode の exit-2 ソフトシグナルに実行経路テストを追加しました。最新リリースを v0.6.24 と書いたままだった `docs/roadmap.md` の Current-state も同期しました。Claude `ask` / `review` は引き続き headless `claude -p` 既定経路です。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.27.md`](./docs/release-notes-v0.6.27.md)。
 
 ## なぜ polycli を使うのか？
 

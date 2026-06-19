@@ -1,6 +1,6 @@
 {
   "name": "polycli-codex",
-  "version": "0.6.26",
+  "version": "0.6.27",
   "description": "Codex skill adapter that routes provider CLI work through the shared polycli companion.",
   "author": {
     "name": "bing"
