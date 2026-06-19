@@ -6,6 +6,11 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-19 — Claude — release: v0.6.25 published
+
+- Published **v0.6.25** to npm: `@bbingz/polycli@0.6.25` (shasum `f243987016b6b89d536aadb83314a9416acd52e8`) and `@bbingz/polycli-opencode@0.6.25` (shasum `387fbf0347c5abc498d632c654b29783613240d5`), both `latest`. GitHub release `v0.6.25` (`publishedAt` `2026-06-19T08:09:43Z`) + tag `v0.6.25`. Utility packages unchanged (`@bbingz/polycli-utils@1.0.2`, `@bbingz/polycli-timing@1.0.1`).
+- Bundles the three entries below (re-verification remediation + tmux test stabilization + cc-X endpoint recipes). Landed via PR #11 (Node 20 CI green; the previously-flaky tmux test passed on CI), merged to `main` via rebase. See `docs/release-notes-v0.6.25.md`.
+
 ## 2026-06-19 — Claude — docs: cc-X domestic-model endpoint recipes (Path-B docs + reference data)
 
 - Added `docs/cc-x-endpoints.md` (human reference) + `docs/cc-x-recipes.json` (machine-readable source of truth) encoding the cc-X pattern: point the EXISTING `claude` runtime (BYOK) or `opencode` (OpenAI-compatible) at a domestic vendor's Anthropic-compatible endpoint via `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_MODEL`. Covers 9 entries across 7 PRC core labs (MiniMax, Moonshot Kimi, Zhipu GLM, Alibaba Qwen, DeepSeek, ByteDance Doubao, StepFun, Baidu Qianfan, Tencent) with per-vendor base URL, model-id family, native-CLI grouping, context-window (`autoCompactWindow`), caching note, and a `source` URL+date per entry.
