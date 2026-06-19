@@ -13,6 +13,8 @@ import {
   resolveJobsDir,
   resolveStateFile,
   resolveJobFile,
+  resolveJobConfigFile,
+  resolveJobLogFile,
   resolveStateDir,
   resolveWorkspaceRoot,
   saveState,
@@ -157,6 +159,37 @@ test("saveState preserves active jobs while pruning terminal history", () => {
     assert.equal(savedIds.includes("queued-old"), true);
     assert.equal(savedIds.includes("running-old"), true);
     assert.equal(savedIds.includes("terminal-0"), false);
+  });
+});
+
+test("saveState reclaims on-disk artifacts for terminal jobs pruned past MAX_JOBS", () => {
+  withPluginData(() => {
+    const workspaceRoot = "/tmp/polycli-prune-reclaim";
+    const terminalJobs = Array.from({ length: 105 }, (_, index) => ({
+      jobId: `terminal-${index}`,
+      status: "completed",
+      updatedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+    }));
+    const activeJob = { jobId: "queued-keep", status: "queued", updatedAt: "2025-12-31T00:00:00.000Z" };
+
+    // terminal-0 is the oldest -> pruned past MAX_JOBS; terminal-104 is newest -> kept; the active
+    // job is always kept. Write all three artifact kinds for each so we can prove reclamation.
+    for (const jobId of ["terminal-0", "terminal-104", "queued-keep"]) {
+      writeJobFile(workspaceRoot, jobId, { job: { jobId, status: "completed" }, result: { ok: true, response: "x" } });
+      writeJobConfigFile(workspaceRoot, jobId, { execution: { prompt: "p" } });
+      fs.writeFileSync(resolveJobLogFile(workspaceRoot, jobId), "log line\n");
+    }
+
+    saveState(workspaceRoot, { jobs: [...terminalJobs, activeJob], config: {} });
+
+    // Dropped terminal job: all artifacts reclaimed.
+    assert.equal(fs.existsSync(resolveJobFile(workspaceRoot, "terminal-0")), false);
+    assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "terminal-0")), false);
+    assert.equal(fs.existsSync(resolveJobLogFile(workspaceRoot, "terminal-0")), false);
+    // Kept terminal job + active job: artifacts retained.
+    assert.equal(fs.existsSync(resolveJobFile(workspaceRoot, "terminal-104")), true);
+    assert.equal(fs.existsSync(resolveJobFile(workspaceRoot, "queued-keep")), true);
+    assert.equal(fs.existsSync(resolveJobLogFile(workspaceRoot, "queued-keep")), true);
   });
 });
 

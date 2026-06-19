@@ -186,6 +186,17 @@ export function loadState(workspaceRoot) {
 export function saveState(workspaceRoot, state) {
   ensureStateDir(workspaceRoot);
   const jobs = pruneJobsForSave(state.jobs);
+  const keptIds = new Set(jobs.map((job) => job.jobId));
+  // Reclaim on-disk artifacts for terminal jobs pruned out of the persisted list (active jobs are
+  // never pruned, so this only ever removes aged-out terminal history). Without this the jobs dir
+  // grows unbounded as terminal jobs age past MAX_JOBS.
+  for (const job of state.jobs) {
+    if (job && job.jobId && !keptIds.has(job.jobId)) {
+      removeJobFile(workspaceRoot, job.jobId);
+      removeJobConfigFile(workspaceRoot, job.jobId);
+      removeJobLogFile(workspaceRoot, job.jobId);
+    }
+  }
   const config = state.config && typeof state.config === "object" ? state.config : {};
   writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs }, { mode: PRIVATE_FILE_MODE });
   return { version: STATE_VERSION, config, jobs };
@@ -333,6 +344,14 @@ export function readJobConfigFile(configFile) {
 export function removeJobConfigFile(workspaceRoot, jobId) {
   try {
     fs.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
+  } catch {
+    // ignore
+  }
+}
+
+export function removeJobLogFile(workspaceRoot, jobId) {
+  try {
+    fs.unlinkSync(resolveJobLogFile(workspaceRoot, jobId));
   } catch {
     // ignore
   }

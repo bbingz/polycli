@@ -5079,6 +5079,14 @@ function loadState(workspaceRoot) {
 function saveState(workspaceRoot, state) {
   ensureStateDir(workspaceRoot);
   const jobs = pruneJobsForSave(state.jobs);
+  const keptIds = new Set(jobs.map((job) => job.jobId));
+  for (const job of state.jobs) {
+    if (job && job.jobId && !keptIds.has(job.jobId)) {
+      removeJobFile(workspaceRoot, job.jobId);
+      removeJobConfigFile(workspaceRoot, job.jobId);
+      removeJobLogFile(workspaceRoot, job.jobId);
+    }
+  }
   const config = state.config && typeof state.config === "object" ? state.config : {};
   writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs }, { mode: PRIVATE_FILE_MODE });
   return { version: STATE_VERSION, config, jobs };
@@ -5179,6 +5187,12 @@ function readJobFile(jobFile) {
     return null;
   }
 }
+function removeJobFile(workspaceRoot, jobId) {
+  try {
+    fs3.unlinkSync(resolveJobFile(workspaceRoot, jobId));
+  } catch {
+  }
+}
 function writeJobConfigFile(workspaceRoot, jobId, payload) {
   ensureStateDir(workspaceRoot);
   writeJsonAtomic(resolveJobConfigFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
@@ -5194,6 +5208,12 @@ function readJobConfigFile(configFile) {
 function removeJobConfigFile(workspaceRoot, jobId) {
   try {
     fs3.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
+  } catch {
+  }
+}
+function removeJobLogFile(workspaceRoot, jobId) {
+  try {
+    fs3.unlinkSync(resolveJobLogFile(workspaceRoot, jobId));
   } catch {
   }
 }
