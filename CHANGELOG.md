@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-19 — Claude — release: v0.6.26 published (review fixes)
+
+- Published **v0.6.26** to npm: `@bbingz/polycli@0.6.26` (shasum `b1ec2bcf366f1974e6850c42ca8c3ee81695999a`) and `@bbingz/polycli-opencode@0.6.26` (shasum `f1e86227af994c281d0fe860c59809b04c103470`), both `latest`. GitHub release `v0.6.26` (`publishedAt` `2026-06-19T09:03:11Z`) + tag `v0.6.26`. Utility packages unchanged.
+- Addresses an external review of v0.6.25 via PR #12 (Node 20 CI green, rebase-merged): **(High)** fixed `extractTerminalError` missing a nested error object (`{error:{message:...}}`) so visible partial text was wrongly `ok:true` — covers `parseGrokJsonResult` + `parseGrokStreamText`, with json/streaming/empty-object regressions; **(Medium)** constrained the cc-X validator `status` to `verified`/`marketplace-unstable` and clarified roadmap Q10 that the validator guards structure + source-anchoring, not current-truth; **(Medium)** synced release-state docs (README en/zh/ja + roadmap snapshot) that still said v0.6.24; **(Low)** added a `runQwenPrompt` `--model` argv regression. See `docs/release-notes-v0.6.26.md`.
+- Deferred (declared): `validate-fixture-metadata.mjs` path/meta consistency is a pre-existing Low gap, flagged for a separate change.
+
 ## 2026-06-19 — Claude — release: v0.6.25 published
 
 - Published **v0.6.25** to npm: `@bbingz/polycli@0.6.25` (shasum `f243987016b6b89d536aadb83314a9416acd52e8`) and `@bbingz/polycli-opencode@0.6.25` (shasum `387fbf0347c5abc498d632c654b29783613240d5`), both `latest`. GitHub release `v0.6.25` (`publishedAt` `2026-06-19T08:09:43Z`) + tag `v0.6.25`. Utility packages unchanged (`@bbingz/polycli-utils@1.0.2`, `@bbingz/polycli-timing@1.0.1`).
