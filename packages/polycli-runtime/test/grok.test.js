@@ -73,6 +73,31 @@ test("parseGrokJsonResult fails on terminal error metadata even with visible tex
   assert.equal(parsed.error, "permission denied");
 });
 
+test("parseGrokJsonResult fails on a NESTED error object whose payload is only a message", () => {
+  // Regression: a nested error object ({error:{message:...}}) carries no type/is_error marker, so
+  // the old recursion returned null and a visible-text response was wrongly reported ok:true.
+  const parsed = parseGrokJsonResult(
+    JSON.stringify({ text: "partial", error: { message: "permission denied" } }),
+    "",
+    0
+  );
+
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.response, "partial");
+  assert.equal(parsed.error, "permission denied");
+});
+
+test("parseGrokJsonResult does not flag an empty error object as a failure", () => {
+  const parsed = parseGrokJsonResult(
+    JSON.stringify({ text: "all good", error: {} }),
+    "",
+    0
+  );
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.error, null);
+});
+
 test("parseGrokJsonResult fails on a non-success stopReason alone (no error metadata) and keeps partial text", () => {
   // stopReason-only failure: no error field/event, so providerError is null and the failure must be
   // driven solely by isNonSuccessStopReason. Reverting that branch would flip ok back to true.
@@ -127,6 +152,19 @@ test("parseGrokStreamText records terminal error events and non-success stop rea
 
   assert.equal(parsed.response, "partial");
   assert.equal(parsed.stopReason, "Cancelled");
+  assert.equal(parsed.providerError, "permission denied");
+});
+
+test("parseGrokStreamText captures a nested error object payload (message-only)", () => {
+  const parsed = parseGrokStreamText(
+    [
+      '{"type":"text","data":"partial"}',
+      '{"type":"error","error":{"message":"permission denied"}}',
+      '{"type":"end","stopReason":"EndTurn"}',
+    ].join("\n")
+  );
+
+  assert.equal(parsed.response, "partial");
   assert.equal(parsed.providerError, "permission denied");
 });
 

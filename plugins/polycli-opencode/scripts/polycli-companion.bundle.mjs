@@ -3919,7 +3919,11 @@ function extractTerminalError(value) {
   if (!value || typeof value !== "object") return null;
   if (typeof value.error === "string" && value.error.trim()) return value.error.trim();
   if (value.error && typeof value.error === "object") {
-    return extractTerminalError(value.error);
+    const nested = extractTerminalError(value.error);
+    if (nested) return nested;
+    if (typeof value.error.message === "string" && value.error.message.trim()) return value.error.message.trim();
+    if (typeof value.error.data === "string" && value.error.data.trim()) return value.error.data.trim();
+    return Object.keys(value.error).length > 0 ? "grok emitted a terminal error" : null;
   }
   if (value.is_error === true || value.isError === true || value.type === "error") {
     if (typeof value.message === "string" && value.message.trim()) return value.message.trim();
