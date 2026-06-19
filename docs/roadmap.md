@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-06-16 (v0.6.24 is the latest public release; it keeps Claude ask/review on headless `claude -p` defaults and hardens status wait timeout behavior found by multi-provider release review).
+Snapshot: 2026-06-19 (v0.6.26 is the latest public release; it fixes a review-found Grok nested-error bug, tightens the cc-X recipe validator, and syncs release-state docs, on top of v0.6.25's re-verified remediation + cc-X endpoint recipes, while keeping Claude ask/review on headless `claude -p` defaults).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -125,7 +125,7 @@ Items:
 
 Source: 2026-06-19 cc-X research (point Claude Code / opencode at a domestic vendor's Anthropic-compatible endpoint via `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_MODEL`).
 
-Status: landed as docs + reference data, Path-B-pure. `docs/cc-x-endpoints.md` + machine-readable `docs/cc-x-recipes.json` (guarded by `scripts/validate-cc-x-recipes.mjs` + its paired test) encode the core-lab endpoint matrix, the operational gotchas (silent prompt-cache degradation, `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` pin, `CLAUDE_CODE_AUTO_COMPACT_WINDOW` sizing, marketplace model-identity instability, data-sovereignty gate), and the honest-default refusal to pin a model/version for the Baidu/Tencent marketplace endpoints. cc-X rides the EXISTING `claude`/`opencode` runtimes via standard env vars — verified zero runtime change needed (`claude.js` already forwards the `ANTHROPIC_*` trio on both the `claude -p` and tmux paths). NO cc-X provider/adapter/runtime was added; that refusal is the decision, recorded in Explicit non-goals below.
+Status: landed as docs + reference data, Path-B-pure. `docs/cc-x-endpoints.md` + machine-readable `docs/cc-x-recipes.json` record the core-lab endpoint matrix, the operational gotchas (silent prompt-cache degradation, `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` pin, `CLAUDE_CODE_AUTO_COMPACT_WINDOW` sizing, marketplace model-identity instability, data-sovereignty gate), and the honest-default refusal to pin a model/version for the Baidu/Tencent marketplace endpoints. `scripts/validate-cc-x-recipes.mjs` + its paired test guard STRUCTURE only — required fields, a `source{url,date}` per entry, a constrained `status` (`verified` / `marketplace-unstable`), and the marketplace honest-default — NOT that the endpoints/models are currently accurate (that stays a per-entry `source`-URL re-check, since a live probe is out of scope). cc-X rides the EXISTING `claude`/`opencode` runtimes via standard env vars — verified zero runtime change needed (`claude.js` already forwards the `ANTHROPIC_*` trio on both the `claude -p` and tmux paths). NO cc-X provider/adapter/runtime was added; that refusal is the decision, recorded in Explicit non-goals below.
 
 ---
 

@@ -29,17 +29,17 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.24
+## Latest release: v0.6.26
 
-The latest patch keeps the v0.6.22 Claude `ask`/`review` print-mode defaults and hardens status wait behavior found by multi-provider release review:
+The latest patch fixes a Grok review-found bug and release-doc drift on top of v0.6.25's cc-X endpoint recipes:
 
-- `status --all --wait --json` now exits 2 when it times out instead of returning success with `waitTimedOut:true`.
-- Invalid `--timeout-ms` values are rejected as positive-integer errors instead of becoming `NaN`.
-- Text `status --all --wait` timeout output now says it timed out before rendering the running-jobs snapshot.
-- Claude `ask` and `review` still use headless `claude -p` by default with plan/no-tools/no-MCP constraints, while explicit/internal tmux TUI runtime support remains covered.
-- Utility packages stay on their independent v1.x cadence.
+- Grok: a NESTED error object (`{error:{message:...}}`) with visible text is now correctly reported as failed instead of `ok:true` — the previous recursion missed an error payload that carried no `type`/`is_error` marker.
+- cc-X recipe validator now constrains `status` to `verified` / `marketplace-unstable` (rejecting unlabeled entries), and the docs state plainly that it guards structure + source-anchoring, not current-truth.
+- Synced the release-state docs (README in three languages, roadmap snapshot) that still pointed at v0.6.24.
+- Builds on v0.6.25: the re-verified workflow-review remediation, the tmux test stabilization, and the cc-X domestic-model endpoint recipes (`docs/cc-x-endpoints.md` / `docs/cc-x-recipes.json`) that ride the existing `claude`/`opencode` runtimes — cc-X is documented config, **not** a new provider adapter.
+- Claude `ask` and `review` still use headless `claude -p` by default with plan/no-tools/no-MCP constraints; utility packages stay on their independent v1.x cadence.
 
-See [`docs/release-notes-v0.6.24.md`](./docs/release-notes-v0.6.24.md).
+See [`docs/release-notes-v0.6.26.md`](./docs/release-notes-v0.6.26.md).
 
 ## Why polycli?
 
