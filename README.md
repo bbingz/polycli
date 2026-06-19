@@ -29,17 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.26
+## Latest release: v0.6.27
 
-The latest patch fixes a Grok review-found bug and release-doc drift on top of v0.6.25's cc-X endpoint recipes:
+The latest patch clears the remaining review residuals on top of v0.6.26's Grok nested-error fix:
 
-- Grok: a NESTED error object (`{error:{message:...}}`) with visible text is now correctly reported as failed instead of `ok:true` — the previous recursion missed an error payload that carried no `type`/`is_error` marker.
-- cc-X recipe validator now constrains `status` to `verified` / `marketplace-unstable` (rejecting unlabeled entries), and the docs state plainly that it guards structure + source-anchoring, not current-truth.
-- Synced the release-state docs (README in three languages, roadmap snapshot) that still pointed at v0.6.24.
-- Builds on v0.6.25: the re-verified workflow-review remediation, the tmux test stabilization, and the cc-X domestic-model endpoint recipes (`docs/cc-x-endpoints.md` / `docs/cc-x-recipes.json`) that ride the existing `claude`/`opencode` runtimes — cc-X is documented config, **not** a new provider adapter.
-- Claude `ask` and `review` still use headless `claude -p` by default with plan/no-tools/no-MCP constraints; utility packages stay on their independent v1.x cadence.
+- Fixed a background-job disk leak: `saveState` now reclaims the result/config/log artifacts of terminal jobs pruned past `MAX_JOBS` instead of leaving them in the jobs dir forever.
+- The fixture-metadata validator enforces the documented path/meta contract (`provider` matches the directory, `name` matches the file stem); the cc-X validator and OpenCode exit-2 soft-signal now have execution-path test coverage.
+- Synced the `docs/roadmap.md` Current-state section, which still said the latest release was v0.6.24.
+- Builds on v0.6.26 (Grok nested-error fix) and v0.6.25 (re-verified remediation + cc-X endpoint recipes). Claude `ask` and `review` still use headless `claude -p` by default with plan/no-tools/no-MCP constraints; utility packages stay on their independent v1.x cadence.
 
-See [`docs/release-notes-v0.6.26.md`](./docs/release-notes-v0.6.26.md).
+See [`docs/release-notes-v0.6.27.md`](./docs/release-notes-v0.6.27.md).
 
 ## Why polycli?
 

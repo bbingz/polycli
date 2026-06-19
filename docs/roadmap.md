@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-06-19 (v0.6.26 is the latest public release; it fixes a review-found Grok nested-error bug, tightens the cc-X recipe validator, and syncs release-state docs, on top of v0.6.25's re-verified remediation + cc-X endpoint recipes, while keeping Claude ask/review on headless `claude -p` defaults).
+Snapshot: 2026-06-19 (v0.6.27 is the latest public release; it cleans up review residuals — roadmap release-state drift, the cc-X/fixture validator path/meta + status contracts, OpenCode exit-2 execution-path coverage, and the MAX_JOBS terminal-job disk-leak — on top of v0.6.26's Grok nested-error fix and v0.6.25's re-verified remediation + cc-X endpoint recipes, while keeping Claude ask/review on headless `claude -p` defaults).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,9 +10,9 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.24** — see `docs/release-notes-v0.6.24.md`. It keeps default Claude ask/review on `claude -p` and hardens status wait timeout behavior for JSON, text, and invalid timeout values.
+- Latest public release: **v0.6.27** — see `docs/release-notes-v0.6.27.md`. It keeps default Claude ask/review on `claude -p` and is the latest in the post-v0.6.24 patch line (status-wait hardening → re-verified remediation + cc-X recipes → Grok nested-error fix → these review-residual cleanups).
 - 11 providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok). v0.6.21 shipped Claude detached tmux TUI defaults and the third-party review remediation set.
-- Current unreleased workspace work: post-v0.6.24 status wait compatibility/test hardening after latest-package multi-provider review; not yet published.
+- No unreleased workspace work pending: everything through v0.6.27 (status-wait compatibility, the re-verified remediation, the cc-X endpoint recipes, the Grok nested-error fix, and the validator/doc/disk-leak review residuals) is published.
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
 

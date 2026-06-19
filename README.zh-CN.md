@@ -27,9 +27,9 @@
 
 这是一个 **utility-only 的 Path B monorepo**：不假装能抹平 provider 之间的差异，也不引入 runtime 基类。它把官方上游 CLI 作为子进程组合起来，统一命令面，并通过四态 timing schema 如实暴露能力差异。
 
-## 最新版本：v0.6.26
+## 最新版本：v0.6.27
 
-在 v0.6.25 的 cc-X 端点 recipe 基础上，修复了 review 发现的 Grok bug 与发布文档漂移：Grok 嵌套 error 对象（`{error:{message:...}}`，带可见文本）现在正确判为失败而非 `ok:true`；cc-X validator 将 `status` 限定为 `verified` / `marketplace-unstable`，文档明确它只保结构 + source 锚定、不保当前真值；同步了仍指向 v0.6.24 的 README 三语与 roadmap 快照。Claude `ask` / `review` 仍走 headless `claude -p` 默认路径。详情见英文 release notes：[`docs/release-notes-v0.6.26.md`](./docs/release-notes-v0.6.26.md)。
+在 v0.6.26 的 Grok 嵌套 error 修复基础上，清理剩余 review 残留：修复后台 job 磁盘泄漏(`saveState` 现在回收被 `MAX_JOBS` 裁掉的 terminal job 的 result/config/log,不再永久留存);fixture-metadata validator 强制 path/meta 契约(`provider` 配目录、`name` 配文件 stem),cc-X validator 与 OpenCode exit-2 软信号补了执行面测试覆盖;同步了 `docs/roadmap.md` Current-state 段(仍写最新版是 v0.6.24)。Claude `ask` / `review` 仍走 headless `claude -p` 默认路径。详情见英文 release notes：[`docs/release-notes-v0.6.27.md`](./docs/release-notes-v0.6.27.md)。
 
 ## 为什么要用 polycli？
 
