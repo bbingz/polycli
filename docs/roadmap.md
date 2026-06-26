@@ -11,8 +11,8 @@ Living document — update when items land, when priorities shift, or when a def
 ## Current state
 
 - Latest public release: **v0.6.27** — see `docs/release-notes-v0.6.27.md`. It keeps default Claude ask/review on `claude -p` and is the latest in the post-v0.6.24 patch line (status-wait hardening → re-verified remediation + cc-X recipes → Grok nested-error fix → these review-residual cleanups).
-- 11 providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok). v0.6.21 shipped Claude detached tmux TUI defaults and the third-party review remediation set.
-- No unreleased workspace work pending: everything through v0.6.27 (status-wait compatibility, the re-verified remediation, the cc-X endpoint recipes, the Grok nested-error fix, and the validator/doc/disk-leak review residuals) is published.
+- 11 providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok). All 11 CLIs were re-verified against their live installs on 2026-06-26 (every adapter flag/auth/argv contract intact; no version gaps); see `docs/provider-paths.md`.
+- Everything through v0.6.27 (status-wait compatibility, the re-verified remediation, the cc-X endpoint recipes, the Grok nested-error fix, and the validator/doc/disk-leak review residuals) is published. Unreleased on branch `chore/provider-state-review-20260626`: a 2026-06-26 provider-state re-verification with two adapter fixes (copilot resume → `--session-id`, minimax `stop_reason` finish-reason) pending a future patch release.
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
 

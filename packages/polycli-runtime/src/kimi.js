@@ -14,7 +14,7 @@ const KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authent
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
 ];
-// kimi-code v0.6.0 stores its default model in ~/.kimi-code/config.toml (the legacy python
+// kimi-code stores its default model in ~/.kimi-code/config.toml (the legacy python
 // kimi-cli used ~/.kimi/config.toml; that install is migrated, marker `.migrated-to-kimi-code`).
 const KIMI_CONFIG_PATH = process.env.KIMI_CONFIG_PATH || path.join(os.homedir(), ".kimi-code", "config.toml");
 
@@ -39,9 +39,9 @@ export function buildKimiInvocation({
   // kimi-code one-shot mode: `-p <prompt> --output-format stream-json`. NOTE: `-p` cannot be
   // combined with `--yolo`, `--auto`, or `--plan` (the CLI rejects them) — `-p` is itself the
   // non-interactive headless runner, so no approval flag is passed. Resume is delegated to the
-  // CLI: `--session <id>` (kimi-code v0.6.0's `-S, --session [id]`, per its own
+  // CLI: `--session <id>` (kimi-code's `-S, --session [id]`, per its own
   // session.resume_hint) or `-C` to continue the last session. NOTE: the legacy python
-  // kimi-cli used `-r`; kimi-code v0.6.0 has no `-r` flag and rejects it.
+  // kimi-cli used `-r`; kimi-code has no `-r` flag and rejects it.
   const args = ["-p", String(prompt ?? ""), "--output-format", "stream-json"];
   if (model) args.push("-m", model);
   if (resumeLast) {

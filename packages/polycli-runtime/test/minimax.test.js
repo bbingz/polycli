@@ -90,6 +90,8 @@ test("runMiniMaxPrompt parses real mmx content arrays and ignores auth notices o
   assert.equal(result.response, "pong");
   assert.equal(result.error, null);
   assert.equal(result.model, "MiniMax-M2.7");
+  // Anthropic-shape responses carry `stop_reason`, not `finish_reason`.
+  assert.equal(result.finishReason, "end_turn");
 });
 
 test("minimax log helpers extract response blocks and sanitize ansi", () => {

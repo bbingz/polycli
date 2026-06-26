@@ -56,7 +56,7 @@ export function buildPromptRuntimeOptions({
     };
   }
 
-  // kimi-code v0.6.0 has no per-invocation ask constraints: `-p` one-shot mode rejects
+  // kimi-code has no per-invocation ask constraints: `-p` one-shot mode rejects
   // --plan/--auto and the old --no-thinking/--max-steps-per-turn flags were removed (those
   // are now config.toml-level). kimi ask therefore uses the plain `-p` invocation.
 

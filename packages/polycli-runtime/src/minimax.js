@@ -209,7 +209,10 @@ export function extractMiniMaxResponseFromMmxJson(text) {
       : typeof value.text === "string"
         ? value.text
         : contentText || (typeof message?.content === "string" ? message.content : "");
-  const finishReason = value.finish_reason ?? value.finishReason ?? choice?.finish_reason ?? null;
+  // mmx speaks both the OpenAI (`finish_reason`) and Anthropic Messages (`stop_reason`) shapes;
+  // the content-block branch above already handles Anthropic `content[]`, so honour `stop_reason` too.
+  const finishReason =
+    value.finish_reason ?? value.finishReason ?? value.stop_reason ?? choice?.finish_reason ?? null;
   const toolCalls = Array.isArray(value.tool_calls)
     ? value.tool_calls
     : Array.isArray(message?.tool_calls)
