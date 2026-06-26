@@ -6,6 +6,11 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-06-26 — Codex — release: v0.6.28 published (provider-state review)
+
+- Published **v0.6.28** to npm: `@bbingz/polycli@0.6.28` (shasum `6ab1bc8e4f8f241ac529058ef325c41f80983e6f`) and `@bbingz/polycli-opencode@0.6.28` (shasum `0cb4db0ee36d9463122533bf1906ceea954222df`), both `latest`. GitHub release `v0.6.28` (`publishedAt` `2026-06-26T15:21:35Z`) + tag `v0.6.28`. Utility packages unchanged.
+- Closed PR #15 after review and release-prep: main CI green on `5f2cdde8cae50bd02cc6c25eac0c77f858a93d2a`; `npm run release:check` rerun on merged `main` passed (`npm test` 559/559, bundle/fixture/manifest/host-map/Codex adapter/review-drift/Claude plugin validation, npm publish dry-runs). `@bbingz/polycli@0.6.28` was published by the maintainer during npm 2FA handoff; Codex published the missing `@bbingz/polycli-opencode@0.6.28`, created the GitHub release, and updated release docs.
+
 ## 2026-06-26 — Claude — provider-state review: live re-verify all 11 CLIs + drift fixes (PR #15, v0.6.28 release candidate)
 
 - Ran a `provider-state-review` Workflow (11 read-only probe agents → per-provider adversarial verify → synthesis, 23 agents) to re-check every provider CLI's **live install + upstream + adapter contract** on top of `v0.6.27`. Headline: **no version gaps, no breaking CLI drift** — all 11 locals == upstream where comparable (claude 2.1.193 / gemini 0.49.0 / qwen 0.19.2 / copilot 1.0.65 / opencode 1.17.11 / pi 0.80.2 / cmd 0.40.8 / mmx 1.0.16 / kimi-code 0.19.1 / grok 0.2.64 / agy 1.0.12); every flag/auth/argv assumption verified intact against live `--help`.
