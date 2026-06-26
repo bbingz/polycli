@@ -29,16 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.27
+## Latest release: v0.6.28
 
-The latest patch clears the remaining review residuals on top of v0.6.26's Grok nested-error fix:
+The latest patch publishes the 2026-06-26 provider-state re-verification on top of v0.6.27:
 
-- Fixed a background-job disk leak: `saveState` now reclaims the result/config/log artifacts of terminal jobs pruned past `MAX_JOBS` instead of leaving them in the jobs dir forever.
-- The fixture-metadata validator enforces the documented path/meta contract (`provider` matches the directory, `name` matches the file stem); the cc-X validator and OpenCode exit-2 soft-signal now have execution-path test coverage.
-- Synced the `docs/roadmap.md` Current-state section, which still said the latest release was v0.6.24.
-- Builds on v0.6.26 (Grok nested-error fix) and v0.6.25 (re-verified remediation + cc-X endpoint recipes). Claude `ask` and `review` still use headless `claude -p` by default with plan/no-tools/no-MCP constraints; utility packages stay on their independent v1.x cadence.
+- Re-checked all 11 provider CLIs against live installs and upstream version sources; no version gaps or breaking flag/auth/argv drift were found.
+- Copilot exact session resume now emits `--session-id <id>` instead of the invalid space-separated `--resume <id>` form.
+- MiniMax JSON parsing now preserves Anthropic-style `stop_reason` as `finishReason` when `mmx` returns Messages-shaped content blocks.
+- Kimi version labels and provider-state docs were refreshed for `kimi-code 0.19.1`. Claude `ask` and `review` still use headless `claude -p` by default with plan/no-tools/no-MCP constraints; utility packages stay on their independent v1.x cadence.
 
-See [`docs/release-notes-v0.6.27.md`](./docs/release-notes-v0.6.27.md).
+See [`docs/release-notes-v0.6.28.md`](./docs/release-notes-v0.6.28.md).
 
 ## Why polycli?
 

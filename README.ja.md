@@ -27,9 +27,9 @@
 
 これは **ユーティリティ専用の Path B モノレポ** です。プロバイダ間の差異を偽の抽象化で覆い隠したり、ランタイム基底クラスを発明したりはしません。公式の上流 CLI をサブプロセスとして組み合わせ、単一のコマンド面を公開し、4 状態の timing スキーマで能力の違いを正直に表現します。
 
-## 最新リリース: v0.6.27
+## 最新リリース: v0.6.28
 
-v0.6.26 の Grok ネストエラー修正を土台に、残りの review 残件を解消しました。バックグラウンドジョブのディスクリークを修正（`saveState` は `MAX_JOBS` を超えて削除される terminal ジョブの result/config/log を回収します）。fixture-metadata バリデータは path/meta 契約（`provider` がディレクトリ、`name` がファイル stem に一致）を強制し、cc-X バリデータと OpenCode の exit-2 ソフトシグナルに実行経路テストを追加しました。最新リリースを v0.6.24 と書いたままだった `docs/roadmap.md` の Current-state も同期しました。Claude `ask` / `review` は引き続き headless `claude -p` 既定経路です。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.27.md`](./docs/release-notes-v0.6.27.md)。
+v0.6.27 の上に、2026-06-26 の provider-state 再検証を公開します。11 種類の provider CLI についてローカルインストール・上流バージョン・adapter の flag/auth/argv 契約を確認し、バージョン差分や破壊的な CLI ドリフトは見つかりませんでした。Copilot の exact session resume は無効な空白区切りの `--resume <id>` ではなく `--session-id <id>` を使うようになり、MiniMax の JSON パーサは Anthropic-style の `stop_reason` を `finishReason` として保持します。Kimi のバージョン表記と provider-state ドキュメントも `kimi-code 0.19.1` に同期しました。Claude `ask` / `review` は引き続き headless `claude -p` 既定経路です。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.28.md`](./docs/release-notes-v0.6.28.md)。
 
 ## なぜ polycli を使うのか？
 
