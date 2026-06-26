@@ -6,7 +6,7 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
-## 2026-06-26 — Claude — provider-state review: live re-verify all 11 CLIs + drift fixes (branch `chore/provider-state-review-20260626`, unreleased)
+## 2026-06-26 — Claude — provider-state review: live re-verify all 11 CLIs + drift fixes (PR #15, v0.6.28 release candidate)
 
 - Ran a `provider-state-review` Workflow (11 read-only probe agents → per-provider adversarial verify → synthesis, 23 agents) to re-check every provider CLI's **live install + upstream + adapter contract** on top of `v0.6.27`. Headline: **no version gaps, no breaking CLI drift** — all 11 locals == upstream where comparable (claude 2.1.193 / gemini 0.49.0 / qwen 0.19.2 / copilot 1.0.65 / opencode 1.17.11 / pi 0.80.2 / cmd 0.40.8 / mmx 1.0.16 / kimi-code 0.19.1 / grok 0.2.64 / agy 1.0.12); every flag/auth/argv assumption verified intact against live `--help`.
 - **(code) copilot resume contract** — `buildCopilotInvocation` now emits `--session-id <id>` instead of `--resume <id>` for resume-by-exact-id. copilot 1.0.65's `-r, --resume[=value]` takes an OPTIONAL `=`-attached value (or opens the session picker), so the prior space-separated form would not resume by id; `--session-id <id>` is the documented by-id flag. Reachable via `ask`/`rescue --provider copilot --resume <id>` (the companion sets `resumeSessionId`). Regression updated in `copilot.test.js`; all 5 companion bundles regenerated.

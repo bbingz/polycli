@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-06-19 (v0.6.27 is the latest public release; it cleans up review residuals — roadmap release-state drift, the cc-X/fixture validator path/meta + status contracts, OpenCode exit-2 execution-path coverage, and the MAX_JOBS terminal-job disk-leak — on top of v0.6.26's Grok nested-error fix and v0.6.25's re-verified remediation + cc-X endpoint recipes, while keeping Claude ask/review on headless `claude -p` defaults).
+Snapshot: 2026-06-26 (v0.6.28 is the latest public release; it publishes the provider-state re-verification plus Copilot exact-resume and MiniMax finish-reason parser fixes on top of v0.6.27's review-residual cleanup, while keeping Claude ask/review on headless `claude -p` defaults).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,9 +10,9 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.27** — see `docs/release-notes-v0.6.27.md`. It keeps default Claude ask/review on `claude -p` and is the latest in the post-v0.6.24 patch line (status-wait hardening → re-verified remediation + cc-X recipes → Grok nested-error fix → these review-residual cleanups).
+- Latest public release: **v0.6.28** — see `docs/release-notes-v0.6.28.md`. It keeps default Claude ask/review on `claude -p` and is the latest in the post-v0.6.24 patch line (status-wait hardening -> re-verified remediation + cc-X recipes -> Grok nested-error fix -> review-residual cleanup -> provider-state re-verification).
 - 11 providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok). All 11 CLIs were re-verified against their live installs on 2026-06-26 (every adapter flag/auth/argv contract intact; no version gaps); see `docs/provider-paths.md`.
-- Everything through v0.6.27 (status-wait compatibility, the re-verified remediation, the cc-X endpoint recipes, the Grok nested-error fix, and the validator/doc/disk-leak review residuals) is published. Unreleased on branch `chore/provider-state-review-20260626`: a 2026-06-26 provider-state re-verification with two adapter fixes (copilot resume → `--session-id`, minimax `stop_reason` finish-reason) pending a future patch release.
+- Everything through v0.6.28 (status-wait compatibility, the re-verified remediation, the cc-X endpoint recipes, the Grok nested-error fix, the validator/doc/disk-leak review residuals, and the 2026-06-26 provider-state re-verification with Copilot resume / MiniMax parser fixes) is published.
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
 

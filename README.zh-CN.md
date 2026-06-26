@@ -27,9 +27,9 @@
 
 这是一个 **utility-only 的 Path B monorepo**：不假装能抹平 provider 之间的差异，也不引入 runtime 基类。它把官方上游 CLI 作为子进程组合起来，统一命令面，并通过四态 timing schema 如实暴露能力差异。
 
-## 最新版本：v0.6.27
+## 最新版本：v0.6.28
 
-在 v0.6.26 的 Grok 嵌套 error 修复基础上，清理剩余 review 残留：修复后台 job 磁盘泄漏(`saveState` 现在回收被 `MAX_JOBS` 裁掉的 terminal job 的 result/config/log,不再永久留存);fixture-metadata validator 强制 path/meta 契约(`provider` 配目录、`name` 配文件 stem),cc-X validator 与 OpenCode exit-2 软信号补了执行面测试覆盖;同步了 `docs/roadmap.md` Current-state 段(仍写最新版是 v0.6.24)。Claude `ask` / `review` 仍走 headless `claude -p` 默认路径。详情见英文 release notes：[`docs/release-notes-v0.6.27.md`](./docs/release-notes-v0.6.27.md)。
+在 v0.6.27 基础上发布 2026-06-26 provider-state 复核结果：重新检查 11 个 provider CLI 的本地安装、上游版本源和 adapter flag/auth/argv 契约，未发现版本缺口或破坏性漂移；Copilot 精确 session resume 改为 `--session-id <id>`，避免无效的空格分隔 `--resume <id>`；MiniMax JSON 解析现在把 Anthropic-style `stop_reason` 保留为 `finishReason`；Kimi 版本标签和 provider-state 文档同步到 `kimi-code 0.19.1`。Claude `ask` / `review` 仍走 headless `claude -p` 默认路径。详情见英文 release notes：[`docs/release-notes-v0.6.28.md`](./docs/release-notes-v0.6.28.md)。
 
 ## 为什么要用 polycli？
 
