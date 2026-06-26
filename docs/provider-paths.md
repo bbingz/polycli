@@ -1,6 +1,6 @@
 # Provider Paths
 
-Snapshot: 2026-06-15. Review monthly, before release, and whenever a provider CLI or local default model changes.
+Snapshot: 2026-06-26. Review monthly, before release, and whenever a provider CLI or local default model changes.
 
 This table is a routing reference for humans and host adapters. It is not an automatic routing oracle. `opencode`, `pi`, and `cmd` are model routers, so their "best path" depends on the user's authenticated local model set.
 
@@ -11,7 +11,7 @@ This table is a routing reference for humans and host adapters. It is not an aut
 | Claude Code / Anthropic coding agent | `claude` | `opencode` Anthropic models | Default polycli `ask`/`review` now uses official headless `claude -p` with plan/no-tools/no-MCP constraints, returning synchronous JSON/stream JSON output. Detached tmux TUI remains available in runtime for explicit/internal callers that need an interactive Claude Code session. |
 | Gemini | `gemini` | none | Official CLI headless `-p`, `--approval-mode plan`, JSON/stream JSON. Keep isolated cwd and disabled extensions/MCP for review. |
 | Qwen Code / Qwen Coding Plan | `qwen` | `opencode` Alibaba Coding Plan models | Official Qwen Code default `maxSessionTurns=-1` means do not force ask to one turn. Polycli ask uses a bounded `maxSteps=20`, `approvalMode=plan`, and `--exclude-tools`; review uses the same no-tool stance. SDK `canUseTool` is a better future path if Polycli moves beyond CLI wrapping. |
-| Kimi coding | `kimi` (kimi-code v0.6.0) | `opencode` Kimi For Coding models | The `-p` one-shot runner is non-interactive and rejects `--plan`/`--auto`/`--yolo`, so ask uses a plain `-p` invocation and review is prompt-only (like minimax). Default model from `~/.kimi-code/config.toml`. |
+| Kimi coding | `kimi` (kimi-code 0.19.1) | `opencode` Kimi For Coding models | The `-p` one-shot runner is non-interactive and rejects `--plan`/`--auto`/`--yolo`, so ask uses a plain `-p` invocation and review is prompt-only (like minimax). Default model from `~/.kimi-code/config.toml`. |
 | MiniMax text / multimodal | `minimax` via `mmx-cli` | `opencode` MiniMax Coding Plan models | Use official `mmx text chat --message ... --output json --non-interactive`; this replaces `mini-agent` log scraping. |
 | OpenCode Go / Xiaomi MiMo / Alibaba / multi-provider routing | `opencode` | `pi` for Xiaomi MiMo | Local `opencode auth list` is the source of truth; `~/.config/opencode/opencode.json` can show an empty provider object even when credentials and models exist. Current local OpenCode includes Xiaomi Token Plan, Alibaba Coding Plan, Kimi, MiniMax, Anthropic, and OpenCode Go routes. |
 | Xiaomi MiMo-V2.5-Pro | `opencode` with OpenCode Go/Xiaomi Token Plan | `pi` default Xiaomi route | Screenshot state is consistent with OpenCode using Xiaomi Token Plan / OpenCode Go, not an empty provider. |

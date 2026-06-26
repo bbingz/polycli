@@ -91,7 +91,10 @@ export function buildCopilotInvocation({
     args.push("--model", model);
   }
   if (resumeSessionId) {
-    args.push("--resume", resumeSessionId);
+    // Resume by exact id uses `--session-id <id>`. copilot's `-r, --resume[=value]` takes an
+    // OPTIONAL `=`-attached value (or opens the session picker), so a space-separated
+    // `--resume <id>` would not resume by id — `--session-id <id>` is the documented by-id flag.
+    args.push("--session-id", resumeSessionId);
   } else if (continueLast) {
     args.push("--continue");
   }

@@ -1610,7 +1610,7 @@ function buildCopilotInvocation({
     args.push("--model", model);
   }
   if (resumeSessionId) {
-    args.push("--resume", resumeSessionId);
+    args.push("--session-id", resumeSessionId);
   } else if (continueLast) {
     args.push("--continue");
   }
@@ -2765,7 +2765,7 @@ function extractMiniMaxResponseFromMmxJson(text) {
   const message = choice?.message ?? choice?.delta ?? null;
   const contentText = Array.isArray(value.content) ? value.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("") : "";
   const response = typeof value.content === "string" ? value.content : typeof value.response === "string" ? value.response : typeof value.text === "string" ? value.text : contentText || (typeof message?.content === "string" ? message.content : "");
-  const finishReason = value.finish_reason ?? value.finishReason ?? choice?.finish_reason ?? null;
+  const finishReason = value.finish_reason ?? value.finishReason ?? value.stop_reason ?? choice?.finish_reason ?? null;
   const toolCalls = Array.isArray(value.tool_calls) ? value.tool_calls : Array.isArray(message?.tool_calls) ? message.tool_calls : [];
   return {
     response,

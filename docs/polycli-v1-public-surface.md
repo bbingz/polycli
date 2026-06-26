@@ -115,7 +115,7 @@ This keeps v1 small, testable, and publishable without pretending the provider m
 | `claude` | headless `claude -p` with `--permission-mode plan --tools "" --mcp-config '{"mcpServers":{}}' --strict-mcp-config` | plan/no tools/no MCP; returns synchronous model output and stream timings. Detached tmux TUI remains an explicit/internal runtime mode with `tmuxSession`/`attachCommand` and startup-only timing |
 | `gemini` | `--approval-mode plan --extensions "" --allowed-mcp-server-names __polycli_prompt_no_mcp__` | plan/no extensions/MCP |
 | `qwen` | `--approval-mode plan --max-session-turns 20` plus repeated `--exclude-tools ...` | bounded multi-turn/no tools; no forced one-turn cap |
-| `kimi` | none — `-p` one-shot rejects `--plan`/`--auto`/`--yolo` | non-interactive single-shot (kimi-code v0.6.0) |
+| `kimi` | none — `-p` one-shot rejects `--plan`/`--auto`/`--yolo` | non-interactive single-shot (kimi-code 0.19.1) |
 | `cmd` | `--permission-mode plan` | plan |
 | `agy` | `--dangerously-skip-permissions` for ask/rescue; `/review` rejected | agentic session mode; no enforceable non-interactive plan mode |
 | `grok` | `-p ... --output-format json --always-approve` for ask; review adds `--permission-mode plan` and disables always-approve | structured one-shot; plan review |

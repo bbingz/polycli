@@ -47,7 +47,7 @@ test("buildCopilotInvocation enables programmatic json mode with permissions and
     "--no-ask-user",
     "--model",
     "gpt-5.3-codex",
-    "--resume",
+    "--session-id",
     "cop-123",
   ]);
 });
