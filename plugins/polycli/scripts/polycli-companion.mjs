@@ -2179,6 +2179,11 @@ async function runJobWorker(rawArgs) {
         // intent instead of exposing a terminal state with only half of its ledger pair.
         beforeStateCommit() {
           ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+          // The public terminal state is the observation boundary for start-failure recovery.
+          // Remove its stale sidecar only after the terminal ledger is durable, but before state
+          // publication, so no reader can observe completed/failed while recovery still appears
+          // pending. A crash here remains recoverable from the terminal envelope + ledger pair.
+          removeJobStartFailureFile(workspaceRoot, jobId);
         },
       };
     });
@@ -2244,6 +2249,7 @@ async function runJobWorker(rawArgs) {
         },
         beforeStateCommit() {
           ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+          removeJobStartFailureFile(workspaceRoot, jobId);
         },
       };
     });
