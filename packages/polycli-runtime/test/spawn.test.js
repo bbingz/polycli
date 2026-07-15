@@ -169,7 +169,9 @@ test("spawnStreamingCommand formats a nonzero exit when stderr is empty", async 
   assert.equal(result.error, "process exited with code 2");
 });
 
-test("spawnStreamingCommand escalates timed out detached children to SIGKILL via process group", async () => {
+test("spawnStreamingCommand escalates timed out detached children to SIGKILL via process group", {
+  skip: process.platform === "win32",
+}, async () => {
   const child = createFakeChild();
   child.pid = 43210;
   child.unref = () => {};
@@ -405,7 +407,9 @@ test("spawnStreamingCommand ignores stdout emitted after settle", async () => {
   assert.equal(result.stdout, "first\n");
 });
 
-test("spawnStreamingCommand terminates detached decoder overflows before settling once", async () => {
+test("spawnStreamingCommand terminates detached decoder overflows before settling once", {
+  skip: process.platform === "win32",
+}, async () => {
   const child = createFakeChild();
   const seen = [];
   const calls = [];
