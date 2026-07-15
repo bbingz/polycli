@@ -388,9 +388,11 @@ export function runOpenCodePromptStreaming({
     if (ok && !resolvedModel) {
       resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? resolvedSession.sessionId, { cwd, env, bin });
     }
-    const error = sessionErrorMessage || (result.ok
-      ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
-      : result.error);
+    const error = (!result.ok && result.errorCode ? result.error : null)
+      || sessionErrorMessage
+      || (result.ok
+        ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
+        : result.error);
     return {
       ...result,
       ...parsed,
@@ -398,7 +400,7 @@ export function runOpenCodePromptStreaming({
       model: resolvedModel,
       ok,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "opencode" }),
+      errorCode: result.errorCode ?? classifyProviderFailure(error, { provider: "opencode" }),
     };
   });
 }

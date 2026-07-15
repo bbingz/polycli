@@ -219,9 +219,11 @@ export function runAgyPromptStreaming({
     const parsed = parseAgyTextResult(result.stdout);
     const filteredStderr = stripAgyBenignStderr(result.stderr);
     const hasVisibleText = Boolean(parsed.response.trim());
-    const error = result.ok
-      ? (hasVisibleText ? null : "agy produced no visible text")
-      : (filteredStderr.trim() || result.error);
+    const error = !result.ok && result.errorCode
+      ? result.error
+      : (result.ok
+          ? (hasVisibleText ? null : "agy produced no visible text")
+          : (filteredStderr.trim() || result.error));
     return {
       ...result,
       ...parsed,
@@ -230,7 +232,7 @@ export function runAgyPromptStreaming({
       model: model ?? defaultModel ?? DEFAULT_AGY_MODEL,
       ok: result.ok && hasVisibleText,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "agy" }),
+      errorCode: result.errorCode ?? classifyProviderFailure(error, { provider: "agy" }),
     };
   });
 }

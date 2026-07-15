@@ -233,7 +233,7 @@ export function runKimiPromptStreaming({
       model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
       ok,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "kimi" }),
+      errorCode: result.errorCode ?? classifyProviderFailure(error, { provider: "kimi" }),
     };
   });
 }

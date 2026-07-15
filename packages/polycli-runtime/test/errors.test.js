@@ -34,6 +34,10 @@ test("classifyProviderFailure recognizes qwen max-session-turns only for qwen", 
 
 test("classifyProviderFailure accepts an Error object and orders binary_missing before timeout", () => {
   assert.equal(classifyProviderFailure(new Error("spawn ENOENT")), "binary_missing");
+  const oversizedArgv = new Error("spawn failed");
+  oversizedArgv.code = "E2BIG";
+  assert.equal(classifyProviderFailure(oversizedArgv), "argument_list_too_long");
+  assert.equal(classifyProviderFailure("stdout capture exceeded maxCaptureBytes (16)"), "output_overflow");
   // 'not found' is checked before 'timed out', so binary_missing wins when both appear.
   assert.equal(classifyProviderFailure("binary not found; also timed out"), "binary_missing");
 });
