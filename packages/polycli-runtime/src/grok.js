@@ -1,4 +1,4 @@
-import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import { binaryAvailable, getSafeArgvBudgetBytes, runCommand } from "@bbingz/polycli-utils/process";
 
 import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
@@ -6,6 +6,8 @@ import { spawnStreamingCommand } from "./spawn.js";
 const GROK_BIN = process.env.GROK_CLI_BIN || "grok";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const SAFE_PROMPT_ARGV_BUDGET_BYTES = getSafeArgvBudgetBytes();
+const SAFE_PROMPT_ARGV_BUDGET_HINT = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 // `grok models` reports `Default model: grok-4.5`; callers pass `-m <model>` to switch.
 const DEFAULT_GROK_MODEL = "grok-4.5";
 const GROK_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|not logged in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
@@ -205,6 +207,9 @@ export function runGrokPrompt({
   extraArgs = [],
   defaultModel = null,
   bin = GROK_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildGrokInvocation({
     prompt,
@@ -219,12 +224,24 @@ export function runGrokPrompt({
     bin,
   });
 
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
+  });
   if (result.error) {
     const error = result.error.code === "ETIMEDOUT"
       ? `grok timed out after ${Math.round(timeout / 1000)}s`
       : result.error.message;
-    return { ok: false, error, errorCode: classifyProviderFailure(error, { provider: "grok" }) };
+    return {
+      ok: false,
+      error,
+      errorCode: classifyProviderFailure(result.error, { provider: "grok" }),
+      spawnErrorCode: result.spawnErrorCode ?? null,
+    };
   }
 
   // grok prints transient "ERROR worker quit ... UnexpectedContentType" lines to STDERR even on a
@@ -251,6 +268,8 @@ export function runGrokPromptStreaming({
   onEvent = () => {},
   bin = GROK_BIN,
   spawnImpl,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildGrokInvocation({
     prompt,
@@ -269,9 +288,11 @@ export function runGrokPromptStreaming({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
     onStdoutLine(line) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("{")) return;

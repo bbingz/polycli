@@ -1,8 +1,108 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
+const CONSERVATIVE_POINTER_BYTES = 8;
+const WINDOWS_SAFE_ARGV_BUDGET_BYTES = 24 * 1024;
+const POSIX_SAFE_ARGV_BUDGET_BYTES = 96 * 1024;
+
+function stringStorageBytes(value) {
+  return Buffer.byteLength(String(value), "utf8") + 1;
+}
+
+export function getSafeArgvBudgetBytes(platform = process.platform) {
+  // These are application safety gates, not claims about the operating system's ARG_MAX.
+  // The lower Windows budget reflects its smaller effective command-line envelope.
+  return platform === "win32"
+    ? WINDOWS_SAFE_ARGV_BUDGET_BYTES
+    : POSIX_SAFE_ARGV_BUDGET_BYTES;
+}
+
+export function calculateArgvFootprint({
+  command,
+  args = [],
+  env = process.env,
+} = {}) {
+  const argv = [String(command ?? ""), ...args.map((arg) => String(arg))];
+  const envEntries = Object.entries(env ?? {})
+    .filter(([, value]) => value != null)
+    .map(([key, value]) => `${key}=${String(value)}`);
+  const argvBytes = argv.reduce((total, value) => total + stringStorageBytes(value), 0);
+  const envBytes = envEntries.reduce((total, value) => total + stringStorageBytes(value), 0);
+  // Account for argv/envp pointers plus each terminating null pointer. Eight bytes is
+  // deliberately conservative for the supported 64-bit Node.js environments.
+  const pointerBytes = (argv.length + envEntries.length + 2) * CONSERVATIVE_POINTER_BYTES;
+  const stringBytes = argvBytes + envBytes;
+  return {
+    totalBytes: stringBytes + pointerBytes,
+    stringBytes,
+    pointerBytes,
+    argvBytes,
+    envBytes,
+    argvCount: argv.length,
+    envCount: envEntries.length,
+  };
+}
+
+export function preflightArgv(command, args = [], {
+  env = process.env,
+  argvBudgetBytes = null,
+  argvBudgetHint = null,
+} = {}) {
+  const footprint = calculateArgvFootprint({ command, args, env });
+  if (argvBudgetBytes == null) {
+    return { ok: true, budgetBytes: null, footprint, error: null };
+  }
+  if (!Number.isSafeInteger(argvBudgetBytes) || argvBudgetBytes < 0) {
+    throw new TypeError("argvBudgetBytes must be a non-negative safe integer or null");
+  }
+  if (footprint.totalBytes <= argvBudgetBytes) {
+    return { ok: true, budgetBytes: argvBudgetBytes, footprint, error: null };
+  }
+
+  const counts = [
+    `footprintBytes=${footprint.totalBytes}`,
+    `budgetBytes=${argvBudgetBytes}`,
+    `argvCount=${footprint.argvCount}`,
+    `envCount=${footprint.envCount}`,
+  ].join(", ");
+  const suffix = typeof argvBudgetHint === "string" && argvBudgetHint.trim()
+    ? ` ${argvBudgetHint.trim()}`
+    : "";
+  const error = Object.assign(
+    new Error(`argument list too long for the configured safe argv budget (${counts}).${suffix}`),
+    {
+      code: "E2BIG",
+      footprintBytes: footprint.totalBytes,
+      budgetBytes: argvBudgetBytes,
+      argvCount: footprint.argvCount,
+      envCount: footprint.envCount,
+    }
+  );
+  return { ok: false, budgetBytes: argvBudgetBytes, footprint, error };
+}
+
 export function runCommand(command, args = [], options = {}) {
-  const result = spawnSync(command, args, {
+  const effectiveEnv = options.env ?? process.env;
+  const preflight = preflightArgv(command, args, {
+    env: effectiveEnv,
+    argvBudgetBytes: options.argvBudgetBytes ?? null,
+    argvBudgetHint: options.argvBudgetHint ?? null,
+  });
+  if (!preflight.ok) {
+    return {
+      command,
+      args,
+      status: null,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      error: preflight.error,
+      spawnErrorCode: "E2BIG",
+    };
+  }
+
+  const spawnImpl = options.spawnImpl ?? spawnSync;
+  const result = spawnImpl(command, args, {
     cwd: options.cwd,
     env: options.env,
     encoding: "utf8",
@@ -35,6 +135,7 @@ export function runCommand(command, args = [], options = {}) {
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
     error,
+    spawnErrorCode: typeof error?.code === "string" ? error.code : null,
   };
 }
 

@@ -1,6 +1,22 @@
 export const UUID_SESSION_ID_REGEX =
   /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 
+const RESUME_SESSION_ID_LINE_REGEX = new RegExp(
+  `^\\s*resume\\s+(${UUID_SESSION_ID_REGEX.source})\\s*$`,
+  "i"
+);
+
+export function matchResumeSessionIdLine(text) {
+  if (typeof text !== "string" || text.length === 0) {
+    return null;
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(RESUME_SESSION_ID_LINE_REGEX);
+    if (match) return match[1];
+  }
+  return null;
+}
+
 export function matchSessionId(text, { patterns = [UUID_SESSION_ID_REGEX] } = {}) {
   if (typeof text !== "string" || text.length === 0) {
     return null;

@@ -80,6 +80,67 @@ test("spawnStreamingCommand preserves E2BIG as a canonical structured failure", 
   assert.equal(result.errorCode, "argument_list_too_long");
 });
 
+test("spawnStreamingCommand rejects an oversized argv footprint before calling spawn", async () => {
+  let spawnCalls = 0;
+  const marker = "STREAM_PROMPT_SECRET_" + "x".repeat(256);
+  const result = await spawnStreamingCommand({
+    bin: "provider",
+    args: [marker],
+    env: { PRIVATE_TOKEN: "STREAM_ENV_SECRET" },
+    argvBudgetBytes: 64,
+    argvBudgetHint: "For review, pass --max-diff-bytes explicitly.",
+    spawnImpl() {
+      spawnCalls += 1;
+      throw new Error("spawn must not be called");
+    },
+  });
+
+  assert.equal(spawnCalls, 0);
+  assert.equal(result.spawnErrorCode, "E2BIG");
+  assert.equal(result.errorCode, "argument_list_too_long");
+  assert.match(result.error, /--max-diff-bytes/);
+  assert.doesNotMatch(result.error, /STREAM_PROMPT_SECRET|STREAM_ENV_SECRET/);
+});
+
+test("spawnStreamingCommand includes the effective environment in its argv budget preflight", async () => {
+  let spawnCalls = 0;
+  const result = await spawnStreamingCommand({
+    bin: "provider",
+    args: ["short"],
+    env: { PRIVATE_TOKEN: "STREAM_ENV_ONLY_SECRET_" + "x".repeat(256) },
+    argvBudgetBytes: 64,
+    spawnImpl() {
+      spawnCalls += 1;
+      throw new Error("spawn must not be called");
+    },
+  });
+
+  assert.equal(spawnCalls, 0);
+  assert.equal(result.spawnErrorCode, "E2BIG");
+  assert.equal(result.errorCode, "argument_list_too_long");
+  assert.doesNotMatch(result.error, /STREAM_ENV_ONLY_SECRET/);
+});
+
+test("spawnStreamingCommand still calls spawn for argv inside the configured budget", async () => {
+  const child = createFakeChild();
+  let spawnCalls = 0;
+  const resultPromise = spawnStreamingCommand({
+    bin: "provider",
+    args: ["short"],
+    env: {},
+    argvBudgetBytes: 1_024,
+    spawnImpl() {
+      spawnCalls += 1;
+      queueMicrotask(() => child.emit("close", 0, null));
+      return child;
+    },
+  });
+
+  const result = await resultPromise;
+  assert.equal(spawnCalls, 1);
+  assert.equal(result.ok, true);
+});
+
 test("spawnStreamingCommand defaults provider children to their own POSIX process group", {
   skip: process.platform === "win32",
 }, async () => {

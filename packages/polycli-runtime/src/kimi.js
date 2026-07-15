@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import { binaryAvailable, getSafeArgvBudgetBytes, runCommand } from "@bbingz/polycli-utils/process";
 
 import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
@@ -10,6 +10,8 @@ import { spawnStreamingCommand } from "./spawn.js";
 const KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const SAFE_PROMPT_ARGV_BUDGET_BYTES = getSafeArgvBudgetBytes();
+const SAFE_PROMPT_ARGV_BUDGET_HINT = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 const KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
@@ -155,16 +157,31 @@ export function runKimiPrompt({
   resumeLast = false,
   defaultModel = null,
   bin = KIMI_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildKimiInvocation({ prompt, model, resumeSessionId, resumeLast, extraArgs, bin });
 
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
+  });
 
   if (result.error) {
     const error = result.error.code === "ETIMEDOUT"
       ? `kimi timed out after ${Math.round(timeout / 1000)}s`
       : result.error.message;
-    return { ok: false, error, errorCode: classifyProviderFailure(error, { provider: "kimi" }) };
+    return {
+      ok: false,
+      error,
+      errorCode: classifyProviderFailure(result.error, { provider: "kimi" }),
+      spawnErrorCode: result.spawnErrorCode ?? null,
+    };
   }
   if (result.status !== 0) {
     const error = result.stderr.trim() || formatProviderExitError("kimi", result.status);
@@ -203,6 +220,8 @@ export function runKimiPromptStreaming({
   onEvent = () => {},
   bin = KIMI_BIN,
   spawnImpl,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildKimiInvocation({ prompt, model, resumeSessionId, resumeLast, extraArgs, bin });
 
@@ -210,9 +229,11 @@ export function runKimiPromptStreaming({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
     onStdoutLine(line) {
       const event = parseKimiEventLine(line);
       if (event) {

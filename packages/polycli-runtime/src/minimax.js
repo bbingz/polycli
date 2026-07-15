@@ -1,10 +1,12 @@
-import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import { binaryAvailable, getSafeArgvBudgetBytes, runCommand } from "@bbingz/polycli-utils/process";
 
 import { spawnStreamingCommand } from "./spawn.js";
 
 const MMX_BIN = process.env.MMX_CLI_BIN || process.env.MINIMAX_CLI_BIN || "mmx";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const SAFE_PROMPT_ARGV_BUDGET_BYTES = getSafeArgvBudgetBytes();
+const SAFE_PROMPT_ARGV_BUDGET_HINT = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 const MINIMAX_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
@@ -237,6 +239,7 @@ export function runMiniMaxPrompt({
   env = process.env,
   bin = MMX_BIN,
   spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   return new Promise((resolve) => {
     const invocation = buildMiniMaxInvocation({ prompt, model, extraArgs, bin });
@@ -249,6 +252,8 @@ export function runMiniMaxPrompt({
       timeout,
       stdio: ["ignore", "pipe", "pipe"],
       spawnImpl,
+      argvBudgetBytes,
+      argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
       onStdoutLine() {},
     }).then((result) => {
       try {
@@ -311,6 +316,7 @@ export async function runMiniMaxPromptStreaming({
   onEvent = () => {},
   bin = MMX_BIN,
   spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const events = [];
   return runMiniMaxPrompt({
@@ -323,6 +329,7 @@ export async function runMiniMaxPromptStreaming({
     env,
     bin,
     spawnImpl,
+    argvBudgetBytes,
   }).then((result) => {
     try {
       const event = {

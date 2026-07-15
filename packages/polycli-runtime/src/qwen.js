@@ -1,5 +1,5 @@
-import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
-import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
+import { binaryAvailable, getSafeArgvBudgetBytes, runCommand } from "@bbingz/polycli-utils/process";
+import { matchResumeSessionIdLine } from "@bbingz/polycli-utils/session-id";
 
 import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
@@ -7,6 +7,8 @@ import { spawnStreamingCommand } from "./spawn.js";
 const QWEN_BIN = process.env.QWEN_CLI_BIN || "qwen";
 const DEFAULT_TIMEOUT_MS = 300_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const SAFE_PROMPT_ARGV_BUDGET_BYTES = getSafeArgvBudgetBytes();
+const SAFE_PROMPT_ARGV_BUDGET_HINT = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PROXY_KEYS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
 const NO_PROXY_DEFAULTS = ["localhost", "127.0.0.1"];
@@ -268,6 +270,8 @@ export function runQwenPrompt({
   appendDirs,
   extraArgs = [],
   bin = QWEN_BIN,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildQwenInvocation({
     prompt,
@@ -289,21 +293,24 @@ export function runQwenPrompt({
     cwd,
     env,
     timeout,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
   });
 
   if (result.error) {
     const error = result.error.code === "ETIMEDOUT"
       ? `qwen timed out after ${Math.round(timeout / 1000)}s`
       : result.error.message;
-    return { ok: false, error, errorCode: classifyProviderFailure(error, { provider: "qwen" }) };
+    return {
+      ok: false,
+      error,
+      errorCode: classifyProviderFailure(result.error, { provider: "qwen" }),
+      spawnErrorCode: result.spawnErrorCode ?? null,
+    };
   }
 
   const parsed = parseQwenStreamText(result.stdout);
-  const resolvedSession = resolveSessionId({
-    stdout: result.stdout,
-    stderr: result.stderr,
-    priority: ["stdout", "stderr", "file"],
-  });
   const resultEventError = extractQwenResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
   const error = result.status === 0 && !resultEventError && hasVisibleText
@@ -319,7 +326,7 @@ export function runQwenPrompt({
     status: result.status,
     stderr: result.stderr,
     ...parsed,
-    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+    sessionId: parsed.sessionId ?? matchResumeSessionIdLine(result.stderr),
     error,
     errorCode,
   };
@@ -344,6 +351,7 @@ export function runQwenPromptStreaming({
   onEvent = () => {},
   bin = QWEN_BIN,
   spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildQwenInvocation({
     prompt,
@@ -371,6 +379,8 @@ export function runQwenPromptStreaming({
     unref: background,
     stdio: ["ignore", "pipe", "pipe"],
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
     onStdoutLine(line) {
       if (!line.trim().startsWith("{")) return;
       try {
@@ -379,11 +389,6 @@ export function runQwenPromptStreaming({
     },
   }).then((result) => {
     const parsed = parseQwenStreamText(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"],
-    });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultEventError = extractQwenResultError(parsed.resultEvent);
     const commonFailure = !result.ok && result.errorCode ? result.error : null;
@@ -396,7 +401,7 @@ export function runQwenPromptStreaming({
     return {
       ...result,
       ...parsed,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      sessionId: parsed.sessionId ?? matchResumeSessionIdLine(result.stderr),
       ok: result.ok && !resultEventError && hasVisibleText,
       error,
       errorCode,

@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { matchSessionId, resolveSessionId } from "../src/session-id.js";
+import { matchResumeSessionIdLine, matchSessionId, resolveSessionId } from "../src/session-id.js";
+
+test("matchResumeSessionIdLine accepts only a standalone resume UUID line", () => {
+  const sessionId = "123e4567-e89b-42d3-a456-426614174000";
+  assert.equal(matchResumeSessionIdLine(`resume ${sessionId}\n`), sessionId);
+  assert.equal(matchResumeSessionIdLine(`  RESUME ${sessionId}  \n`), sessionId);
+  assert.equal(matchResumeSessionIdLine(`warning: resume ${sessionId}`), null);
+  assert.equal(matchResumeSessionIdLine(`resume ${sessionId} after reconnect`), null);
+  assert.equal(matchResumeSessionIdLine(`answer mentions ${sessionId}`), null);
+});
 
 test("matchSessionId detects UUIDs in arbitrary text", () => {
   const sessionId = matchSessionId("To resume: kimi -r 123e4567-e89b-12d3-a456-426614174000");
