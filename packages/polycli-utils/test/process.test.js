@@ -172,3 +172,50 @@ test("terminateProcessTree rejects pid 1 without sending any signal", async (t) 
   );
   assert.equal(kill.mock.callCount(), 0);
 });
+
+test("terminateProcessTree gives every Windows taskkill the remaining absolute deadline", async () => {
+  let now = 100;
+  const calls = [];
+  const terminated = await terminateProcessTree(4242, {
+    platform: "win32",
+    deadlineAt: 1_000,
+    forceAfterMs: 50,
+    now: () => now,
+    sleep: async (delayMs) => {
+      now += delayMs;
+    },
+    runCommandImpl(command, args, options) {
+      calls.push({ command, args, options });
+      return { status: 0, signal: null, stdout: "", stderr: "", error: null };
+    },
+  });
+
+  assert.equal(terminated, true);
+  assert.deepEqual(calls.map((call) => [call.command, call.args.at(-1), call.options.timeout]), [
+    ["taskkill", "/T", 900],
+    ["taskkill", "/F", 850],
+  ]);
+});
+
+test("terminateProcessTree stops before a post-force Windows taskkill when its deadline expires", async () => {
+  let now = 100;
+  const calls = [];
+  await assert.rejects(
+    () => terminateProcessTree(4242, {
+      platform: "win32",
+      deadlineAt: 120,
+      forceAfterMs: 50,
+      now: () => now,
+      sleep: async (delayMs) => {
+        now += delayMs;
+      },
+      runCommandImpl(command, args, options) {
+        calls.push({ command, args, options });
+        return { status: 0, signal: null, stdout: "", stderr: "", error: null };
+      },
+    }),
+    (error) => error?.code === "EDEADLINE",
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.timeout, 20);
+});

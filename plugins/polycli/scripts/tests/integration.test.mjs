@@ -14,11 +14,13 @@ import {
   resolveJobConfigFile,
   resolveJobFile,
   resolveJobLogFile,
+  resolveJobStartFailureFile,
   resolveStateDir,
   resolveWorkspaceRoot,
   upsertJob,
   writeJobConfigFile,
   writeJobFile,
+  writeJobStartFailureFile,
 } from "../lib/state.mjs";
 import { appendRunLedgerEvent, readRunLedgerEvents } from "../lib/run-ledger.mjs";
 import { resolveTimingHistoryFile } from "../lib/timing.mjs";
@@ -3302,6 +3304,43 @@ test("integration: a pending cancellation intent prevents a late worker finalize
     false,
     "late worker must not update model cache after cancellation intent wins",
   );
+});
+
+test("integration: a worker terminal winner removes a stale start-failure sidecar", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const resultGate = path.join(os.tmpdir(), `polycli-sidecar-worker-finalize-${Date.now()}-${Math.random()}`);
+  fs.writeFileSync(resultGate, "hold\n", { mode: 0o600 });
+  t.after(() => fs.rmSync(resultGate, { force: true }));
+  const context = createBackgroundLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    QWEN_RESULT_GATE: resultGate,
+  });
+  const sourceContext = { ...context, companion: sourceCompanionPath };
+  const runId = "run-worker-cleans-start-failure-sidecar";
+  const start = await runCompanion(
+    ["rescue", "--provider", "qwen", "--background", "--json", "--run-id", runId, "__reply=WORKER_WINS"],
+    sourceContext,
+  );
+  assert.equal(start.code, 0, start.stderr);
+  const started = JSON.parse(start.stdout);
+  await waitForLedgerPhase(context.cwd, runId, "attempt_started");
+  writeJobStartFailureFile(context.cwd, started.job.jobId, {
+    version: 1,
+    jobId: started.job.jobId,
+    error: "stale start failure",
+  });
+
+  fs.rmSync(resultGate, { force: true });
+  await waitForLedgerPhase(context.cwd, runId, "provider_decision");
+  const stateDeadline = Date.now() + 5_000;
+  while (Date.now() < stateDeadline) {
+    if (listJobs(context.cwd).find((job) => job.jobId === started.job.jobId)?.status === "completed") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  assert.equal(listJobs(context.cwd).find((job) => job.jobId === started.job.jobId)?.status, "completed");
+  assert.equal(fs.existsSync(resolveJobStartFailureFile(context.cwd, started.job.jobId)), false);
 });
 
 test("integration: a worker does not publish state over a conflicting partial terminal pair", async (t) => {

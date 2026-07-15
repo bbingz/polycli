@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   buildStatusSnapshot,
   cancelJob,
+  isExpectedWorkerProcess,
   refreshJobsForLedgerRecovery,
   refreshJob,
   resolveJobSelector,
@@ -140,9 +141,9 @@ test("refreshJob records terminal ledger events when a worker exits before writi
       hostSurface: "terminal",
       logFile,
     });
-    writeJobStartFailureFile(workspaceRoot, "job-cancel", {
+    writeJobStartFailureFile(workspaceRoot, "job-missing-result", {
       version: 1,
-      jobId: "job-cancel",
+      jobId: "stale-other-job",
       error: "safe start failure",
     });
 
@@ -167,7 +168,42 @@ test("refreshJob records terminal ledger events when a worker exits before writi
     assert.equal(afterSecondRefresh.filter((event) => event.phase === "attempt_result").length, 1);
     assert.equal(afterSecondRefresh.filter((event) => event.phase === "provider_decision").length, 1);
     assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "job-missing-result")), false);
+    assert.equal(fs.existsSync(resolveJobStartFailureFile(workspaceRoot, "job-missing-result")), false);
   });
+});
+
+test("isExpectedWorkerProcess bounds its synchronous probe by the remaining deadline", () => {
+  const calls = [];
+  const deadlineAt = Date.now() + 1_000;
+  const matched = isExpectedWorkerProcess(4242, "/tmp/job.config.json", {
+    deadlineAt,
+    platform: "linux",
+    spawnProcess(command, args, options) {
+      calls.push({ command, args, options });
+      return {
+        status: 0,
+        stdout: "node companion _job-worker /tmp/job.config.json\n",
+        stderr: "",
+        error: null,
+      };
+    },
+  });
+
+  assert.equal(matched, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, "ps");
+  assert.ok(calls[0].options.timeout > 0 && calls[0].options.timeout <= 1_000);
+
+  let expiredCalls = 0;
+  const expired = isExpectedWorkerProcess(4242, "/tmp/job.config.json", {
+    deadlineAt: Date.now() - 1,
+    platform: "linux",
+    spawnProcess() {
+      expiredCalls += 1;
+    },
+  });
+  assert.equal(expired, null);
+  assert.equal(expiredCalls, 0);
 });
 
 test("refreshJob keeps a dead worker active until terminal ledger recovery succeeds", async () => {
@@ -1049,6 +1085,11 @@ test("cancelJob records cancelled ledger events, removes config, and cleans runt
       hostSurface: "terminal",
       logFile,
     });
+    writeJobStartFailureFile(workspaceRoot, "job-cancel", {
+      version: 1,
+      jobId: "job-cancel",
+      error: "safe start failure",
+    });
 
     const report = await cancelJob(workspaceRoot, "job-cancel");
 
@@ -1353,6 +1394,43 @@ test("cancelJob refuses to signal a reused pid that no longer identifies its wor
     ).length, 0);
     const refreshed = refreshJob(workspaceRoot, listJobs(workspaceRoot).find((job) => job.jobId === jobId));
     assert.equal(refreshed.status, "running");
+  });
+});
+
+test("cancelJob passes one absolute deadline to pre/post identity probes and termination", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const jobId = "job-deadline-probes";
+    upsertJob(workspaceRoot, {
+      jobId,
+      provider: "qwen",
+      kind: "rescue",
+      status: "running",
+      pid: 4242,
+    });
+    writeJobConfigFile(workspaceRoot, jobId, {
+      workspaceRoot,
+      jobId,
+      execution: { provider: "qwen", kind: "rescue" },
+      runContext: { runId: "run-deadline-probes", command: "rescue", jobId },
+    });
+    const deadlineAt = Date.now() + 1_000;
+    const observed = [];
+
+    const report = await cancelJob(workspaceRoot, jobId, {
+      deadlineAt,
+      isWorkerAlive: () => true,
+      isExpectedWorker(_pid, _configFile, options) {
+        observed.push(options.deadlineAt);
+        return true;
+      },
+      async terminate(_pid, options) {
+        observed.push(options.deadlineAt);
+      },
+    });
+
+    assert.equal(report.cancelled, false);
+    assert.equal(report.reason, "worker_still_running");
+    assert.deepEqual(observed, [deadlineAt, deadlineAt, deadlineAt]);
   });
 });
 

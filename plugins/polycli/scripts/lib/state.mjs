@@ -168,8 +168,15 @@ function stateRootDir() {
   return describeStateRoot().stateRoot;
 }
 
-export function resolveWorkspaceRoot(cwd = process.cwd()) {
-  const result = runCommand("git", ["rev-parse", "--show-toplevel"], { cwd });
+export function resolveWorkspaceRoot(cwd = process.cwd(), { deadlineAt = null } = {}) {
+  const remainingMs = Number.isFinite(deadlineAt)
+    ? Math.floor(deadlineAt - Date.now())
+    : null;
+  if (remainingMs != null && remainingMs <= 0) return path.resolve(cwd);
+  const result = runCommand("git", ["rev-parse", "--show-toplevel"], {
+    cwd,
+    ...(remainingMs == null ? {} : { timeout: remainingMs }),
+  });
   if (result.status === 0 && result.stdout.trim()) {
     return path.resolve(result.stdout.trim());
   }

@@ -195,19 +195,46 @@ export function formatCommandFailure(result) {
 
 export async function terminateProcessTree(
   pid,
-  { signal = "SIGTERM", forceSignal = "SIGKILL", forceAfterMs = 5_000, ignoreMissing = true } = {}
+  {
+    signal = "SIGTERM",
+    forceSignal = "SIGKILL",
+    forceAfterMs = 5_000,
+    ignoreMissing = true,
+    deadlineAt = null,
+    platform = process.platform,
+    runCommandImpl = runCommand,
+    now = Date.now,
+    sleep = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+  } = {}
 ) {
   if (!Number.isInteger(pid) || pid <= 1) {
     throw new Error(`Invalid pid: ${pid}`);
   }
+  if (deadlineAt != null && !Number.isFinite(deadlineAt)) {
+    throw new TypeError("deadlineAt must be a finite epoch millisecond value or null");
+  }
+
+  const remainingDeadlineMs = () => {
+    if (deadlineAt == null) return null;
+    const remainingMs = Math.floor(deadlineAt - now());
+    if (remainingMs <= 0) {
+      const error = new Error("process termination deadline exceeded");
+      error.code = "EDEADLINE";
+      throw error;
+    }
+    return remainingMs;
+  };
 
   const killOnce = (targetSignal) => {
-    if (process.platform === "win32") {
+    const remainingMs = remainingDeadlineMs();
+    if (platform === "win32") {
       const args = ["/PID", String(pid), "/T"];
       if (targetSignal === "SIGKILL") {
         args.push("/F");
       }
-      const result = runCommand("taskkill", args);
+      const result = runCommandImpl("taskkill", args, remainingMs == null
+        ? {}
+        : { timeout: remainingMs });
       if (result.error) {
         if (ignoreMissing && result.error.code === "ESRCH") return false;
         throw result.error;
@@ -250,7 +277,11 @@ export async function terminateProcessTree(
     return terminated;
   }
 
-  await new Promise((resolve) => setTimeout(resolve, forceAfterMs));
+  const remainingBeforeWait = deadlineAt == null ? null : remainingDeadlineMs();
+  const waitMs = remainingBeforeWait == null
+    ? forceAfterMs
+    : Math.min(forceAfterMs, remainingBeforeWait);
+  await sleep(waitMs);
   try {
     killOnce(forceSignal);
   } catch (error) {

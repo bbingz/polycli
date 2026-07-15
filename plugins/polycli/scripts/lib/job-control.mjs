@@ -54,7 +54,7 @@ function deadlineLockOptions(deadlineAt) {
 
 function isDeadlineFailure(error, deadlineAt) {
   return Number.isFinite(deadlineAt)
-    && (error?.code === "EDEADLINE" || error?.code === "ELOCKTIMEOUT");
+    && ["EDEADLINE", "ELOCKTIMEOUT", "ETIMEDOUT"].includes(error?.code);
 }
 
 async function awaitWithinDeadline(promise, deadlineAt) {
@@ -87,20 +87,30 @@ function isProcessAlive(pid) {
   }
 }
 
-export function isExpectedWorkerProcess(pid, configFile) {
+export function isExpectedWorkerProcess(pid, configFile, {
+  deadlineAt = null,
+  platform = process.platform,
+  spawnProcess = spawnSync,
+} = {}) {
   if (!Number.isInteger(pid) || pid <= 0 || !configFile) return null;
+  const remainingMs = Number.isFinite(deadlineAt)
+    ? Math.floor(deadlineAt - Date.now())
+    : null;
+  if (remainingMs != null && remainingMs <= 0) return null;
   try {
-    const result = process.platform === "win32"
-      ? spawnSync("powershell.exe", [
+    const spawnOptions = {
+      encoding: "utf8",
+      stdio: "pipe",
+      ...(remainingMs == null ? {} : { timeout: remainingMs }),
+    };
+    const result = platform === "win32"
+      ? spawnProcess("powershell.exe", [
         "-NoProfile",
         "-NonInteractive",
         "-Command",
         `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`,
-      ], { encoding: "utf8", stdio: "pipe" })
-      : spawnSync("ps", ["-ww", "-o", "command=", "-p", String(pid)], {
-      encoding: "utf8",
-      stdio: "pipe",
-    });
+      ], spawnOptions)
+      : spawnProcess("ps", ["-ww", "-o", "command=", "-p", String(pid)], spawnOptions);
     if (result.error) return null;
     if (result.status !== 0) return false;
     return result.stdout.includes("_job-worker") && result.stdout.includes(configFile);
@@ -319,6 +329,9 @@ function cleanupRuntimePaths(config) {
 
 export function refreshJob(workspaceRoot, job) {
   if (!job || !ACTIVE_STATUSES.has(job.status)) {
+    if (job?.jobId && TERMINAL_STATUSES.has(job.status)) {
+      removeJobStartFailureFile(workspaceRoot, job.jobId);
+    }
     return job ? enrichJob(workspaceRoot, job) : null;
   }
   const storedEnvelope = readJobFile(resolveJobFile(workspaceRoot, job.jobId));
@@ -420,8 +433,12 @@ export function refreshJob(workspaceRoot, job) {
       const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
       cleanupRuntimePaths(config);
       removeJobConfigFile(workspaceRoot, job.jobId);
+      removeJobStartFailureFile(workspaceRoot, job.jobId);
     }
     const current = write.written ? write.job : (getJob(workspaceRoot, job.jobId) || job);
+    if (TERMINAL_STATUSES.has(current?.status)) {
+      removeJobStartFailureFile(workspaceRoot, job.jobId);
+    }
     return enrichJob(workspaceRoot, current);
   } catch {
     // Keep the persisted job active when the ledger is temporarily unavailable;
@@ -728,7 +745,13 @@ export async function cancelJob(
 
   const configFile = resolveJobConfigFile(workspaceRoot, jobId);
   if (Number.isInteger(pidToKill) && pidToKill > 1 && isWorkerAlive(pidToKill)) {
-    if (!configForCleanup || isExpectedWorker(pidToKill, configFile) !== true) {
+    if (remainingDeadlineMs(deadlineAt) != null && remainingDeadlineMs(deadlineAt) <= 0) {
+      return { cancelled: false, reason: "deadline_exceeded", jobId };
+    }
+    if (!configForCleanup || isExpectedWorker(pidToKill, configFile, { deadlineAt }) !== true) {
+      if (remainingDeadlineMs(deadlineAt) != null && remainingDeadlineMs(deadlineAt) <= 0) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
       return { cancelled: false, reason: "worker_identity_unverified", jobId };
     }
     try {
@@ -742,15 +765,25 @@ export async function cancelJob(
         forceAfterMs: remainingMs == null
           ? 2_000
           : Math.max(1, Math.min(2_000, Math.floor(remainingMs))),
+        deadlineAt,
       }), deadlineAt);
       if (!terminatedWithinDeadline) {
         return { cancelled: false, reason: "deadline_exceeded", jobId };
       }
     } catch (error) {
+      if (isDeadlineFailure(error, deadlineAt)) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
       return { cancelled: false, reason: "kill_failed", jobId, killWarning: error.message };
     }
     if (isWorkerAlive(pidToKill)) {
-      const postSignalIdentity = isExpectedWorker(pidToKill, configFile);
+      if (remainingDeadlineMs(deadlineAt) != null && remainingDeadlineMs(deadlineAt) <= 0) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
+      const postSignalIdentity = isExpectedWorker(pidToKill, configFile, { deadlineAt });
+      if (remainingDeadlineMs(deadlineAt) != null && remainingDeadlineMs(deadlineAt) <= 0) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
       if (postSignalIdentity === true) {
         return { cancelled: false, reason: "worker_still_running", jobId };
       }

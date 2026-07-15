@@ -54,6 +54,7 @@ import {
   readJobConfigFile,
   readJobFile,
   removeJobConfigFile,
+  removeJobStartFailureFile,
   resolveJobConfigFile,
   resolveJobFile,
   resolveJobLogFile,
@@ -2048,6 +2049,10 @@ async function runJobWorker(rawArgs) {
     // The parent may have been interrupted before writing the PID and a concurrent cancellation
     // won. Treat the terminal/non-owned state as a normal no-op rather than performing a late
     // provider call for a cancelled job.
+    if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
+      removeJobConfigFile(workspaceRoot, jobId);
+      removeJobStartFailureFile(workspaceRoot, jobId);
+    }
     return;
   }
 
@@ -2180,10 +2185,12 @@ async function runJobWorker(rawArgs) {
     if (!write.written) {
       if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
         removeJobConfigFile(workspaceRoot, jobId);
+        removeJobStartFailureFile(workspaceRoot, jobId);
       }
       return;
     }
     removeJobConfigFile(workspaceRoot, jobId);
+    removeJobStartFailureFile(workspaceRoot, jobId);
   } catch (error) {
     const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
       if (!latest || latest.status === "cancelled" || blocksBackgroundWorkerCommit(storedEnvelope)) {
@@ -2243,10 +2250,12 @@ async function runJobWorker(rawArgs) {
     if (!write.written) {
       if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
         removeJobConfigFile(workspaceRoot, jobId);
+        removeJobStartFailureFile(workspaceRoot, jobId);
       }
       return;
     }
     removeJobConfigFile(workspaceRoot, jobId);
+    removeJobStartFailureFile(workspaceRoot, jobId);
     throw error;
   } finally {
     // Cancellation deliberately keeps the public job active until its verified signal and ledger
