@@ -23,7 +23,7 @@ node "$PLUGIN_ROOT_DIR/scripts/polycli-companion.bundle.mjs" $ARGUMENTS
 
 Supported subcommands:
 
-- `setup [--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax|grok>] [--json]`
+- `setup [--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax|grok>] [--probe-auth] [--json]`
 - `health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]`
 - `ask --provider <provider> [--model <model>] [--background] [--json] <prompt>`
 - `rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>`
@@ -43,6 +43,6 @@ Rules:
 - Run `health` once after installing, logging in, changing provider config, or when provider state is unknown; it returns the `healthyProviders` list and is the first observability check.
 - Use `health --provider <provider>` only when diagnosing one provider.
 - Do not run `setup` or `health` before every normal `ask`, `review`, or `rescue`; after a provider has passed health, invoke the requested command directly.
-- Use `setup` only when you need the cheap install/auth diagnostic without spending a model request.
+- Use `setup` for install and status-only auth inspection. It skips auth checks that would send a model prompt unless the caller explicitly passes `--probe-auth`.
 - Use `status`, `result`, and `timing` to observe background progress, retrieve terminal output, and inspect provider timing history.
 - Do not auto-run follow-up commands after `status`, `result`, `cancel`, or `timing`.

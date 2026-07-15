@@ -84,13 +84,15 @@ npm run release:check
 - `npm test`, which rebuilds plugin bundles before running package, runtime, plugin, and release-script tests
 - `npm run validate:bundles`
 - `npm run validate:fixtures`
+- `npm run check:fixture-freshness -- --strict`
 - `npm run validate:manifests`
 - `npm run validate:host-map`
 - `npm run validate:codex-adapter`
+- `npm run check:review-drift` (self-skips unavailable CLIs and blocks only detected installed-CLI review-flag drift)
 - `claude plugin validate` for the marketplace and Claude host plugin manifests
 - dry-run or pack checks for OpenCode, terminal CLI, utils, and timing npm packages
 
-Run the review hard-constraint drift watcher before release candidates that touch review flow:
+Run the review hard-constraint drift watcher directly when diagnosing a release-gate failure or inspecting local provider compatibility:
 
 ```bash
 npm run check:review-drift

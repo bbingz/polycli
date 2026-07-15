@@ -12,8 +12,7 @@ test("buildPromptRuntimeOptions leaves kimi ask unconstrained under kimi-code (n
     kind: "ask",
   });
 
-  // kimi-code's -p one-shot mode rejects --plan/--auto and dropped --no-thinking/--max-steps-per-turn,
-  // so there are no per-invocation ask constraints to add.
+  // Kimi has no independently verified per-invocation ask constraint, so no extra options are added.
   assert.deepEqual(options, {});
 });
 

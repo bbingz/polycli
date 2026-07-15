@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
-import { appendNdjson, readNdjson } from '@bbingz/polycli-utils/ndjson';
+import { appendNdjson, appendNdjsonBatch, readNdjson } from '@bbingz/polycli-utils/ndjson';
 import { computeWorkspaceSlug, ensureStateDir, resolveStateDir } from './state.mjs';
 
 const MAX_LEDGER_BYTES = 2_000_000;
@@ -32,6 +32,14 @@ const VALID_HOST_SURFACES = new Set([
   'opencode-plugin',
   'unknown',
 ]);
+const TERMINAL_LEDGER_PHASES = new Set(['attempt_result', 'provider_decision']);
+
+function terminalLedgerRetentionGroupKey(event) {
+  if (!TERMINAL_LEDGER_PHASES.has(event?.phase) || !event.runId || !event.jobId) {
+    return null;
+  }
+  return JSON.stringify([event.runId, event.jobId]);
+}
 
 export function resolveRunLedgerFile(workspaceRoot) {
   return path.join(resolveStateDir(workspaceRoot), 'run-ledger.ndjson');
@@ -182,6 +190,7 @@ export function createRunLedgerEvent(event = {}) {
     durationMs: event.durationMs ?? null,
     errorCode: event.errorCode ?? null,
     failureClass: event.failureClass ?? null,
+    terminalDescriptor: event.terminalDescriptor ?? null,
     pid: event.pid ?? null,
     logFile: event.logFile ?? null,
     argv: event.argv || [],
@@ -205,8 +214,192 @@ export function appendRunLedgerEvent(workspaceRoot, event) {
     workspaceRoot: workspaceRoot ?? event.workspaceRoot ?? null,
     workspaceSlug: event.workspaceSlug ?? workspaceSlug,
   });
-  appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO, mode: PRIVATE_FILE_MODE });
+  appendNdjson(file, full, {
+    maxBytes: MAX_LEDGER_BYTES,
+    keepRatio: KEEP_RATIO,
+    retentionGroupKey: terminalLedgerRetentionGroupKey,
+    mode: PRIVATE_FILE_MODE,
+  });
   return full;
+}
+
+export function appendRunLedgerEvents(workspaceRoot, events) {
+  if (!Array.isArray(events)) {
+    throw new TypeError('events must be an array');
+  }
+  if (events.length === 0) return [];
+
+  // As with the single-event path, establish the private state directory before the NDJSON
+  // primitive creates its parent. The underlying batch write publishes every event together.
+  if (workspaceRoot) ensureStateDir(workspaceRoot);
+  const file = resolveRunLedgerFile(workspaceRoot);
+  const workspaceSlug = workspaceRoot ? computeWorkspaceSlug(workspaceRoot) : null;
+  const full = events.map((event) => createRunLedgerEvent({
+    ...event,
+    workspaceRoot: workspaceRoot ?? event.workspaceRoot ?? null,
+    workspaceSlug: event.workspaceSlug ?? workspaceSlug,
+  }));
+  appendNdjsonBatch(file, full, {
+    maxBytes: MAX_LEDGER_BYTES,
+    keepRatio: KEEP_RATIO,
+    retentionGroupKey: terminalLedgerRetentionGroupKey,
+    mode: PRIVATE_FILE_MODE,
+  });
+  return full;
+}
+
+function canonicalTerminalValue(value) {
+  if (value == null || typeof value !== 'object') return value ?? null;
+  if (Array.isArray(value)) return value.map((entry) => canonicalTerminalValue(entry));
+  return Object.fromEntries(Object.keys(value)
+    .sort()
+    .map((key) => [key, canonicalTerminalValue(value[key])]));
+}
+
+function terminalEventMaterial(event) {
+  return {
+    phase: event.phase ?? null,
+    status: event.status ?? null,
+    reason: event.reason ?? null,
+    provider: event.provider ?? null,
+    command: event.command ?? null,
+    kind: event.kind ?? null,
+    hostSurface: event.hostSurface || 'unknown',
+    attempt: canonicalTerminalValue(event.attempt),
+    sessionId: event.sessionId ?? null,
+    model: event.model ?? null,
+    defaultModel: event.defaultModel ?? null,
+    timingRef: canonicalTerminalValue(event.timingRef),
+    error: canonicalTerminalValue(event.error),
+    errorCode: event.errorCode ?? null,
+    failureClass: event.failureClass ?? null,
+  };
+}
+
+function stableTerminalJson(value) {
+  return JSON.stringify(canonicalTerminalValue(value));
+}
+
+function validateTerminalPair(events) {
+  if (!Array.isArray(events) || events.length !== 2) {
+    throw new TypeError('terminal ledger pair must contain exactly two events');
+  }
+  const [first] = events;
+  const runId = first?.runId;
+  const jobId = first?.jobId;
+  if (!runId || !jobId
+    || events.some((event) => event?.runId !== runId || event?.jobId !== jobId || !TERMINAL_LEDGER_PHASES.has(event?.phase))
+    || new Set(events.map((event) => event.phase)).size !== TERMINAL_LEDGER_PHASES.size) {
+    throw new TypeError('terminal ledger pair must share runId/jobId and contain attempt_result plus provider_decision');
+  }
+  return { runId, jobId };
+}
+
+// A terminal descriptor is the immutable identity of the terminal intent. It deliberately
+// excludes publication-specific fields (eventId, timestamp, workspace location, preview bytes,
+// log path, and artifact realpath), while retaining the result attribution that recovery must not
+// silently rewrite.
+export function createTerminalLedgerDescriptor(events) {
+  const { runId, jobId } = validateTerminalPair(events);
+  return {
+    version: 1,
+    runId,
+    jobId,
+    events: events
+      .map((event) => terminalEventMaterial(event))
+      .sort((left, right) => left.phase.localeCompare(right.phase)),
+  };
+}
+
+function descriptorsMatch(left, right) {
+  return stableTerminalJson(left) === stableTerminalJson(right);
+}
+
+function legacyTerminalEventMatches(existing, expected) {
+  const actual = terminalEventMaterial(existing);
+  const wanted = terminalEventMaterial(expected);
+  for (const key of ['phase', 'status', 'reason', 'provider', 'command', 'kind', 'hostSurface']) {
+    if (actual[key] !== wanted[key]) return false;
+  }
+  // Before descriptors existed, a null attribution field meant "not recorded", not a claim that
+  // the value was null. Preserve compatibility with those old records while still refusing any
+  // concrete, contradictory session/model/attempt/timing/error value.
+  for (const key of ['attempt', 'sessionId', 'model', 'defaultModel', 'timingRef', 'error', 'errorCode', 'failureClass']) {
+    if (actual[key] != null && stableTerminalJson(actual[key]) !== stableTerminalJson(wanted[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function terminalEventMatches(existing, expected) {
+  if (existing.phase !== expected.phase) return false;
+  if (existing.terminalDescriptor != null) {
+    return descriptorsMatch(existing.terminalDescriptor, expected.terminalDescriptor);
+  }
+  return legacyTerminalEventMatches(existing, expected);
+}
+
+function terminalPairMatches(existing, expected) {
+  if (existing.length !== expected.length
+    || new Set(existing.map((event) => event.phase)).size !== TERMINAL_LEDGER_PHASES.size) {
+    return false;
+  }
+  const descriptorCount = existing.filter((event) => event.terminalDescriptor != null).length;
+  if (descriptorCount !== 0 && descriptorCount !== existing.length) return false;
+  return expected.every((expectedEvent) => existing.some((event) => terminalEventMatches(event, expectedEvent)));
+}
+
+function buildExpectedTerminalPair(events) {
+  const rawExpected = events.map((event) => createRunLedgerEvent(event));
+  const descriptor = createTerminalLedgerDescriptor(rawExpected);
+  const supplied = rawExpected
+    .map((event) => event.terminalDescriptor)
+    .filter((value) => value != null);
+  if (supplied.length > 0
+    && (supplied.length !== rawExpected.length
+      || supplied.some((value) => !descriptorsMatch(value, descriptor)))) {
+    throw new Error('Terminal ledger descriptor does not match the terminal event pair');
+  }
+  return {
+    descriptor,
+    expected: rawExpected.map((event) => ({ ...event, terminalDescriptor: descriptor })),
+  };
+}
+
+export function ensureRunLedgerTerminalPair(workspaceRoot, events) {
+  if (!Array.isArray(events) || events.length !== 2) {
+    throw new TypeError('terminal ledger pair must contain exactly two events');
+  }
+  const { expected, descriptor } = buildExpectedTerminalPair(events);
+  const { runId, jobId } = validateTerminalPair(expected);
+
+  const existing = readRunLedgerEvents(workspaceRoot)
+    .filter((event) => event.runId === runId
+      && event.jobId === jobId
+      && TERMINAL_LEDGER_PHASES.has(event.phase));
+  if (existing.length === 0) {
+    return appendRunLedgerEvents(workspaceRoot, expected);
+  }
+  if (existing.length === 1) {
+    const [partial] = existing;
+    const matchingExpected = expected.find((event) => event.phase === partial.phase);
+    if (!matchingExpected || !terminalEventMatches(partial, matchingExpected)) {
+      throw new Error(`Incomplete or conflicting terminal ledger pair for job ${jobId}`);
+    }
+    const missing = expected.find((event) => event.phase !== partial.phase);
+    // A legacy partial record has no descriptor to attest. It can still be safely completed only
+    // when its full material matches; preserve its legacy shape so future retries use the same
+    // compatibility matcher. Descriptor-bearing partials retain the exact descriptor.
+    const repair = partial.terminalDescriptor == null
+      ? { ...missing, terminalDescriptor: null }
+      : { ...missing, terminalDescriptor: descriptor };
+    return [...existing, ...appendRunLedgerEvents(workspaceRoot, [repair])];
+  }
+  if (!terminalPairMatches(existing, expected)) {
+    throw new Error(`Incomplete or conflicting terminal ledger pair for job ${jobId}`);
+  }
+  return existing;
 }
 
 export function readRunLedgerEvents(workspaceRoot) {

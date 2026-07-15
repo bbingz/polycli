@@ -23,7 +23,13 @@ import {
 } from "./lib/job-control.mjs";
 import { buildPromptRuntimeOptions } from "./lib/prompt-runtime.mjs";
 import { resolveProvider } from "./lib/providers.mjs";
-import { assertReviewProviderSupported, buildReviewPrompt, buildReviewRuntimeOptions, collectReviewContext } from "./lib/review.mjs";
+import {
+  assertReviewProviderSupported,
+  assertStopReviewGateProviderSupported,
+  buildReviewPrompt,
+  buildReviewRuntimeOptions,
+  collectReviewContext,
+} from "./lib/review.mjs";
 import {
   getJob,
   recordLastUsedProvider,
@@ -52,6 +58,8 @@ import { appendPreview, previewText } from "./lib/preview.mjs";
 import {
   appendRunLedgerEvent,
   buildRunExplanation,
+  createTerminalLedgerDescriptor,
+  ensureRunLedgerTerminalPair,
   readRunLedgerEvents,
   redactArgv,
   resolveHostSurface,
@@ -116,6 +124,8 @@ const RUN_TRACKED_COMMANDS = new Set([
   "review",
   "adversarial-review",
 ]);
+const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const ACTIVE_JOB_STATUSES = new Set(["queued", "running"]);
 
 const RUN_CONTEXT = {
   runId: null,
@@ -138,20 +148,138 @@ function buildCurrentRunContext(overrides = {}) {
   };
 }
 
-async function recordRunEventForContext(workspaceRoot, runContext, base = {}) {
+function buildRunEventForContext(runContext, base = {}) {
   if (!runContext?.runId) return null;
   const command = base.command || runContext.command;
   const commands = Array.from(
     new Set([...(runContext.commands || []), command, ...(base.commands || [])].filter(Boolean)),
   ).sort();
-  return appendRunLedgerEvent(workspaceRoot, {
+  return {
     runId: runContext.runId,
     hostSurface: runContext.hostSurface,
     argv: runContext.argv || [],
     ...base,
     command,
     commands,
+  };
+}
+
+function recordRunEventForContext(workspaceRoot, runContext, base = {}) {
+  const event = buildRunEventForContext(runContext, base);
+  return event ? appendRunLedgerEvent(workspaceRoot, event) : null;
+}
+
+function prepareTerminalRunEventsForContext(runContext, bases = []) {
+  const events = bases.map((base) => buildRunEventForContext(runContext, base)).filter(Boolean);
+  if (events.length === 0) return { events, terminalDescriptor: null };
+  const terminalDescriptor = createTerminalLedgerDescriptor(events);
+  return {
+    events: events.map((event) => ({ ...event, terminalDescriptor })),
+    terminalDescriptor,
+  };
+}
+
+function ensureTerminalRunEventsForContext(workspaceRoot, prepared) {
+  return prepared.events.length > 0
+    ? ensureRunLedgerTerminalPair(workspaceRoot, prepared.events)
+    : [];
+}
+
+function hasTerminalJobEnvelope(envelope) {
+  return TERMINAL_JOB_STATUSES.has(envelope?.job?.status);
+}
+
+function claimBackgroundWorker(workspaceRoot, jobId) {
+  const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
+    // The worker claims its own PID before it records any provider-facing event or invokes a
+    // provider. This closes the parent spawn -> state-PID crash window: if cancellation won that
+    // race, its terminal envelope makes this worker exit without doing work.
+    if (!latest || !ACTIVE_JOB_STATUSES.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
+      return null;
+    }
+    if (latest.pid != null && latest.pid !== process.pid) {
+      return null;
+    }
+    return {
+      job: {
+        ...latest,
+        status: "running",
+        pid: process.pid,
+        updatedAt: new Date().toISOString(),
+      },
+    };
   });
+  return write.written ? write.job : null;
+}
+
+function shouldRetainJobConfig(workspaceRoot, jobId) {
+  const current = getJob(workspaceRoot, jobId);
+  return current?.status === "queued" || current?.status === "running";
+}
+
+function recordBackgroundSpawnFailure(workspaceRoot, jobId, execution, runContext, error) {
+  const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
+  try {
+    const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
+      if (!latest || !ACTIVE_JOB_STATUSES.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
+        return null;
+      }
+      const finishedAt = new Date().toISOString();
+      const failedJob = {
+        ...latest,
+        ...execution.jobMeta,
+        status: "failed",
+        pid: null,
+        finishedAt,
+        updatedAt: finishedAt,
+        error: error.message,
+      };
+      const terminalReason = `${execution.kind}_failed`;
+      const terminalEvents = [
+        {
+          command: runContext?.command || execution.kind,
+          kind: execution.kind,
+          provider: execution.provider,
+          phase: "attempt_result",
+          status: "failed",
+          reason: terminalReason,
+          attempt: { ordinal: 1 },
+          jobId,
+          error: { message: String(error.message || error).slice(0, 300) },
+          logFile: failedJob.logFile || null,
+        },
+        {
+          command: runContext?.command || execution.kind,
+          kind: execution.kind,
+          provider: execution.provider,
+          phase: "provider_decision",
+          status: "failed",
+          reason: terminalReason,
+          jobId,
+        },
+      ];
+      const terminal = prepareTerminalRunEventsForContext(runContext, terminalEvents);
+      return {
+        job: failedJob,
+        envelope: {
+          job: failedJob,
+          result: { ok: false, error: error.message },
+          terminalReason,
+          terminalDescriptor: terminal.terminalDescriptor,
+        },
+        beforeStateCommit() {
+          ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+        },
+      };
+    });
+    if (write.written) {
+      cleanupRuntimeOptions(config?.execution?.runtimeOptions);
+      removeJobConfigFile(workspaceRoot, jobId);
+    }
+  } catch {
+    // A failed state/ledger write leaves the active job and, when the envelope write succeeded,
+    // a recoverable terminal intent. The next status refresh owns the retry.
+  }
 }
 
 async function recordRunEvent(workspaceRoot, base = {}) {
@@ -177,7 +305,7 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  polycli-companion.mjs setup [--provider <provider>] [--json]",
+      "  polycli-companion.mjs setup [--provider <provider>] [--probe-auth] [--json]",
       "    [--enable-review-gate|--disable-review-gate]",
       "  polycli-companion.mjs health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
@@ -269,17 +397,47 @@ function cacheProviderModel(workspaceRoot, provider, model) {
   });
 }
 
-async function inspectProvider(provider) {
+function normalizeAuthProbeCost(runtime) {
+  const value = runtime.capabilities?.authProbeCost;
+  return value === "status" || value === "model" ? value : "unknown";
+}
+
+function deriveAuthState(auth) {
+  if (!auth) return "unknown";
+  const detail = String(auth.detail ?? auth.reason ?? "");
+  if (/auth probe inconclusive/i.test(detail)) return "unknown";
+  if (auth.loggedIn === true) return "authenticated";
+  if (auth.loggedIn === false) return "unauthenticated";
+  return "unknown";
+}
+
+function skippedAuthDetail({ available, authProbeCost }) {
+  if (!available) return "not checked because the provider CLI is unavailable";
+  if (authProbeCost === "model") {
+    return "not checked by default because authentication uses a model prompt; rerun setup --probe-auth to opt in";
+  }
+  return "not checked because this provider has no declared safe auth-status probe";
+}
+
+async function inspectProvider(provider, { probeAuth = false } = {}) {
   const runtime = getProviderRuntime(provider);
   const availability = await Promise.resolve(runtime.getAvailability(process.cwd()));
-  const auth = await Promise.resolve(runtime.getAuthStatus(process.cwd()));
+  const available = availability.available === true;
+  const authProbeCost = normalizeAuthProbeCost(runtime);
+  const authChecked = available && (probeAuth || authProbeCost === "status");
+  const auth = authChecked
+    ? await Promise.resolve(runtime.getAuthStatus(process.cwd()))
+    : null;
   const row = {
     provider,
-    available: availability.available ?? false,
+    available,
     availabilityDetail: availability.detail ?? null,
-    loggedIn: auth.loggedIn ?? false,
-    authDetail: auth.detail ?? auth.reason ?? null,
-    model: auth.model ?? null,
+    loggedIn: auth?.loggedIn ?? null,
+    authState: deriveAuthState(auth),
+    authChecked,
+    authProbeCost,
+    authDetail: auth?.detail ?? auth?.reason ?? skippedAuthDetail({ available, authProbeCost }),
+    model: auth?.model ?? null,
     capabilities: runtime.capabilities,
   };
   cacheProviderModel(resolveWorkspaceRoot(process.cwd()), provider, row.model);
@@ -289,11 +447,15 @@ async function inspectProvider(provider) {
 async function inspectProviderAvailability(provider) {
   const runtime = getProviderRuntime(provider);
   const availability = await Promise.resolve(runtime.getAvailability(process.cwd()));
+  const authProbeCost = normalizeAuthProbeCost(runtime);
   return {
     provider,
     available: availability.available ?? false,
     availabilityDetail: availability.detail ?? null,
     loggedIn: null,
+    authState: "unknown",
+    authChecked: false,
+    authProbeCost,
     authDetail: "not checked by health",
     model: null,
     capabilities: runtime.capabilities,
@@ -748,6 +910,9 @@ async function startBackgroundExecution(execution, asJson) {
     stdio: ["ignore", logFd, logFd],
     detached: true,
   });
+  child.once("error", (error) => {
+    recordBackgroundSpawnFailure(workspaceRoot, job.jobId, execution, runContext, error);
+  });
   child.unref();
   fs.closeSync(logFd);
 
@@ -764,7 +929,14 @@ async function startBackgroundExecution(execution, asJson) {
   });
   const runningJob = runningWrite.written ? runningWrite.job : (getJob(workspaceRoot, job.jobId) || job);
 
-  if (runContext) {
+  if (!ACTIVE_JOB_STATUSES.has(runningJob.status)) {
+    // Cancellation may win before the child claims itself. In that case the worker will see the
+    // terminal state and exit before any provider call; remove the config we may have recreated
+    // after the canceller's cleanup so it cannot linger as a false live-worker marker.
+    removeJobConfigFile(workspaceRoot, job.jobId);
+  }
+
+  if (runContext && ACTIVE_JOB_STATUSES.has(runningJob.status)) {
     await recordRunEventForContext(workspaceRoot, runContext, {
       command: execution.kind,
       kind: execution.kind,
@@ -789,7 +961,7 @@ async function startBackgroundExecution(execution, asJson) {
 
 async function runSetup(rawArgs) {
   const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json", "enable-review-gate", "disable-review-gate"],
+    booleanOptions: ["json", "probe-auth", "enable-review-gate", "disable-review-gate"],
     valueOptions: ["provider"],
   });
   if (options["enable-review-gate"] && options["disable-review-gate"]) {
@@ -815,7 +987,7 @@ async function runSetup(rawArgs) {
   const results = [];
   for (const provider of providers) {
     results.push({
-      ...(await inspectProvider(provider)),
+      ...(await inspectProvider(provider, { probeAuth: Boolean(options["probe-auth"]) })),
       stopReviewGate: gateConfig.stopReviewGate === true,
       stopReviewGateWorkspace: workspaceRoot,
     });
@@ -832,7 +1004,8 @@ async function runSetup(rawArgs) {
       [
         `[${row.provider}]`,
         `available=${row.available ? "yes" : "no"}`,
-        `loggedIn=${row.loggedIn ? "yes" : "no"}`,
+        `auth=${row.authState}`,
+        `authProbe=${row.authChecked ? "checked" : `skipped:${row.authProbeCost}`}`,
         row.model ? `model=${row.model}` : null,
         row.availabilityDetail ? `version=${row.availabilityDetail}` : null,
         row.authDetail ? `detail=${row.authDetail}` : null,
@@ -1086,6 +1259,55 @@ async function runRescue(rawArgs) {
   await runForegroundExecution(execution, options.json);
 }
 
+function buildStopReviewGateExecution(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, {
+    booleanOptions: ["json"],
+    valueOptions: ["provider"],
+  });
+  const { provider, remainingPositionals } = resolveProvider({
+    provider: options.provider,
+    positionals,
+  });
+  assertStopReviewGateProviderSupported(provider);
+
+  const prompt = remainingPositionals.join(" ").trim();
+  if (!prompt) {
+    throw new Error("Missing prompt text for stop-review-gate.");
+  }
+
+  const workspaceRoot = resolveWorkspaceRoot(process.cwd());
+  const defaultModel = readCachedProviderModel(workspaceRoot, provider);
+  return {
+    options,
+    execution: {
+      provider,
+      // This private command uses the normal review timing budget and schema,
+      // but its separate kind keeps stop-time gate latency out of ordinary
+      // review cohorts. It also does not record a last-used provider or expose
+      // a general-purpose prompt surface.
+      kind: "stop-review-gate",
+      prompt,
+      userPrompt: "stop-time review gate",
+      model: null,
+      defaultModel,
+      cwd: process.cwd(),
+      timeout: resolveTimeoutMs(provider, "review", { defaultModel }),
+      meta: { stopReviewGate: true },
+      jobMeta: {},
+      measurementScope: "request",
+      runtimeOptions: buildReviewRuntimeOptions({
+        provider,
+        cwd: process.cwd(),
+      }),
+    },
+  };
+}
+
+async function runStopReviewGate(rawArgs) {
+  const { options, execution } = buildStopReviewGateExecution(rawArgs);
+  await runForegroundExecution(execution, options.json);
+}
+
 function buildReviewExecution(rawArgs, { adversarial }) {
   const { options, positionals } = parseArgs(rawArgs, {
     booleanOptions: ["json", "background", "wait"],
@@ -1331,6 +1553,10 @@ function formatMetric(metric) {
   return metric.status;
 }
 
+function formatCohortValue(value) {
+  return value ?? "unspecified";
+}
+
 function renderTimingReport(records, aggregate) {
   if (records.length === 0) {
     return "No timing records found.";
@@ -1349,13 +1575,21 @@ function renderTimingReport(records, aggregate) {
       return `- ${record.completedAt} ${record.provider} ${record.kind || "prompt"} ${record.measurementScope} ${suffix}`;
     }),
     "",
-    "Aggregate:",
+    "Comparable timing cohorts (percentiles stay within provider, kind, scope, outcome, and runtime persistence):",
   ];
 
-  for (const [provider, summary] of Object.entries(aggregate.byProvider)) {
+  for (const cohort of aggregate.cohorts) {
     lines.push(
-      `- ${provider}: count=${summary.recordCount} total.p50=${summary.metrics.total.p50} total.p95=${summary.metrics.total.p95}`
+      `- provider=${cohort.provider} kind=${formatCohortValue(cohort.kind)} scope=${cohort.measurementScope} outcome=${formatCohortValue(cohort.outcome)} persistence=${cohort.runtimePersistence}: count=${cohort.recordCount} total.p50=${cohort.metrics.total.p50} total.p95=${cohort.metrics.total.p95}`
     );
+  }
+
+  lines.push("", "Provider summary (counts/capability only; use comparable cohorts for percentiles):");
+  for (const [provider, summary] of Object.entries(aggregate.byProvider)) {
+    const mixed = summary.mixedDimensions.length > 0
+      ? ` mixed=${summary.mixedDimensions.join(",")}`
+      : "";
+    lines.push(`- ${provider}: count=${summary.recordCount} cohorts=${summary.cohortCount}${mixed}`);
   }
 
   return lines.join("\n");
@@ -1401,6 +1635,7 @@ async function runTiming(rawArgs) {
     historyLimit: limit == null ? "all" : limit,
     recordCount: records.length,
     aggregateScope: "records",
+    percentileCohortDimensions: aggregate.cohortDimensions,
   };
 
   if (options.json) {
@@ -1422,9 +1657,12 @@ async function runJobWorker(rawArgs) {
   }
 
   const { workspaceRoot, execution, jobId, runContext } = payload;
-  const current = getJob(workspaceRoot, jobId);
+  const current = claimBackgroundWorker(workspaceRoot, jobId);
   if (!current) {
-    throw new Error(`Unknown job ${jobId}`);
+    // The parent may have been interrupted before writing the PID and a concurrent cancellation
+    // won. Treat the terminal/non-owned state as a normal no-op rather than performing a late
+    // provider call for a cancelled job.
+    return;
   }
 
   if (runContext?.runId) {
@@ -1461,184 +1699,176 @@ async function runJobWorker(rawArgs) {
       },
     });
 
-    const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {
-      if (!latest || latest.status === "cancelled") {
-        return null;
-      }
-      const finishedJob = {
-        ...latest,
-        ...execution.jobMeta,
-        status: result.ok ? "completed" : "failed",
-        pid: null,
-        finishedAt: new Date().toISOString(),
-        sessionId: result.sessionId ?? null,
-        error: result.error ?? null,
-      };
-      return {
-        job: finishedJob,
-        envelope: {
-          job: finishedJob,
-          result: compactProviderResult(result),
-        },
-      };
-    });
-    if (!write.written) {
-      const latest = getJob(workspaceRoot, jobId);
-      if (runContext?.runId && latest && latest.status === "cancelled") {
-        await recordRunEventForContext(workspaceRoot, runContext, {
-          command: runContext.command || execution.kind,
-          kind: execution.kind,
-          provider: execution.provider,
-          phase: "attempt_result",
-          status: "cancelled",
-          attempt: { ordinal: 1 },
-          jobId,
-          sessionId: result.sessionId ?? null,
-          durationMs: Date.now() - startedAt,
-        });
-        await recordRunEventForContext(workspaceRoot, runContext, {
-          command: runContext.command || execution.kind,
-          kind: execution.kind,
-          provider: execution.provider,
-          phase: "provider_decision",
-          status: "cancelled",
-          reason: "job_cancelled",
-          jobId,
-          sessionId: result.sessionId ?? null,
-        });
-      }
-      removeJobConfigFile(workspaceRoot, jobId);
-      return;
-    }
+    // A terminal status promises that all durable result, timing, and ledger writes
+    // are visible. Keep the job active until those writes complete so status --wait
+    // cannot race consumers that inspect or remove the state directory.
     if (result.timing) {
       appendTimingRecord(workspaceRoot, result.timing);
     }
     cacheProviderModel(workspaceRoot, execution.provider, result.model);
 
-    if (runContext?.runId) {
-      const compactResult = compactProviderResult(result);
-      const sessionArtifactPath = resolveSessionArtifactPath(
-        execution.provider,
-        result.sessionId,
-        execution.cwd,
-      );
-      await recordRunEventForContext(workspaceRoot, runContext, {
-        command: runContext.command || execution.kind,
-        kind: execution.kind,
-        provider: execution.provider,
-        phase: "attempt_result",
+    const compactResult = compactProviderResult(result);
+    const sessionArtifactPath = resolveSessionArtifactPath(
+      execution.provider,
+      result.sessionId,
+      execution.cwd,
+    );
+    const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
+      if (!latest || latest.status === "cancelled" || hasTerminalJobEnvelope(storedEnvelope)) {
+        return null;
+      }
+      const finishedAt = new Date().toISOString();
+      const finishedJob = {
+        ...latest,
+        ...execution.jobMeta,
         status: result.ok ? "completed" : "failed",
-        attempt: { ordinal: 1 },
-        jobId,
-        model: result.model || null,
+        pid: null,
+        finishedAt,
+        updatedAt: finishedAt,
         sessionId: result.sessionId ?? null,
-        sessionArtifactPath,
-        defaultModel: result.defaultModel || null,
-        preview: result.response ? String(result.response).slice(0, 180) : null,
-        stdoutBytes: compactResult.stdoutBytes ?? null,
-        stderrBytes: compactResult.stderrBytes ?? null,
-        errorCode: result.errorCode ?? result.timing?.errorCode ?? null,
-        failureClass: result.errorCode ?? result.timing?.errorCode ?? null,
-        durationMs: Date.now() - startedAt,
-        timingRef: result.timing
-          ? {
-            provider: result.timing.provider,
-            kind: result.timing.kind,
-            completedAt: result.timing.completedAt,
-          }
-          : null,
-        error: result.ok || !result.error
-          ? null
-          : { message: String(result.error).slice(0, 300) },
-        logFile: current.logFile || null,
-      });
-      await recordRunEventForContext(workspaceRoot, runContext, {
-        command: runContext.command || execution.kind,
-        kind: execution.kind,
-        provider: execution.provider,
-        phase: "provider_decision",
-        status: result.ok ? "adopted" : "failed",
-        reason: result.ok ? null : `${execution.kind}_failed`,
-        jobId,
-        sessionId: result.sessionId ?? null,
-        sessionArtifactPath,
-      });
+        error: result.error ?? null,
+      };
+      const terminalReason = result.ok ? null : `${execution.kind}_failed`;
+      const terminalEvents = runContext?.runId
+        ? [
+          {
+            command: runContext.command || execution.kind,
+            kind: execution.kind,
+            provider: execution.provider,
+            phase: "attempt_result",
+            status: result.ok ? "completed" : "failed",
+            reason: terminalReason,
+            attempt: { ordinal: 1 },
+            jobId,
+            model: result.model || null,
+            sessionId: result.sessionId ?? null,
+            sessionArtifactPath,
+            defaultModel: result.defaultModel || null,
+            preview: result.response ? String(result.response).slice(0, 180) : null,
+            stdoutBytes: compactResult.stdoutBytes ?? null,
+            stderrBytes: compactResult.stderrBytes ?? null,
+            errorCode: result.errorCode ?? result.timing?.errorCode ?? null,
+            failureClass: result.errorCode ?? result.timing?.errorCode ?? null,
+            durationMs: Date.now() - startedAt,
+            timingRef: result.timing
+              ? {
+                provider: result.timing.provider,
+                kind: result.timing.kind,
+                completedAt: result.timing.completedAt,
+              }
+              : null,
+            error: result.ok || !result.error
+              ? null
+              : { message: String(result.error).slice(0, 300) },
+            logFile: finishedJob.logFile || null,
+          },
+          {
+            command: runContext.command || execution.kind,
+            kind: execution.kind,
+            provider: execution.provider,
+            phase: "provider_decision",
+            status: result.ok ? "adopted" : "failed",
+            reason: terminalReason,
+            jobId,
+            sessionId: result.sessionId ?? null,
+            sessionArtifactPath,
+          },
+        ]
+        : [];
+      const terminal = prepareTerminalRunEventsForContext(runContext, terminalEvents);
+      return {
+        job: finishedJob,
+        envelope: {
+          job: finishedJob,
+          result: compactResult,
+          terminalReason,
+          terminalDescriptor: terminal.terminalDescriptor,
+        },
+        // state.mjs writes this envelope first. A crash or ledger failure leaves a recoverable
+        // intent instead of exposing a terminal state with only half of its ledger pair.
+        beforeStateCommit() {
+          ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+        },
+      };
+    });
+    if (!write.written) {
+      if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
+        removeJobConfigFile(workspaceRoot, jobId);
+      }
+      return;
     }
     removeJobConfigFile(workspaceRoot, jobId);
   } catch (error) {
-    const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {
-      if (!latest || latest.status === "cancelled") {
+    const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
+      if (!latest || latest.status === "cancelled" || hasTerminalJobEnvelope(storedEnvelope)) {
         return null;
       }
+      const finishedAt = new Date().toISOString();
       const failedJob = {
         ...latest,
         ...execution.jobMeta,
         status: "failed",
         pid: null,
-        finishedAt: new Date().toISOString(),
+        finishedAt,
+        updatedAt: finishedAt,
         error: error.message,
       };
+      const terminalReason = `${execution.kind}_failed`;
+      const terminalEvents = runContext?.runId
+        ? [
+          {
+            command: runContext.command || execution.kind,
+            kind: execution.kind,
+            provider: execution.provider,
+            phase: "attempt_result",
+            status: "failed",
+            reason: terminalReason,
+            attempt: { ordinal: 1 },
+            jobId,
+            durationMs: Date.now() - startedAt,
+            error: { message: String(error?.message || error).slice(0, 300) },
+            logFile: failedJob.logFile || null,
+          },
+          {
+            command: runContext.command || execution.kind,
+            kind: execution.kind,
+            provider: execution.provider,
+            phase: "provider_decision",
+            status: "failed",
+            reason: terminalReason,
+            jobId,
+          },
+        ]
+        : [];
+      const terminal = prepareTerminalRunEventsForContext(runContext, terminalEvents);
       return {
         job: failedJob,
         envelope: {
           job: failedJob,
           result: { ok: false, error: error.message },
+          terminalReason,
+          terminalDescriptor: terminal.terminalDescriptor,
+        },
+        beforeStateCommit() {
+          ensureTerminalRunEventsForContext(workspaceRoot, terminal);
         },
       };
     });
     if (!write.written) {
-      const latest = getJob(workspaceRoot, jobId);
-      if (runContext?.runId && latest && latest.status === "cancelled") {
-        await recordRunEventForContext(workspaceRoot, runContext, {
-          command: runContext.command || execution.kind,
-          kind: execution.kind,
-          provider: execution.provider,
-          phase: "attempt_result",
-          status: "cancelled",
-          attempt: { ordinal: 1 },
-          jobId,
-          durationMs: Date.now() - startedAt,
-        });
-        await recordRunEventForContext(workspaceRoot, runContext, {
-          command: runContext.command || execution.kind,
-          kind: execution.kind,
-          provider: execution.provider,
-          phase: "provider_decision",
-          status: "cancelled",
-          reason: "job_cancelled",
-          jobId,
-        });
+      if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
+        removeJobConfigFile(workspaceRoot, jobId);
       }
-      removeJobConfigFile(workspaceRoot, jobId);
       return;
-    }
-    if (runContext?.runId) {
-      await recordRunEventForContext(workspaceRoot, runContext, {
-        command: runContext.command || execution.kind,
-        kind: execution.kind,
-        provider: execution.provider,
-        phase: "attempt_result",
-        status: "failed",
-        attempt: { ordinal: 1 },
-        jobId,
-        durationMs: Date.now() - startedAt,
-        error: { message: String(error?.message || error).slice(0, 300) },
-        logFile: current.logFile || null,
-      });
-      await recordRunEventForContext(workspaceRoot, runContext, {
-        command: runContext.command || execution.kind,
-        kind: execution.kind,
-        provider: execution.provider,
-        phase: "provider_decision",
-        status: "failed",
-        reason: `${execution.kind}_failed`,
-        jobId,
-      });
     }
     removeJobConfigFile(workspaceRoot, jobId);
     throw error;
   } finally {
-    cleanupRuntimeOptions(execution.runtimeOptions);
+    // Cancellation deliberately keeps the public job active until its verified signal and ledger
+    // transaction finish. Do not let a worker that just observed that intent remove live runtime
+    // paths early; cancellation (or later recovery) owns cleanup after terminal state publication.
+    if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
+      cleanupRuntimeOptions(execution.runtimeOptions);
+    }
   }
 }
 
@@ -1813,6 +2043,7 @@ async function dispatchCommand(command, rawArgs) {
   if (command === "timing") return runTiming(rawArgs);
   if (command === "debug") return runDebugCommand(rawArgs);
   if (command === "sessions") return runSessionsCommand(rawArgs);
+  if (command === "_stop-review-gate") return runStopReviewGate(rawArgs);
   if (command === "_job-worker") return runJobWorker(rawArgs);
   throw new Error(`Unknown subcommand '${command}'.`);
 }

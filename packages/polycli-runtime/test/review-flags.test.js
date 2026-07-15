@@ -39,6 +39,16 @@ test("claude/gemini/qwen carry the exact drift expect tokens", () => {
     "--exclude-tools",
     "--max-session-turns",
   ]);
+  assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.qwen.probes, [
+    {
+      helpArgs: ["--approval-mode", "plan", "--help"],
+      expect: ["--exclude-tools", "--max-session-turns"],
+    },
+    {
+      helpArgs: ["--max-session-turns", "1", "--help"],
+      expect: ["--approval-mode"],
+    },
+  ]);
 });
 
 test("read-only option keys mirror assertNoReviewConstraintOverride", () => {
@@ -59,18 +69,30 @@ test("read-only option keys mirror assertNoReviewConstraintOverride", () => {
   ]);
 });
 
-test("agy carries forbidFlags + reviewUnsupported, minimax carries two probes", () => {
+test("agy detects its plan-mode surface but remains reviewUnsupported, minimax carries two probes", () => {
   assert.equal(REVIEW_FLAG_EXPECTATIONS.agy.reviewUnsupported, true);
-  assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.agy.forbidFlags, [
-    "--approval-mode",
-    "--permission-mode",
-    "--policy",
-    "--plan",
-    "--agent",
-  ]);
+  assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.agy.expectFlags, ["--mode"]);
+  assert.equal(REVIEW_FLAG_EXPECTATIONS.agy.forbidFlags, undefined);
   assert.equal(REVIEW_FLAG_EXPECTATIONS.minimax.probes.length, 2);
   assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.minimax.probes[0].helpArgs, ["text", "chat", "--help"]);
   assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.minimax.probes[0].expect, ["--message"]);
   assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.minimax.probes[1].helpArgs, ["--help"]);
   assert.deepEqual(REVIEW_FLAG_EXPECTATIONS.minimax.probes[1].expect, ["--output", "--non-interactive"]);
+});
+
+test("stop-review gate only permits providers with enforced runtime constraints", () => {
+  const bySafety = { enforced: [], prompt_only: [], unsupported: [] };
+  for (const [provider, entry] of Object.entries(REVIEW_FLAG_EXPECTATIONS)) {
+    bySafety[entry.stopReviewGateSafety]?.push(provider);
+  }
+
+  assert.deepEqual(
+    bySafety.enforced.sort(),
+    ["claude", "cmd", "copilot", "gemini", "grok", "opencode", "pi", "qwen"],
+  );
+  assert.deepEqual(
+    bySafety.prompt_only.sort(),
+    ["kimi", "minimax"],
+  );
+  assert.deepEqual(bySafety.unsupported, ["agy"]);
 });

@@ -50,10 +50,10 @@ test("buildKimiInvocation targets kimi-code one-shot -p + stream-json (no --yolo
   ]);
 });
 
-test("buildKimiInvocation uses -C for resume-last and omits resume flags for a fresh run", () => {
+test("buildKimiInvocation uses --continue for resume-last and omits resume flags for a fresh run", () => {
   assert.deepEqual(
     buildKimiInvocation({ prompt: "ping", resumeLast: true }).args,
-    ["-p", "ping", "--output-format", "stream-json", "-C"]
+    ["-p", "ping", "--output-format", "stream-json", "--continue"]
   );
   assert.deepEqual(
     buildKimiInvocation({ prompt: "ping" }).args,

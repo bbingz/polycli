@@ -1,16 +1,19 @@
 {
   "provider": "minimax",
   "name": "run-success",
-  "capturedAt": "2026-04-22T12:44:18.282Z",
-  "version": "mini-agent 0.1.0",
+  "capturedAt": "2026-07-14T20:01:18.665Z",
+  "version": "mmx 1.0.16",
   "argv": [
-    "-t",
+    "text",
+    "chat",
+    "--message",
     "Reply with exactly HELLO_MINIMAX_FIXTURE and nothing else.",
-    "-w",
-    "/repo"
+    "--output",
+    "json",
+    "--non-interactive"
   ],
   "expected": {
-    "response": "HELLO_MINIMAX_FIXTURE",
+    "response": "\nHELLO_MINIMAX_FIXTURE",
     "finishReason": "end_turn",
     "toolCalls": []
   }

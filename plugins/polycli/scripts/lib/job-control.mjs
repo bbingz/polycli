@@ -1,10 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import process from "node:process";
+import { spawnSync } from "node:child_process";
 
 import { terminateProcessTree } from "@bbingz/polycli-utils/process";
-import { withLockfile } from "@bbingz/polycli-utils/atomic-save";
-
 import {
   getJob,
   listJobs,
@@ -14,13 +13,10 @@ import {
   resolveJobConfigFile,
   resolveJobFile,
   updateJobAtomically,
-  writeJobFile,
-  upsertJob,
 } from "./state.mjs";
 import {
-  appendRunLedgerEvent,
-  readRunLedgerEvents,
-  resolveRunLedgerFile,
+  createTerminalLedgerDescriptor,
+  ensureRunLedgerTerminalPair,
 } from "./run-ledger.mjs";
 import {
   deriveSessionArtifactCandidate,
@@ -38,6 +34,28 @@ function isProcessAlive(pid) {
     return true;
   } catch {
     return false;
+  }
+}
+
+function isExpectedWorkerProcess(pid, configFile) {
+  if (!Number.isInteger(pid) || pid <= 0 || !configFile) return null;
+  try {
+    const result = process.platform === "win32"
+      ? spawnSync("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`,
+      ], { encoding: "utf8", stdio: "pipe" })
+      : spawnSync("ps", ["-ww", "-o", "command=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    if (result.error) return null;
+    if (result.status !== 0) return false;
+    return result.stdout.includes("_job-worker") && result.stdout.includes(configFile);
+  } catch {
+    return null;
   }
 }
 
@@ -69,38 +87,26 @@ function enrichJob(workspaceRoot, job) {
   };
 }
 
-function hasLedgerPhase(events, runId, jobId, phase) {
-  return events.some((event) => event.runId === runId && event.jobId === jobId && event.phase === phase);
+function isTerminalEnvelope(envelope) {
+  return Boolean(envelope?.job && TERMINAL_STATUSES.has(envelope.job.status));
 }
 
-function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason = "worker_exited", skipRuntimeCleanup = false } = {}) {
-  const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
-  const runContext = config?.runContext;
-  if (!runContext?.runId) {
-    if (!skipRuntimeCleanup) cleanupRuntimePaths(config);
-    removeJobConfigFile(workspaceRoot, job.jobId);
-    return;
-  }
-
-  // Serialize the whole read -> hasLedgerPhase -> append -> removeConfig across processes.
-  // appendRunLedgerEvent only locks its own single append, so two concurrent refreshJob() callers
-  // could both observe "no terminal events yet" and each append, double-counting the run. The
-  // recover lock is a distinct path from the ndjson append lock, so there is no deadlock.
-  const recoverLock = `${resolveRunLedgerFile(workspaceRoot)}.recover.lock`;
-  withLockfile(recoverLock, () =>
-    writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result, reason, skipRuntimeCleanup }));
-}
-
-function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited", skipRuntimeCleanup = false } = {}) {
-  const events = readRunLedgerEvents(workspaceRoot);
+function buildRecoveredTerminalEvents(
+  workspaceRoot,
+  job,
+  config,
+  runContext,
+  { result = null, reason = "worker_exited", terminalDescriptor = null } = {},
+) {
   const command = runContext.command || config?.execution?.kind || job.kind || null;
   const provider = runContext.provider || config?.execution?.provider || job.provider || null;
   const kind = runContext.kind || config?.execution?.kind || job.kind || command;
-  const cancelled = reason === "cancelled" || job.status === "cancelled" || result?.error === "cancelled";
-  const status = cancelled ? "cancelled" : (result?.ok ? "completed" : "failed");
-  const decisionStatus = cancelled ? "cancelled" : (result?.ok ? "adopted" : "failed");
-  const decisionReason = result?.ok ? null : reason;
-  const errorMessage = result?.ok ? null : (result?.error || job.error || "worker exited before writing a result envelope");
+  const cancelled = reason === "cancelled" || job.status === "cancelled";
+  const succeeded = !cancelled && job.status === "completed" && result?.ok !== false;
+  const status = cancelled ? "cancelled" : (succeeded ? "completed" : "failed");
+  const decisionStatus = cancelled ? "cancelled" : (succeeded ? "adopted" : "failed");
+  const terminalReason = succeeded ? null : reason;
+  const errorMessage = succeeded ? null : (result?.error || job.error || "worker exited before writing a result envelope");
 
   // Recovery path also records the verified upstream session artifact realpath
   // (Q9a) so worker-recovered runs are purgeable too — same honest rules as the
@@ -129,18 +135,21 @@ function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
     jobId: job.jobId,
     sessionId: recoveredSessionId,
     sessionArtifactPath,
-    model: result?.model || runContext.model || config?.execution?.model || job.model || null,
-    defaultModel: result?.defaultModel || runContext.defaultModel || config?.execution?.defaultModel || null,
+    // A descriptor-bearing envelope came from the worker finalizer, whose terminal event records
+    // only upstream-returned model fields. Do not substitute configured defaults during recovery:
+    // doing so would manufacture a different terminal identity after a crash.
+    model: terminalDescriptor ? (result?.model ?? null) : (result?.model || runContext.model || config?.execution?.model || job.model || null),
+    defaultModel: terminalDescriptor ? (result?.defaultModel ?? null) : (result?.defaultModel || runContext.defaultModel || config?.execution?.defaultModel || null),
     hostSurface: runContext.hostSurface || "unknown",
     logFile: runContext.logFile || job.logFile || null,
   };
 
-  if (!hasLedgerPhase(events, runContext.runId, job.jobId, "attempt_result")) {
-    appendRunLedgerEvent(workspaceRoot, {
+  return [
+    {
       ...base,
       phase: "attempt_result",
       status,
-      reason,
+      reason: terminalReason,
       attempt: { ordinal: 1 },
       preview: result?.response ? String(result.response).slice(0, 180) : null,
       stdoutBytes: result?.stdoutBytes ?? null,
@@ -155,20 +164,71 @@ function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
         }
         : null,
       error: errorMessage ? { message: String(errorMessage).slice(0, 300) } : null,
-    });
-  }
-
-  if (!hasLedgerPhase(events, runContext.runId, job.jobId, "provider_decision")) {
-    appendRunLedgerEvent(workspaceRoot, {
+    },
+    {
       ...base,
       phase: "provider_decision",
       status: decisionStatus,
-      reason: decisionReason,
-    });
-  }
+      reason: terminalReason,
+    },
+  ];
+}
 
-  if (!skipRuntimeCleanup) cleanupRuntimePaths(config);
-  removeJobConfigFile(workspaceRoot, job.jobId);
+function applyTerminalDescriptor(events, terminalDescriptor) {
+  if (!terminalDescriptor) return events;
+  const byPhase = new Map((terminalDescriptor.events || []).map((event) => [event.phase, event]));
+  return events.map((event) => {
+    const material = byPhase.get(event.phase);
+    if (!material) return event;
+    return {
+      ...event,
+      phase: material.phase,
+      status: material.status,
+      reason: material.reason,
+      provider: material.provider,
+      command: material.command,
+      kind: material.kind,
+      hostSurface: material.hostSurface,
+      attempt: material.attempt,
+      sessionId: material.sessionId,
+      model: material.model,
+      defaultModel: material.defaultModel,
+      timingRef: material.timingRef,
+      error: material.error,
+      errorCode: material.errorCode,
+      failureClass: material.failureClass,
+    };
+  });
+}
+
+function prepareRecoveredTerminalEvents(
+  workspaceRoot,
+  job,
+  config,
+  { result = null, reason = "worker_exited", terminalDescriptor = null } = {},
+) {
+  const runContext = config?.runContext;
+  if (!runContext?.runId) return { events: [], terminalDescriptor };
+
+  const events = buildRecoveredTerminalEvents(workspaceRoot, job, config, runContext, {
+    result,
+    reason,
+    terminalDescriptor,
+  });
+  const descriptor = terminalDescriptor || createTerminalLedgerDescriptor(events);
+  return {
+    events: applyTerminalDescriptor(events, terminalDescriptor)
+      .map((event) => ({ ...event, terminalDescriptor: descriptor })),
+    terminalDescriptor: descriptor,
+  };
+}
+
+function ensureRecoveredTerminalEvents(workspaceRoot, prepared) {
+  // The state lock serializes worker finalization, cancellation, and recovery for this job.
+  // The shared helper publishes a missing pair atomically and refuses conflicting data.
+  if (prepared.events.length > 0) {
+    ensureRunLedgerTerminalPair(workspaceRoot, prepared.events);
+  }
 }
 
 function cleanupRuntimePaths(config) {
@@ -188,39 +248,95 @@ export function refreshJob(workspaceRoot, job) {
   if (!job || !ACTIVE_STATUSES.has(job.status)) {
     return job ? enrichJob(workspaceRoot, job) : null;
   }
-  if (!job.pid || isProcessAlive(job.pid)) {
+  const storedEnvelope = readJobFile(resolveJobFile(workspaceRoot, job.jobId));
+  if (!job.pid && !isTerminalEnvelope(storedEnvelope)) {
     return enrichJob(workspaceRoot, job);
   }
-
-  const envelope = readJobFile(resolveJobFile(workspaceRoot, job.jobId));
-  if (envelope?.job) {
-    const finalized = {
-      ...job,
-      ...envelope.job,
-      pid: null,
-    };
-    upsertJob(workspaceRoot, finalized);
-    recoverLedgerTerminalEvents(workspaceRoot, finalized, { result: envelope.result || null, reason: `${finalized.kind || job.kind}_failed` });
-    return enrichJob(workspaceRoot, finalized);
+  if (isProcessAlive(job.pid)) {
+    const identity = isExpectedWorkerProcess(job.pid, resolveJobConfigFile(workspaceRoot, job.jobId));
+    // Keep legacy active jobs (which have no terminal intent) alive on an unverifiable host. A
+    // terminal intent is different: a verified mismatch means this PID has been reused, so it is
+    // safe to recover the intent without touching that unrelated process.
+    if (!isTerminalEnvelope(storedEnvelope) || identity !== false) {
+      return enrichJob(workspaceRoot, job);
+    }
   }
+  try {
+    const write = updateJobAtomically(workspaceRoot, job.jobId, (latest, storedEnvelope) => {
+      if (!latest || !ACTIVE_STATUSES.has(latest.status)) return null;
 
-  const failed = {
-    ...job,
-    status: "failed",
-    pid: null,
-    finishedAt: new Date().toISOString(),
-    error: "worker exited before writing a result envelope",
-  };
-  upsertJob(workspaceRoot, failed);
-  writeJobFile(workspaceRoot, job.jobId, {
-    job: failed,
-    result: { ok: false, error: failed.error },
-  });
-  recoverLedgerTerminalEvents(workspaceRoot, failed, {
-    result: { ok: false, error: failed.error },
-    reason: "worker_exited",
-  });
-  return enrichJob(workspaceRoot, failed);
+      const hasStoredTerminalIntent = isTerminalEnvelope(storedEnvelope);
+      const finalizedAt = new Date().toISOString();
+      const finalizedBase = hasStoredTerminalIntent
+        ? {
+          ...latest,
+          ...storedEnvelope.job,
+          pid: null,
+        }
+        : {
+          ...latest,
+          status: "failed",
+          pid: null,
+          finishedAt: finalizedAt,
+          error: "worker exited before writing a result envelope",
+        };
+      const finalized = {
+        ...finalizedBase,
+        finishedAt: finalizedBase.finishedAt || finalizedAt,
+        updatedAt: finalizedAt,
+      };
+      const result = hasStoredTerminalIntent
+        ? (storedEnvelope.result || {
+          ok: finalized.status === "completed",
+          error: finalized.status === "cancelled" ? "cancelled" : finalized.error || null,
+        })
+        : { ok: false, error: finalized.error };
+      const inferredReason = finalized.status === "cancelled"
+        ? "cancelled"
+        : (result.ok
+          ? null
+          : (result.error === "worker exited before writing a result envelope"
+            ? "worker_exited"
+            : `${finalized.kind || latest.kind}_failed`));
+      const terminalReason = hasStoredTerminalIntent
+        && Object.prototype.hasOwnProperty.call(storedEnvelope, "terminalReason")
+        ? storedEnvelope.terminalReason
+        : inferredReason;
+      const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, latest.jobId));
+      const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalized, config, {
+        result,
+        reason: terminalReason,
+        terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null,
+      });
+
+      return {
+        job: finalized,
+        envelope: {
+          job: finalized,
+          result,
+          terminalReason,
+          terminalDescriptor: terminal.terminalDescriptor,
+        },
+        // The envelope is the recoverable intent. Do not publish the terminal state until the
+        // ledger has either atomically accepted the complete pair or already contains that pair.
+        beforeStateCommit() {
+          ensureRecoveredTerminalEvents(workspaceRoot, terminal);
+        },
+      };
+    });
+    if (write.written) {
+      const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
+      cleanupRuntimePaths(config);
+      removeJobConfigFile(workspaceRoot, job.jobId);
+    }
+    const current = write.written ? write.job : (getJob(workspaceRoot, job.jobId) || job);
+    return enrichJob(workspaceRoot, current);
+  } catch {
+    // Keep the persisted job active when the ledger is temporarily unavailable;
+    // a later status refresh retries recovery instead of exposing an incomplete
+    // terminal state or result envelope.
+    return enrichJob(workspaceRoot, getJob(workspaceRoot, job.jobId) || job);
+  }
 }
 
 export function buildStatusSnapshot(workspaceRoot, { showAll = false } = {}) {
@@ -276,15 +392,24 @@ export async function waitForJob(workspaceRoot, jobId, { timeoutMs = 240_000, po
   return { job: timed ? refreshJob(workspaceRoot, timed) : null, waitTimedOut: true };
 }
 
-export async function cancelJob(workspaceRoot, jobId, { terminate = terminateProcessTree } = {}) {
-  // Flip the job to cancelled and capture its pid atomically under the state lock FIRST, then
-  // signal that pid. Previously cancelJob read the job WITHOUT a lock and killed job.pid before
-  // re-validating, so a stale pre-lock snapshot could signal a pid the worker had already freed
-  // (and the OS reused). The pid we kill below was confirmed ACTIVE at lock time.
+export async function cancelJob(
+  workspaceRoot,
+  jobId,
+  {
+    terminate = terminateProcessTree,
+    isWorkerAlive = isProcessAlive,
+    isExpectedWorker = isExpectedWorkerProcess,
+  } = {},
+) {
+  // Keep the public job active until a validated worker has been stopped. The envelope and ledger
+  // are a durable cancellation intent, so a crash before the signal can be retried safely instead
+  // of publishing "cancelled" while the worker still runs.
   let pidToKill = null;
+  let configForCleanup = null;
+  let cancellationEnvelope = null;
   let reason = null;
-  const finishedAt = new Date().toISOString();
-  const write = updateJobAtomically(workspaceRoot, jobId, (current) => {
+  const requestedAt = new Date().toISOString();
+  const intentWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
     if (!current) {
       reason = "not_found";
       return null;
@@ -293,34 +418,63 @@ export async function cancelJob(workspaceRoot, jobId, { terminate = terminatePro
       reason = "not_cancellable";
       return null;
     }
+    const resumingCancellation = storedEnvelope?.job?.status === "cancelled";
+    if (isTerminalEnvelope(storedEnvelope) && !resumingCancellation) {
+      reason = "not_cancellable";
+      return null;
+    }
+
     pidToKill = current.pid ?? null;
-    const nextJob = {
-      ...current,
-      status: "cancelled",
-      pid: null,
-      finishedAt,
+    configForCleanup = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
+    const intentJob = resumingCancellation
+      ? {
+        ...current,
+        ...storedEnvelope.job,
+        status: "cancelled",
+        pid: null,
+        finishedAt: storedEnvelope.job.finishedAt || requestedAt,
+        updatedAt: requestedAt,
+      }
+      : {
+        ...current,
+        status: "cancelled",
+        pid: null,
+        finishedAt: requestedAt,
+        updatedAt: requestedAt,
+      };
+    const cancellationResult = resumingCancellation
+      ? (storedEnvelope.result || { ok: false, error: "cancelled" })
+      : { ok: false, error: "cancelled" };
+    const terminal = prepareRecoveredTerminalEvents(workspaceRoot, intentJob, configForCleanup, {
+      result: cancellationResult,
+      reason: "cancelled",
+      terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null,
+    });
+    cancellationEnvelope = {
+      job: intentJob,
+      result: cancellationResult,
+      terminalReason: "cancelled",
+      terminalDescriptor: terminal.terminalDescriptor,
     };
     return {
-      job: nextJob,
-      envelope: {
-        job: nextJob,
-        result: {
-          ok: false,
-          error: "cancelled",
-        },
+      // Do not make the state terminal yet. It remains the recovery point if this process exits
+      // after persisting the intent but before the worker receives its signal.
+      job: current,
+      envelope: cancellationEnvelope,
+      beforeStateCommit() {
+        ensureRecoveredTerminalEvents(workspaceRoot, terminal);
       },
     };
   });
-  if (!write.written) {
+  if (!intentWrite.written) {
     return { cancelled: false, reason: reason || "not_cancellable", jobId };
   }
-  // Kill the worker FIRST, then clean up its runtime paths. cleanupRuntimePaths deletes
-  // config.execution.runtimeOptions.cleanupPaths, which for a review job IS the worker's live cwd
-  // (review.mjs sets cleanupPaths:[cwd]); deleting it before the kill lands would yank the working
-  // directory out from under a still-running process. If the kill fails the worker may still be
-  // alive, so skip the runtime-path deletion and only record the cancellation.
-  let killWarning = null;
-  if (pidToKill) {
+
+  const configFile = resolveJobConfigFile(workspaceRoot, jobId);
+  if (pidToKill && isWorkerAlive(pidToKill)) {
+    if (!isExpectedWorker(pidToKill, configFile)) {
+      return { cancelled: false, reason: "worker_identity_unverified", jobId };
+    }
     try {
       await terminate(pidToKill, {
         signal: "SIGINT",
@@ -328,13 +482,71 @@ export async function cancelJob(workspaceRoot, jobId, { terminate = terminatePro
         forceAfterMs: 2_000,
       });
     } catch (error) {
-      killWarning = error.message;
+      return { cancelled: false, reason: "kill_failed", jobId, killWarning: error.message };
+    }
+    if (isWorkerAlive(pidToKill)) {
+      const postSignalIdentity = isExpectedWorker(pidToKill, configFile);
+      if (postSignalIdentity === true) {
+        return { cancelled: false, reason: "worker_still_running", jobId };
+      }
+      if (postSignalIdentity == null) {
+        return { cancelled: false, reason: "worker_identity_unverified", jobId };
+      }
     }
   }
-  recoverLedgerTerminalEvents(workspaceRoot, write.job, {
-    result: write.envelope?.result || { ok: false, error: "cancelled" },
-    reason: "cancelled",
-    skipRuntimeCleanup: killWarning != null,
+
+  let finalConfig = configForCleanup;
+  const finalWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
+    if (!current) {
+      reason = "not_found";
+      return null;
+    }
+    if (current.status === "cancelled") return null;
+    if (!ACTIVE_STATUSES.has(current.status) || storedEnvelope?.job?.status !== "cancelled") {
+      reason = "cancellation_finalization_pending";
+      return null;
+    }
+    finalConfig = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId)) || finalConfig;
+    const finishedAt = new Date().toISOString();
+    const finalJob = {
+      ...current,
+      ...storedEnvelope.job,
+      status: "cancelled",
+      pid: null,
+      finishedAt: storedEnvelope.job.finishedAt || finishedAt,
+      updatedAt: finishedAt,
+    };
+    const result = storedEnvelope.result || cancellationEnvelope?.result || { ok: false, error: "cancelled" };
+    const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalJob, finalConfig, {
+      result,
+      reason: "cancelled",
+      terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null,
+    });
+    return {
+      job: finalJob,
+      envelope: {
+        ...storedEnvelope,
+        job: finalJob,
+        result,
+        terminalReason: "cancelled",
+        terminalDescriptor: terminal.terminalDescriptor,
+      },
+      beforeStateCommit() {
+        ensureRecoveredTerminalEvents(workspaceRoot, terminal);
+      },
+    };
   });
-  return killWarning ? { cancelled: true, jobId, killWarning } : { cancelled: true, jobId };
+  if (!finalWrite.written) {
+    const current = getJob(workspaceRoot, jobId);
+    if (current?.status === "cancelled") {
+      return { cancelled: true, jobId };
+    }
+    return { cancelled: false, reason: reason || "cancellation_finalization_pending", jobId };
+  }
+
+  // Runtime paths can contain the worker's live cwd, so only clean them after the verified stop
+  // and the terminal state commit. The config remains available for any retry before this point.
+  cleanupRuntimePaths(finalConfig);
+  removeJobConfigFile(workspaceRoot, jobId);
+  return { cancelled: true, jobId };
 }

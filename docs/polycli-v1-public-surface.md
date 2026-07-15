@@ -78,6 +78,7 @@ Stable semantics in v1:
 - `runtimePersistence` and `measurementScope` are part of the public contract.
 - Aggregation is capability-aware and must preserve state distinctions.
 - Aggregation also reports per-provider `runtimePersistenceCounts` and `measurementScopeCounts` so mixed request/session/daemon or request/turn/job data is visible instead of silently blended.
+- `aggregateTimingRecords()` additively returns `cohorts` keyed by `provider`, `kind`, `measurementScope`, `outcome`, and `runtimePersistence`. Cohort percentiles are the comparable result. The backward-compatible `byProvider` summary reports `cohortCount` and `mixedDimensions`; callers must not treat its pooled percentiles as comparable when `mixedDimensions` is non-empty.
 
 ### `@bbingz/polycli` (terminal CLI)
 
@@ -115,7 +116,7 @@ This keeps v1 small, testable, and publishable without pretending the provider m
 | `claude` | headless `claude -p` with `--permission-mode plan --tools "" --mcp-config '{"mcpServers":{}}' --strict-mcp-config` | plan/no tools/no MCP; returns synchronous model output and stream timings. Detached tmux TUI remains an explicit/internal runtime mode with `tmuxSession`/`attachCommand` and startup-only timing |
 | `gemini` | `--approval-mode plan --extensions "" --allowed-mcp-server-names __polycli_prompt_no_mcp__` | plan/no extensions/MCP |
 | `qwen` | `--approval-mode plan --max-session-turns 20` plus repeated `--exclude-tools ...` | bounded multi-turn/no tools; no forced one-turn cap |
-| `kimi` | none — `-p` one-shot rejects `--plan`/`--auto`/`--yolo` | non-interactive single-shot (kimi-code 0.19.1) |
+| `kimi` | none — prompt mode stays flag-minimal | non-interactive single-shot (local kimi-code 0.23.6 verified 2026-07-14) |
 | `cmd` | `--permission-mode plan` | plan |
 | `agy` | `--dangerously-skip-permissions` for ask/rescue; `/review` rejected | agentic session mode; no enforceable non-interactive plan mode |
 | `grok` | `-p ... --output-format json --always-approve` for ask; review adds `--permission-mode plan` and disables always-approve | structured one-shot; plan review |

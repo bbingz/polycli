@@ -1,15 +1,15 @@
 {
   "provider": "grok",
   "name": "stream-success",
-  "capturedAt": "2026-06-16T15:43:40Z",
-  "version": "grok 0.2.51 (f4f85a6492e) [stable]",
+  "capturedAt": "2026-07-14T23:26:19.971Z",
+  "version": "grok 0.2.101 (5bc4b5dfadcf) [stable]",
   "argv": [
     "-p",
     "Reply with exactly HELLO_GROK_FIXTURE and nothing else.",
     "--output-format",
     "streaming-json",
     "-m",
-    "grok-build",
+    "grok-4.5",
     "--permission-mode",
     "plan",
     "--disable-web-search",
@@ -18,6 +18,6 @@
   ],
   "expected": {
     "response": "HELLO_GROK_FIXTURE",
-    "sessionId": "019ed119-dbb5-7271-a16e-316a12838ec5"
+    "sessionId": "[REDACTED]"
   }
 }

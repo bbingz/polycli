@@ -6,8 +6,10 @@ import test from 'node:test';
 
 import {
   appendRunLedgerEvent,
+  appendRunLedgerEvents,
   buildRunExplanation,
   createRunLedgerEvent,
+  ensureRunLedgerTerminalPair,
   groupRunLedgerEvents,
   readRunLedgerEvents,
   redactArgv,
@@ -156,6 +158,236 @@ test('appendRunLedgerEvent writes the run ledger privately', async () => {
     });
 
     assert.equal(await fileMode(resolveRunLedgerFile(workspaceRoot)), 0o600);
+  });
+});
+
+test('appendRunLedgerEvents writes a terminal pair together with shared workspace metadata', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const events = await appendRunLedgerEvents(workspaceRoot, [
+      {
+        runId: 'run-terminal-batch',
+        command: 'rescue',
+        phase: 'attempt_result',
+        provider: 'qwen',
+        status: 'completed',
+        jobId: 'job-terminal-batch',
+        hostSurface: 'terminal',
+      },
+      {
+        runId: 'run-terminal-batch',
+        command: 'rescue',
+        phase: 'provider_decision',
+        provider: 'qwen',
+        status: 'adopted',
+        jobId: 'job-terminal-batch',
+        hostSurface: 'terminal',
+      },
+    ]);
+
+    assert.equal(events.length, 2);
+    assert.equal(events[0].workspaceSlug, events[1].workspaceSlug);
+    const persisted = await readRunLedgerEvents(workspaceRoot);
+    assert.deepEqual(persisted.map((event) => [event.phase, event.status]), [
+      ['attempt_result', 'completed'],
+      ['provider_decision', 'adopted'],
+    ]);
+  });
+});
+
+test('run-ledger compaction retains both sides of an older terminal pair', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const terminalPair = [
+      {
+        runId: 'run-retention-pair',
+        command: 'rescue',
+        phase: 'attempt_result',
+        provider: 'qwen',
+        status: 'completed',
+        jobId: 'job-retention-pair',
+        preview: 'a'.repeat(700_000),
+        hostSurface: 'terminal',
+      },
+      {
+        runId: 'run-retention-pair',
+        command: 'rescue',
+        phase: 'provider_decision',
+        provider: 'qwen',
+        status: 'adopted',
+        jobId: 'job-retention-pair',
+        preview: 'b'.repeat(700_000),
+        hostSurface: 'terminal',
+      },
+    ];
+    await appendRunLedgerEvents(workspaceRoot, terminalPair);
+
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-newer-event',
+      command: 'rescue',
+      phase: 'attempt_started',
+      provider: 'qwen',
+      status: 'started',
+      preview: 'c'.repeat(700_000),
+      hostSurface: 'terminal',
+    });
+
+    const retained = (await readRunLedgerEvents(workspaceRoot))
+      .filter((event) => event.runId === 'run-retention-pair' && event.jobId === 'job-retention-pair');
+    assert.deepEqual(retained.map((event) => event.phase), ['attempt_result', 'provider_decision']);
+  });
+});
+
+test('ensureRunLedgerTerminalPair safely completes a matching legacy partial pair', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-partial-pair',
+      command: 'rescue',
+      phase: 'attempt_result',
+      provider: 'qwen',
+      status: 'completed',
+      jobId: 'job-partial-pair',
+      hostSurface: 'terminal',
+    });
+
+    const repaired = ensureRunLedgerTerminalPair(workspaceRoot, [
+      {
+        runId: 'run-partial-pair',
+        command: 'rescue',
+        phase: 'attempt_result',
+        provider: 'qwen',
+        status: 'completed',
+        jobId: 'job-partial-pair',
+        hostSurface: 'terminal',
+      },
+      {
+        runId: 'run-partial-pair',
+        command: 'rescue',
+        phase: 'provider_decision',
+        provider: 'qwen',
+        status: 'adopted',
+        jobId: 'job-partial-pair',
+        hostSurface: 'terminal',
+      },
+    ]);
+    assert.equal(repaired.length, 2);
+    const persisted = await readRunLedgerEvents(workspaceRoot);
+    assert.deepEqual(persisted.map((event) => event.phase), ['attempt_result', 'provider_decision']);
+  });
+});
+
+test('ensureRunLedgerTerminalPair rejects a partial pair whose material attribution conflicts', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-conflicting-partial-pair',
+      command: 'rescue',
+      phase: 'attempt_result',
+      provider: 'qwen',
+      status: 'completed',
+      jobId: 'job-conflicting-partial-pair',
+      sessionId: 'session-a',
+      hostSurface: 'terminal',
+    });
+
+    assert.throws(
+      () => ensureRunLedgerTerminalPair(workspaceRoot, [
+        {
+          runId: 'run-conflicting-partial-pair',
+          command: 'rescue',
+          phase: 'attempt_result',
+          provider: 'qwen',
+          status: 'completed',
+          jobId: 'job-conflicting-partial-pair',
+          sessionId: 'session-b',
+          hostSurface: 'terminal',
+        },
+        {
+          runId: 'run-conflicting-partial-pair',
+          command: 'rescue',
+          phase: 'provider_decision',
+          provider: 'qwen',
+          status: 'adopted',
+          jobId: 'job-conflicting-partial-pair',
+          sessionId: 'session-b',
+          hostSurface: 'terminal',
+        },
+      ]),
+      /Incomplete or conflicting terminal ledger pair/,
+    );
+  });
+});
+
+test('ensureRunLedgerTerminalPair rejects a complete pair with conflicting provider identity', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const existing = [
+      {
+        runId: 'run-conflicting-pair',
+        command: 'rescue',
+        kind: 'rescue',
+        phase: 'attempt_result',
+        provider: 'wrong-provider',
+        status: 'completed',
+        jobId: 'job-conflicting-pair',
+        hostSurface: 'terminal',
+      },
+      {
+        runId: 'run-conflicting-pair',
+        command: 'rescue',
+        kind: 'rescue',
+        phase: 'provider_decision',
+        provider: 'wrong-provider',
+        status: 'adopted',
+        jobId: 'job-conflicting-pair',
+        hostSurface: 'terminal',
+      },
+    ];
+    await appendRunLedgerEvents(workspaceRoot, existing);
+
+    assert.throws(
+      () => ensureRunLedgerTerminalPair(workspaceRoot, existing.map((event) => ({ ...event, provider: 'qwen' }))),
+      /Incomplete or conflicting terminal ledger pair/,
+    );
+  });
+});
+
+test('ensureRunLedgerTerminalPair rejects a descriptor mismatch in session/model attribution', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const original = [
+      {
+        runId: 'run-descriptor-conflict',
+        command: 'rescue',
+        kind: 'rescue',
+        phase: 'attempt_result',
+        provider: 'qwen',
+        status: 'completed',
+        jobId: 'job-descriptor-conflict',
+        sessionId: 'session-a',
+        model: 'model-a',
+        attempt: { ordinal: 1 },
+        hostSurface: 'terminal',
+      },
+      {
+        runId: 'run-descriptor-conflict',
+        command: 'rescue',
+        kind: 'rescue',
+        phase: 'provider_decision',
+        provider: 'qwen',
+        status: 'adopted',
+        jobId: 'job-descriptor-conflict',
+        sessionId: 'session-a',
+        hostSurface: 'terminal',
+      },
+    ];
+    ensureRunLedgerTerminalPair(workspaceRoot, original);
+    const persisted = await readRunLedgerEvents(workspaceRoot);
+    assert.ok(persisted.every((event) => event.terminalDescriptor), 'new terminal pairs persist a descriptor');
+
+    assert.throws(
+      () => ensureRunLedgerTerminalPair(workspaceRoot, original.map((event) => ({
+        ...event,
+        sessionId: 'session-b',
+        model: event.phase === 'attempt_result' ? 'model-b' : null,
+      }))),
+      /Incomplete or conflicting terminal ledger pair/,
+    );
   });
 });
 

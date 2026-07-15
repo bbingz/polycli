@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-06-26 (v0.6.28 is the latest public release; it publishes the provider-state re-verification plus Copilot exact-resume and MiniMax finish-reason parser fixes on top of v0.6.27's review-residual cleanup, while keeping Claude ask/review on headless `claude -p` defaults).
+Snapshot: 2026-07-15 (v0.6.29 is the latest public release; it hardens background-job terminal durability, fixture capture freshness/lifecycle, current provider CLI contracts, and timing comparability while keeping Claude ask/review on headless `claude -p` defaults).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,9 +10,9 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.28** — see `docs/release-notes-v0.6.28.md`. It keeps default Claude ask/review on `claude -p` and is the latest in the post-v0.6.24 patch line (status-wait hardening -> re-verified remediation + cc-X recipes -> Grok nested-error fix -> review-residual cleanup -> provider-state re-verification).
-- 11 providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok). All 11 CLIs were re-verified against their live installs on 2026-06-26 (every adapter flag/auth/argv contract intact; no version gaps); see `docs/provider-paths.md`.
-- Everything through v0.6.28 (status-wait compatibility, the re-verified remediation, the cc-X endpoint recipes, the Grok nested-error fix, the validator/doc/disk-leak review residuals, and the 2026-06-26 provider-state re-verification with Copilot resume / MiniMax parser fixes) is published.
+- Latest public release: **v0.6.29** — see `docs/release-notes-v0.6.29.md`. It keeps default Claude ask/review on `claude -p` and extends the post-v0.6.24 patch line with durable background-job terminal handling, fixture lifecycle/freshness, and current provider contract updates.
+- 11 stable providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok); `opencode2` is a separately captured preview compatibility channel, not a replacement for stable `opencode`. See `docs/provider-paths.md`.
+- Everything through v0.6.29 (status-wait compatibility, the re-verified remediation, the cc-X endpoint recipes, the Grok nested-error fix, review residual cleanup, provider-state re-verification, and the current background/fixture/timing hardening) is published.
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
 
@@ -51,7 +51,7 @@ Current guardrails:
 - `scripts/tests/open-source-packaging.test.mjs` verifies public package export targets, license files, and explicit publish surfaces.
 - GitHub Actions runs Node 20 install, audit, tests, generated-bundle validation, fixture metadata validation, release manifest validation, host-map validation, Codex adapter validation, and tarball dry-runs for all public npm packages including the terminal CLI.
 - `npm run check:review-drift` watches provider review hard-constraint flags that can be checked from local CLI help.
-- `npm run check:fixture-freshness` warns when version-pinned fixtures lag locally installed provider CLIs; it is intentionally warn-only by default.
+- `npm run check:fixture-freshness` warns when version-pinned fixtures lag locally installed provider CLIs; `npm run release:check` invokes it with `--strict`, while valid `archived` / `retired` capture routes remain parser-replayed without blocking freshness.
 - `npm run check:provider-paths` is the automatable review-flag subset of the periodic provider-path review; keep it aligned with the manual checklist in `docs/provider-paths.md`.
 
 Watch items:

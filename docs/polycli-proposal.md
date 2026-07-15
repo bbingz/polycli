@@ -3,7 +3,7 @@
 **日期**: 2026-04-21
 **讨论主持**: Claude (Opus 4.7)
 **参与视角**: Codex / Gemini / Kimi / Qwen / MiniMax (5-way) + 2 轮红队 (Codex+MiniMax, Gemini+Kimi)
-**状态**: 待 Codex 独立判断后决定走 Path A 还是 Path B
+**状态**: 历史提案。Path B 已在 v0.6.0 起落地；当前架构边界以 [`docs/roadmap.md`](./roadmap.md) 和仓库 [`AGENTS.md`](../AGENTS.md) 为准。
 
 ---
 

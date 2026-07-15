@@ -1,47 +1,16 @@
-[32m✅ LLM retry mechanism enabled (max 3 retries)[0m
-[32m✅ Loaded Bash Output tool[0m
-[32m✅ Loaded Bash Kill tool[0m
-[96mLoading Claude Skills...[0m
-✅ Discovered 15 Claude Skills
-[32m✅ Loaded Skill tool (get_skill)[0m
-[96mLoading MCP tools...[0m
-[2m  MCP timeouts: connect=10.0s, execute=60.0s, sse_read=120.0s[0m
-Skipping disabled server: minimax_search
-Skipping disabled server: memory
-
-Total MCP tools loaded: 0
-[33m⚠️  No available MCP tools found[0m
-
-[32m✅ Loaded Bash tool (cwd: /repo)[0m
-[32m✅ Loaded file operation tools (workspace: /repo)[0m
-[32m✅ Loaded session note tool[0m
-[32m✅ Loaded system prompt (from: /home/user/.mini-agent/config/system_prompt.md)[0m
-[32m✅ Injected 15 skills metadata into system prompt[0m
-
-[94mAgent[0m [2m›[0m [2mExecuting task...[0m
-
-[2m📝 Log file: /home/user/.mini-agent/log/agent_run_20260422_204432.log[0m
-
-[2m╭──────────────────────────────────────────────────────────╮[0m
-[2m│[0m [1m[96m💭 Step 1/100[0m                                            [2m│[0m
-[2m╰──────────────────────────────────────────────────────────╯[0m
-
-[1m[35m🧠 Thinking:[0m
-[2mThe user is asking me to reply with exactly "HELLO_MINIMAX_FIXTURE" and nothing else. This is a very simple request - I just need to output that exact string.[0m
-
-[1m[94m🤖 Assistant:[0m
-HELLO_MINIMAX_FIXTURE
-
-[2m⏱️  Step 1 completed in 1.14s (total: 1.14s)[0m
-
-[1m[96mSession Statistics:[0m
-[2m────────────────────────────────────────[0m
-  Session Duration: 00:00:01
-  Total Messages: 3
-    - User Messages: [92m1[0m
-    - Assistant Replies: [94m1[0m
-    - Tool Calls: [93m0[0m
-  Available Tools: 8
-  API Tokens Used: [95m3,333[0m
-[2m────────────────────────────────────────[0m
-
+{
+  "type": "message",
+  "role": "assistant",
+  "model": "MiniMax-M2.7",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "[REDACTED]"
+    },
+    {
+      "type": "text",
+      "text": "\nHELLO_MINIMAX_FIXTURE"
+    }
+  ],
+  "stop_reason": "end_turn"
+}

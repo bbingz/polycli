@@ -1,19 +1,20 @@
 {
   "provider": "qwen",
   "name": "stream-success",
-  "capturedAt": "2026-04-22T12:44:18.282Z",
-  "version": "0.14.5",
+  "capturedAt": "2026-07-14T20:00:27.409Z",
+  "version": "0.19.6",
   "argv": [
+    "--safe-mode",
     "--output-format",
     "stream-json",
     "--approval-mode",
-    "auto-edit",
+    "plan",
     "--max-session-turns",
-    "20",
+    "1",
     "Reply with exactly HELLO_QWEN_FIXTURE and nothing else."
   ],
   "expected": {
     "response": "HELLO_QWEN_FIXTURE",
-    "sessionId": "a96e0eb5-fc5a-44b9-87e0-cf95b1ebdb20"
+    "sessionId": "00000000-0000-4000-8000-000000000301"
   }
 }

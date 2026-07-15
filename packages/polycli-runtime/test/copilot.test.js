@@ -143,12 +143,38 @@ process.stdout.write(JSON.stringify({ type: "result", sessionId: "cop-sync-1", e
         prompt: "ping",
         cwd: root,
         bin,
+        resumeSessionId: "cop-sync-1",
       });
 
       assert.equal(result.ok, true);
       assert.equal(result.response, "hello world");
       assert.equal(result.sessionId, "cop-sync-1");
+      assert.equal(result.resumeStatus, "resumed");
       assert.equal(result.model, "copilot-test");
+    }
+  );
+});
+
+test("runCopilotPrompt preserves a successful response when an exact resume creates another session", () => {
+  withFakeCopilotBin(
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({ type: "session_start", sessionId: "cop-requested-sync", model: "copilot-test" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "assistant.message", data: { messageId: "m-1", content: "fresh response", phase: "final_answer" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", sessionId: "cop-new-sync", exitCode: 0 }) + "\\n");
+`,
+    ({ root, bin }) => {
+      const result = runCopilotPrompt({
+        prompt: "ping",
+        cwd: root,
+        bin,
+        resumeSessionId: "cop-requested-sync",
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.response, "fresh response");
+      assert.equal(result.sessionId, "cop-new-sync");
+      assert.equal(result.resumeStatus, "not_resumed");
+      assert.equal(result.error, null);
     }
   );
 });
@@ -169,6 +195,7 @@ process.stdout.write(JSON.stringify({ type: "result", exitCode: 0 }) + "\\n");
 
       assert.equal(result.ok, true);
       assert.equal(result.sessionId, "123e4567-e89b-42d3-a456-426614174000");
+      assert.equal(result.resumeStatus, null);
     }
   );
 });
@@ -255,6 +282,61 @@ test("runCopilotPromptStreaming captures standalone error events as terminal fai
   assert.equal(result.ok, false);
   assert.equal(result.response, "partial");
   assert.equal(result.error, "permission denied");
+});
+
+test("runCopilotPromptStreaming preserves a successful response when an exact resume creates another session", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runCopilotPromptStreaming({
+    prompt: "ping",
+    resumeSessionId: "cop-requested-stream",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"session_start","sessionId":"cop-requested-stream"}\n');
+        child.stdout.emit("data", '{"type":"assistant.message","data":{"messageId":"m-1","content":"fresh stream response","phase":"final_answer"}}\n');
+        child.stdout.emit("data", '{"type":"result","sessionId":"cop-new-stream","exitCode":0}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.response, "fresh stream response");
+  assert.equal(result.sessionId, "cop-new-stream");
+  assert.equal(result.resumeStatus, "not_resumed");
+  assert.equal(result.error, null);
+});
+
+test("runCopilotPromptStreaming reports an unverified resume when no session id is returned", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+
+  const result = await runCopilotPromptStreaming({
+    prompt: "ping",
+    resumeSessionId: "cop-requested-stream",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"assistant.message","data":{"messageId":"m-1","content":"unverified response","phase":"final_answer"}}\n');
+        child.stdout.emit("data", '{"type":"result","exitCode":0}\n');
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.response, "unverified response");
+  assert.equal(result.sessionId, null);
+  assert.equal(result.resumeStatus, "unverified");
+  assert.equal(result.error, null);
 });
 
 test("parseCopilotStreamText replays a captured real cli fixture", () => {

@@ -27,11 +27,25 @@ function collectOpenCodeContentText(content) {
     .join("");
 }
 
+function getOpenCodeSessionErrorDataMessage(event) {
+  if (!event || typeof event !== "object") return null;
+  const error = event.type === "session.error" ? event.properties?.error : event.type === "error" ? event.error : null;
+  if (typeof error?.data?.message === "string" && error.data.message.trim()) {
+    return error.data.message;
+  }
+  return null;
+}
+
 function getOpenCodeResultError(event) {
   if (!event || typeof event !== "object") {
     return null;
   }
+  const sessionErrorMessage = getOpenCodeSessionErrorDataMessage(event);
+  if (event.type === "session.error") {
+    return sessionErrorMessage || "opencode returned an error";
+  }
   if (event.type === "error") {
+    if (sessionErrorMessage) return sessionErrorMessage;
     if (typeof event.error?.message === "string" && event.error.message.trim()) {
       return event.error.message;
     }
@@ -135,7 +149,7 @@ export function buildOpenCodeInvocation({
     cwd || process.cwd(),
   ];
 
-  if (skipPermissions) args.push("--dangerously-skip-permissions");
+  if (skipPermissions) args.push("--auto");
   if (model) args.push("--model", model);
   if (agent) args.push("--agent", agent);
   if (variant) args.push("--variant", variant);
@@ -193,7 +207,7 @@ export function parseOpenCodeStreamText(text) {
     if (!model && typeof event.model === "string") model = event.model;
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (!model && typeof event.part?.model === "string") model = event.part.model;
-    if (event.type === "result" || event.type === "error") {
+    if (event.type === "result" || event.type === "error" || event.type === "session.error") {
       resultEvent = event;
       if (!response.trim()) {
         response += extractOpenCodeText(event);
@@ -215,11 +229,12 @@ export function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel =
     priority: ["stdout", "stderr", "file"],
   });
   const resultError = getOpenCodeResultError(parsed.resultEvent);
+  const sessionErrorMessage = getOpenCodeSessionErrorDataMessage(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
 
-  const error = status === 0
+  const error = sessionErrorMessage || (status === 0
     ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
-    : (String(stderr ?? "").trim() || formatProviderExitError("opencode", status));
+    : (String(stderr ?? "").trim() || formatProviderExitError("opencode", status)));
   return {
     ok: status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
@@ -366,15 +381,16 @@ export function runOpenCodePromptStreaming({
       priority: ["stdout", "stderr", "file"],
     });
     const resultError = getOpenCodeResultError(parsed.resultEvent);
+    const sessionErrorMessage = getOpenCodeSessionErrorDataMessage(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
     let resolvedModel = parsed.model ?? model ?? defaultModel;
     const ok = result.ok && !resultError && hasVisibleText;
     if (ok && !resolvedModel) {
       resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? resolvedSession.sessionId, { cwd, env, bin });
     }
-    const error = result.ok
+    const error = sessionErrorMessage || (result.ok
       ? (resultError || (hasVisibleText ? null : "opencode produced no visible text"))
-      : result.error;
+      : result.error);
     return {
       ...result,
       ...parsed,

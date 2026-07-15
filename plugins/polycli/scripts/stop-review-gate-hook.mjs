@@ -7,6 +7,8 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
+import { PROVIDER_IDS, REVIEW_FLAG_EXPECTATIONS } from "@bbingz/polycli-runtime";
+
 import {
   getConfig,
   listJobs,
@@ -15,10 +17,16 @@ import {
 } from "./lib/state.mjs";
 
 const STOP_REVIEW_TIMEOUT_MS = 15 * 60 * 1000;
-const HEALTH_TIMEOUT_MS = 60_000;
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(SCRIPT_DIR, "..");
 const STOP_REVIEW_SENTINEL_PREFIX = "POLYCLI_STOP_REVIEW_";
+const SAFE_STOP_REVIEW_PROVIDERS = Object.freeze(
+  PROVIDER_IDS.filter((provider) => REVIEW_FLAG_EXPECTATIONS[provider]?.stopReviewGateSafety === "enforced"),
+);
+
+function isSafeStopReviewProvider(provider) {
+  return SAFE_STOP_REVIEW_PROVIDERS.includes(provider);
+}
 
 function readHookInput() {
   try {
@@ -120,9 +128,16 @@ export function runStopReview({
   input = {},
   timeoutMs = STOP_REVIEW_TIMEOUT_MS,
 } = {}) {
+  if (!isSafeStopReviewProvider(provider)) {
+    return {
+      ok: true,
+      skipped: true,
+      note: `The stop-time Polycli review skipped provider '${provider}' because it cannot enforce stop-review safety.`,
+    };
+  }
   const sentinelToken = createStopReviewSentinelToken();
   const prompt = buildStopReviewPrompt(input, { sentinelToken });
-  const result = spawnSync(process.execPath, [companionPath, "ask", "--provider", provider, "--json", prompt], {
+  const result = spawnSync(process.execPath, [companionPath, "_stop-review-gate", "--provider", provider, "--json", prompt], {
     cwd,
     encoding: "utf8",
     timeout: timeoutMs,
@@ -155,14 +170,6 @@ export function runStopReview({
   return { ok: false, error: "The stop-time Polycli review returned invalid output." };
 }
 
-function parseHealthPayload(stdout) {
-  try {
-    return parseJsonFromStdout(stdout);
-  } catch {
-    return null;
-  }
-}
-
 export function resolveReviewProvider({
   workspaceRoot,
   companionPath = resolveCompanionPath(),
@@ -170,25 +177,20 @@ export function resolveReviewProvider({
 } = {}) {
   const lastUsedProvider = readLastUsedProvider(workspaceRoot);
   if (lastUsedProvider) {
-    return { provider: lastUsedProvider, source: "last-used", reason: null };
-  }
-
-  const result = spawnSync(process.execPath, [companionPath, "health", "--json", "--timeout-ms", String(HEALTH_TIMEOUT_MS)], {
-    cwd,
-    encoding: "utf8",
-    timeout: HEALTH_TIMEOUT_MS + 5_000,
-    env: { ...process.env },
-  });
-  const payload = parseHealthPayload(result.stdout);
-  const provider = Array.isArray(payload?.healthyProviders) ? payload.healthyProviders[0] : null;
-  if (provider) {
-    return { provider, source: "health", reason: null };
+    if (isSafeStopReviewProvider(lastUsedProvider)) {
+      return { provider: lastUsedProvider, source: "last-used", reason: null };
+    }
+    return {
+      provider: null,
+      source: "none",
+      reason: `Last-used provider '${lastUsedProvider}' is not safe for the stop-review gate; skipping rather than falling back to another provider.`,
+    };
   }
 
   return {
     provider: null,
     source: "none",
-    reason: "No current provider could be resolved for the stop-review gate; no last-used provider is recorded and health found no healthy providers. Skipping so Claude Code can stop.",
+    reason: "No last-used provider is recorded for the stop-review gate; skipping rather than probing providers at stop time.",
   };
 }
 

@@ -14,5 +14,10 @@
   "expected": {
     "response": "HELLO_GEMINI_FIXTURE",
     "sessionId": "414f4fd6-c1ce-4363-9556-e4a89fbef5ee"
+  },
+  "lifecycle": {
+    "status": "retired",
+    "retiredAt": "2026-07-15T00:06:16.000Z",
+    "reason": "Gemini CLI Google sign-in for Gemini Code Assist individuals is no longer supported; this workspace's individual-auth capture route is retired. API Key and Vertex AI are separate, unverified capture paths."
   }
 }

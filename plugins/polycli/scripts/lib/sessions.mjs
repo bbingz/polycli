@@ -55,7 +55,7 @@ export function deriveSessionArtifactCandidate({ provider, sessionId, workspaceR
       };
     }
     case "kimi": {
-      // kimi-code v0.6.0 store (verified on disk): ~/.kimi-code/sessions/
+      // Kimi session-store layout used by this parser: ~/.kimi-code/sessions/
       // wd_<basename>_<sha256(realCwd)[:12]>/<sessionId>/ — a per-session DIR. sessionId is the
       // structured `session_<uuid>` captured from the stream-json resume_hint event, which is
       // also the exact dir name. Use the realpath of the cwd (the store keys by realpath).

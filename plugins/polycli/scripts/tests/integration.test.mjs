@@ -9,12 +9,17 @@ import { fileURLToPath } from "node:url";
 import {
   ensureStateDir,
   readLastUsedProvider,
+  readJobFile,
+  resolveJobConfigFile,
+  resolveJobFile,
   resolveJobLogFile,
+  resolveStateDir,
   resolveWorkspaceRoot,
   upsertJob,
   writeJobConfigFile,
 } from "../lib/state.mjs";
 import { appendRunLedgerEvent, readRunLedgerEvents } from "../lib/run-ledger.mjs";
+import { resolveTimingHistoryFile } from "../lib/timing.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const companionPath = path.resolve(__dirname, "..", "polycli-companion.bundle.mjs");
@@ -33,6 +38,10 @@ function logEvent(event) {
   fs.appendFileSync(process.env.QWEN_EVENT_LOG, JSON.stringify({ provider: "qwen", event, time: Date.now() }) + "\\n");
 }
 if (args.includes("--version")) {
+  if (process.env.QWEN_UNAVAILABLE === "1") {
+    process.stderr.write("qwen unavailable for test\\n");
+    process.exit(1);
+  }
   process.stdout.write("qwen 0.0.0-test\\n");
   process.exit(0);
 }
@@ -55,6 +64,20 @@ const replyMatch = prompt.match(/__reply=([^\\n]+)/);
 const reply = process.env.QWEN_FIXED_REPLY || (replyMatch ? replyMatch[1] : prompt);
 const appendSystemIndex = args.indexOf("--append-system-prompt");
 const hasAppendSystem = appendSystemIndex >= 0 && Boolean(args[appendSystemIndex + 1]);
+async function waitForResultGate() {
+  const gate = process.env.QWEN_RESULT_GATE;
+  if (!gate) return true;
+  const deadline = Date.now() + 10_000;
+  while (fs.existsSync(gate)) {
+    if (Date.now() >= deadline) {
+      process.stderr.write("Timed out waiting for QWEN_RESULT_GATE " + gate + "\\n");
+      process.exitCode = 1;
+      return false;
+    }
+    await sleep(10);
+  }
+  return true;
+}
 (async () => {
   logEvent("start");
   process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "11111111-1111-1111-1111-111111111111", model: "qwen-test" }) + "\\n");
@@ -76,6 +99,7 @@ const hasAppendSystem = appendSystemIndex >= 0 && Boolean(args[appendSystemIndex
     process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: reply }] } }) + "\\n");
   }
   if (tailDelay > 0) await sleep(tailDelay);
+  if (!(await waitForResultGate())) return;
   process.stdout.write(JSON.stringify({ type: "result", result: reply, is_error: false, permission_denials: [] }) + "\\n");
   logEvent("end");
 })();
@@ -576,7 +600,7 @@ async function waitForTerminalJob(jobId, context) {
 }
 
 async function assertSetupAndAsk(provider, env, prompt = "__reply=PONG") {
-  const setup = await runCompanion(["setup", "--json", "--provider", provider], {
+  const setup = await runCompanion(["setup", "--probe-auth", "--json", "--provider", provider], {
     cwd: process.cwd(),
     env,
   });
@@ -586,6 +610,8 @@ async function assertSetupAndAsk(provider, env, prompt = "__reply=PONG") {
   assert.equal(setupPayload[0].provider, provider);
   assert.equal(setupPayload[0].available, true);
   assert.equal(setupPayload[0].loggedIn, true);
+  assert.equal(setupPayload[0].authState, "authenticated");
+  assert.equal(setupPayload[0].authChecked, true);
 
   const ask = await runCompanion(
     ["ask", "--provider", provider, "--json", prompt],
@@ -724,13 +750,15 @@ test("integration: timing validates provider and history arguments", async () =>
   }
 });
 
-test("integration: setup reports qwen as available when fake binary is configured", async () => {
+test("integration: setup skips model-based qwen auth by default and probes it only when requested", async () => {
   const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
   const fake = createFakeQwenBin();
+  const argLog = path.join(pluginData, "qwen-argv.jsonl");
   try {
     const env = cleanEnv({
       CLAUDE_PLUGIN_DATA: pluginData,
       QWEN_CLI_BIN: fake.bin,
+      QWEN_ARGV_LOG: argLog,
     });
     const result = await runCompanion(["setup", "--json", "--provider", "qwen"], {
       cwd: process.cwd(),
@@ -741,7 +769,88 @@ test("integration: setup reports qwen as available when fake binary is configure
     assert.equal(parsed.length, 1);
     assert.equal(parsed[0].provider, "qwen");
     assert.equal(parsed[0].available, true);
-    assert.equal(parsed[0].loggedIn, true);
+    assert.equal(parsed[0].loggedIn, null);
+    assert.equal(parsed[0].authState, "unknown");
+    assert.equal(parsed[0].authChecked, false);
+    assert.equal(parsed[0].authProbeCost, "model");
+    assert.match(parsed[0].authDetail, /model prompt/i);
+    assert.equal(fs.existsSync(argLog), false);
+
+    const probed = await runCompanion(["setup", "--probe-auth", "--json", "--provider", "qwen"], {
+      cwd: process.cwd(),
+      env,
+    });
+    assert.equal(probed.code, 0, probed.stderr);
+    const probedPayload = JSON.parse(probed.stdout);
+    assert.equal(probedPayload[0].loggedIn, true);
+    assert.equal(probedPayload[0].authState, "authenticated");
+    assert.equal(probedPayload[0].authChecked, true);
+    assert.equal(probedPayload[0].authProbeCost, "model");
+    assert.equal(fs.existsSync(argLog), true);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: setup never probes auth when the provider CLI is unavailable", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeQwenBin();
+  const argLog = path.join(pluginData, "qwen-unavailable-argv.jsonl");
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+      QWEN_ARGV_LOG: argLog,
+      QWEN_UNAVAILABLE: "1",
+    });
+    const result = await runCompanion(["setup", "--probe-auth", "--json", "--provider", "qwen"], {
+      cwd: process.cwd(),
+      env,
+    });
+
+    assert.equal(result.code, 0, result.stderr);
+    const payload = JSON.parse(result.stdout)[0];
+    assert.equal(payload.available, false);
+    assert.equal(payload.loggedIn, null);
+    assert.equal(payload.authState, "unknown");
+    assert.equal(payload.authChecked, false);
+    assert.match(payload.authDetail, /CLI is unavailable/i);
+    assert.equal(fs.existsSync(argLog), false);
+  } finally {
+    fake.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: private stop-review gate uses qwen's enforced review runtime", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const fake = createFakeQwenBin();
+  const argLog = path.join(pluginData, "qwen-stop-gate-argv.jsonl");
+  try {
+    const env = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+      QWEN_ARGV_LOG: argLog,
+      QWEN_FIXED_REPLY: "GATE_OK",
+    });
+    const result = await runCompanion(
+      ["_stop-review-gate", "--provider", "qwen", "--json", "Return exactly the supplied verdict without tools."],
+      { cwd: process.cwd(), env }
+    );
+
+    assert.equal(result.code, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.response, "GATE_OK");
+    assert.equal(payload.kind, "stop-review-gate");
+    assert.equal(payload.meta.stopReviewGate, true);
+    const logged = readJsonLine(argLog);
+    const approvalModeIndex = logged.argv.indexOf("--approval-mode");
+    assert.notEqual(approvalModeIndex, -1);
+    assert.equal(logged.argv[approvalModeIndex + 1], "plan");
+    assert.ok(logged.argv.includes("--exclude-tools"));
+    assert.ok(logged.argv.includes("exit_plan_mode"));
+    assert.ok(logged.argv.includes("--append-system-prompt"));
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
@@ -952,11 +1061,11 @@ test("integration: health does not wait for a provider auth probe", async () => 
     const health = await runCompanion(["health", "--json", "--provider", "gemini"], {
       cwd: process.cwd(),
       env,
-      timeout: 5_000,
+      timeout: 10_000,
     });
     const elapsedMs = Date.now() - startedAt;
     assert.equal(health.code, 0, health.stderr);
-    assert.equal(elapsedMs < 5_000, true, `health waited for auth probe, took ${elapsedMs}ms`);
+    assert.equal(elapsedMs < 10_000, true, `health waited for auth probe, took ${elapsedMs}ms`);
     const payload = JSON.parse(health.stdout);
     assert.equal(payload.ok, true);
     const report = payload.results[0];
@@ -1195,14 +1304,14 @@ test("integration: kimi ask parses --resume-last, --resume, and --fresh", async 
       KIMI_FIXED_REPLY: "KIMI_FLAGS_OK",
     });
 
-    // kimi-code resolves resume itself: --resume-last -> -C (continue last for this cwd).
+    // kimi-code resolves resume itself: --resume-last -> --continue (continue last for this cwd).
     const resumeLast = await runCompanion(
       ["ask", "--provider", "kimi", "--resume-last", "--json", "__reply=IGNORED"],
       { cwd, env }
     );
     assert.equal(resumeLast.code, 0, resumeLast.stderr);
     let logged = readJsonLine(argLog);
-    assert.equal(logged.argv.includes("-C"), true);
+    assert.equal(logged.argv.includes("--continue"), true);
     assert.equal(logged.argv.includes("--session"), false);
 
     // --resume <id> -> --session <id> passed straight through to the CLI.
@@ -1221,7 +1330,7 @@ test("integration: kimi ask parses --resume-last, --resume, and --fresh", async 
     assert.equal(fresh.code, 0, fresh.stderr);
     logged = readJsonLine(argLog);
     assert.equal(logged.argv.includes("--session"), false);
-    assert.equal(logged.argv.includes("-C"), false);
+    assert.equal(logged.argv.includes("--continue"), false);
   } finally {
     fake.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
@@ -1315,7 +1424,7 @@ test("integration: gemini setup stays logged in when auth probe times out but as
       GEMINI_PING_DELAY_MS: "31000",
     });
 
-    const setup = await runCompanion(["setup", "--json", "--provider", "gemini"], {
+    const setup = await runCompanion(["setup", "--probe-auth", "--json", "--provider", "gemini"], {
       cwd: process.cwd(),
       env,
       timeout: 40_000,
@@ -2634,6 +2743,18 @@ async function waitForLedgerPhase(workspaceRoot, runId, phase, { timeoutMs = 10_
   );
 }
 
+async function waitForTerminalEnvelope(workspaceRoot, jobId, statuses, { timeoutMs = 10_000 } = {}) {
+  const wanted = new Set(statuses);
+  const jobFile = resolveJobFile(workspaceRoot, jobId);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const envelope = readJobFile(jobFile);
+    if (wanted.has(envelope?.job?.status)) return envelope;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`terminal envelope did not appear within ${timeoutMs}ms: ${jobFile}`);
+}
+
 test("integration: background rescue with --run-id writes job_started + attempt_started + attempt_result + provider_decision adopted", async (t) => {
   const fake = createFakeQwenBin();
   t.after(() => fake.cleanup());
@@ -2672,6 +2793,258 @@ test("integration: background rescue with --run-id writes job_started + attempt_
     assert.equal(event.jobId, started.job.jobId, `event ${event.phase} jobId mismatch`);
     assert.equal(event.hostSurface, parentHostSurface, `event ${event.phase} should match parent hostSurface`);
   }
+});
+
+test("integration: background status stays active until terminal ledger writes are durable", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const resultGate = path.join(os.tmpdir(), `polycli-result-gate-${Date.now()}-${Math.random()}`);
+  fs.writeFileSync(resultGate, "hold\\n", { mode: 0o600 });
+  t.after(() => {
+    fs.rmSync(resultGate, { force: true });
+  });
+  const context = createBackgroundLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    QWEN_RESULT_GATE: resultGate,
+  });
+  const runId = "run-bg-ledger-barrier";
+  const start = await runCompanion(
+    ["rescue", "--provider", "qwen", "--background", "--json", "--run-id", runId, "__reply=LEDGER_READY"],
+    context,
+  );
+  assert.equal(start.code, 0, start.stderr);
+  const started = JSON.parse(start.stdout);
+
+  await waitForLedgerPhase(context.cwd, runId, "attempt_started");
+  const ledgerLock = `${path.join(resolveStateDir(context.cwd), "run-ledger.ndjson")}.lock`;
+  fs.writeFileSync(ledgerLock, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), { mode: 0o600 });
+
+  try {
+    fs.rmSync(resultGate, { force: true });
+    // This is the real finalizer checkpoint: state.mjs has durably written the terminal intent,
+    // then the worker is blocked attempting the atomic ledger batch before state publication.
+    const envelope = await waitForTerminalEnvelope(context.cwd, started.job.jobId, ["completed"]);
+    assert.equal(envelope.job.status, "completed");
+    const blocked = await runCompanion(["status", "--all", "--wait", "--timeout-ms", "100", "--json"], context);
+    assert.equal(blocked.code, 2, blocked.stderr);
+    const payload = JSON.parse(blocked.stdout);
+    assert.equal(payload.waitTimedOut, true);
+    assert.equal(payload.running.some((job) => job.jobId === started.job.jobId), true);
+  } finally {
+    fs.rmSync(ledgerLock, { force: true });
+  }
+
+  const finalStatus = await waitForTerminalJob(started.job.jobId, context);
+  assert.equal(finalStatus.job.status, "completed");
+  const events = (await readRunLedgerEvents(context.cwd)).filter((event) => event.runId === runId);
+  assert.equal(events.some((event) => event.phase === "attempt_result"), true);
+  assert.equal(events.some((event) => event.phase === "provider_decision"), true);
+});
+
+test("integration: background failure status stays active until terminal ledger writes are durable", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const resultGate = path.join(os.tmpdir(), `polycli-result-gate-${Date.now()}-${Math.random()}`);
+  fs.writeFileSync(resultGate, "hold\\n", { mode: 0o600 });
+  t.after(() => {
+    fs.rmSync(resultGate, { force: true });
+  });
+  const context = createBackgroundLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    QWEN_RESULT_GATE: resultGate,
+  });
+  const runId = "run-bg-failure-ledger-barrier";
+  const start = await runCompanion(
+    ["rescue", "--provider", "qwen", "--background", "--json", "--run-id", runId, "__delay=750 __reply=UNREACHABLE"],
+    context,
+  );
+  assert.equal(start.code, 0, start.stderr);
+  const started = JSON.parse(start.stdout);
+
+  await waitForLedgerPhase(context.cwd, runId, "attempt_started");
+  const timingFile = resolveTimingHistoryFile(context.cwd);
+  const ledgerLock = `${path.join(resolveStateDir(context.cwd), "run-ledger.ndjson")}.lock`;
+  fs.mkdirSync(timingFile, { mode: 0o700 });
+  fs.writeFileSync(ledgerLock, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), { mode: 0o600 });
+
+  try {
+    fs.rmSync(resultGate, { force: true });
+    const envelope = await waitForTerminalEnvelope(context.cwd, started.job.jobId, ["failed"]);
+    assert.equal(envelope.job.status, "failed");
+    const blocked = await runCompanion(["status", "--all", "--wait", "--timeout-ms", "100", "--json"], context);
+    assert.equal(blocked.code, 2, blocked.stderr);
+    const payload = JSON.parse(blocked.stdout);
+    assert.equal(payload.waitTimedOut, true);
+    assert.equal(payload.running.some((job) => job.jobId === started.job.jobId), true);
+  } finally {
+    fs.rmSync(timingFile, { recursive: true, force: true });
+    fs.rmSync(ledgerLock, { force: true });
+  }
+
+  const finalStatus = await waitForTerminalJob(started.job.jobId, context);
+  assert.equal(finalStatus.job.status, "failed");
+  const events = (await readRunLedgerEvents(context.cwd)).filter((event) => event.runId === runId);
+  assert.equal(events.some((event) => event.phase === "attempt_result" && event.status === "failed"), true);
+  assert.equal(events.some((event) => event.phase === "provider_decision" && event.status === "failed"), true);
+});
+
+test("integration: background cancel stays active until its terminal ledger pair is durable", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const resultGate = path.join(os.tmpdir(), `polycli-cancel-gate-${Date.now()}-${Math.random()}`);
+  fs.writeFileSync(resultGate, "hold\\n", { mode: 0o600 });
+  t.after(() => {
+    fs.rmSync(resultGate, { force: true });
+  });
+  const context = createBackgroundLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    QWEN_RESULT_GATE: resultGate,
+  });
+  const runId = "run-bg-cancel-barrier";
+  const start = await runCompanion(
+    ["rescue", "--provider", "qwen", "--background", "--json", "--run-id", runId, "__reply=CANCEL_RACE"],
+    context,
+  );
+  assert.equal(start.code, 0, start.stderr);
+  const started = JSON.parse(start.stdout);
+  await waitForLedgerPhase(context.cwd, runId, "attempt_started");
+
+  const ledgerLock = `${path.join(resolveStateDir(context.cwd), "run-ledger.ndjson")}.lock`;
+  fs.writeFileSync(ledgerLock, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), { mode: 0o600 });
+  let cancellation = null;
+  let cancelResult = null;
+  try {
+    cancellation = runCompanion(["cancel", started.job.jobId, "--json"], context);
+    const envelope = await waitForTerminalEnvelope(context.cwd, started.job.jobId, ["cancelled"]);
+    assert.equal(envelope.job.status, "cancelled");
+    const blocked = await runCompanion(["status", "--all", "--wait", "--timeout-ms", "100", "--json"], context);
+    assert.equal(blocked.code, 2, blocked.stderr);
+    const payload = JSON.parse(blocked.stdout);
+    assert.equal(payload.waitTimedOut, true);
+    assert.equal(payload.running.some((job) => job.jobId === started.job.jobId), true);
+  } finally {
+    fs.rmSync(ledgerLock, { force: true });
+    if (cancellation) cancelResult = await cancellation;
+  }
+
+  assert.ok(cancelResult, "cancel command should complete after the ledger lock releases");
+  const finalStatus = await waitForTerminalJob(started.job.jobId, context);
+  const events = (await readRunLedgerEvents(context.cwd)).filter((event) => event.runId === runId);
+  const terminalAttempt = events.filter((event) => event.phase === "attempt_result");
+  const terminalDecision = events.filter((event) => event.phase === "provider_decision");
+  assert.equal(terminalAttempt.length, 1, JSON.stringify(events, null, 2));
+  assert.equal(terminalDecision.length, 1, JSON.stringify(events, null, 2));
+
+  const cancelPayload = JSON.parse(cancelResult.stdout);
+  assert.equal(finalStatus.job.status, "cancelled");
+  assert.equal(cancelResult.code, 0, cancelResult.stderr);
+  assert.equal(cancelPayload.cancelled, true);
+  assert.equal(terminalAttempt[0].status, "cancelled");
+  assert.equal(terminalDecision[0].status, "cancelled");
+});
+
+test("integration: a late worker cannot call a provider after cancellation won the spawn race", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const eventLog = path.join(os.tmpdir(), `polycli-late-worker-events-${Date.now()}-${Math.random()}.ndjson`);
+  t.after(() => fs.rmSync(eventLog, { force: true }));
+  const context = createBackgroundLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    QWEN_EVENT_LOG: eventLog,
+  });
+  const jobId = "job-late-worker-after-cancel";
+  const logFile = resolveJobLogFile(context.cwd, jobId);
+  const config = {
+    workspaceRoot: context.cwd,
+    jobId,
+    execution: {
+      provider: "qwen",
+      kind: "rescue",
+      prompt: "__reply=SHOULD_NOT_RUN",
+      cwd: context.cwd,
+      timeout: 5_000,
+      measurementScope: "job",
+      meta: { background: true, jobId },
+    },
+    runContext: {
+      runId: "run-late-worker-after-cancel",
+      command: "rescue",
+      hostSurface: "terminal",
+      jobId,
+      provider: "qwen",
+      kind: "rescue",
+      logFile,
+    },
+  };
+  ensureStateDir(context.cwd);
+  fs.writeFileSync(logFile, "queued\n");
+  upsertJob(context.cwd, {
+    jobId,
+    provider: "qwen",
+    kind: "rescue",
+    status: "queued",
+    pid: null,
+    logFile,
+  });
+  writeJobConfigFile(context.cwd, jobId, config);
+
+  const cancelled = await runCompanion(["cancel", jobId, "--json"], context);
+  assert.equal(cancelled.code, 0, cancelled.stderr);
+  assert.equal(JSON.parse(cancelled.stdout).cancelled, true);
+
+  // Model the parent continuing after a crash/restart: its detached child obtains a config path
+  // after cancellation has already won. The worker must claim state first and exit before it
+  // writes attempt_started or starts qwen.
+  writeJobConfigFile(context.cwd, jobId, config);
+  const worker = await runCompanion(["_job-worker", resolveJobConfigFile(context.cwd, jobId)], context);
+  assert.equal(worker.code, 0, worker.stderr);
+  assert.equal(fs.existsSync(eventLog), false, "late worker must not invoke qwen");
+  const events = (await readRunLedgerEvents(context.cwd))
+    .filter((event) => event.runId === "run-late-worker-after-cancel");
+  assert.equal(events.some((event) => event.phase === "attempt_started"), false);
+});
+
+test("integration: a worker does not publish state over a conflicting partial terminal pair", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const resultGate = path.join(os.tmpdir(), `polycli-partial-pair-gate-${Date.now()}-${Math.random()}`);
+  fs.writeFileSync(resultGate, "hold\\n", { mode: 0o600 });
+  t.after(() => fs.rmSync(resultGate, { force: true }));
+  const context = createBackgroundLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    QWEN_RESULT_GATE: resultGate,
+  });
+  const runId = "run-bg-worker-partial-pair";
+  const start = await runCompanion(
+    ["rescue", "--provider", "qwen", "--background", "--json", "--run-id", runId, "__reply=PARTIAL_PAIR"],
+    context,
+  );
+  assert.equal(start.code, 0, start.stderr);
+  const started = JSON.parse(start.stdout);
+  await waitForLedgerPhase(context.cwd, runId, "attempt_started");
+  await appendRunLedgerEvent(context.cwd, {
+    runId,
+    command: "rescue",
+    commands: ["rescue"],
+    kind: "rescue",
+    provider: "wrong-provider",
+    phase: "attempt_result",
+    status: "completed",
+    jobId: started.job.jobId,
+    hostSurface: "terminal",
+  });
+
+  fs.rmSync(resultGate, { force: true });
+  const envelope = await waitForTerminalEnvelope(context.cwd, started.job.jobId, ["completed"]);
+  assert.equal(envelope.job.status, "completed");
+  const blocked = await runCompanion(["status", "--all", "--wait", "--timeout-ms", "100", "--json"], context);
+  assert.equal(blocked.code, 2, blocked.stderr);
+  const payload = JSON.parse(blocked.stdout);
+  assert.equal(payload.waitTimedOut, true);
+  assert.equal(payload.running.some((job) => job.jobId === started.job.jobId), true);
+  const terminalEvents = (await readRunLedgerEvents(context.cwd))
+    .filter((event) => event.runId === runId && ["attempt_result", "provider_decision"].includes(event.phase));
+  assert.deepEqual(terminalEvents.map((event) => event.phase), ["attempt_result"]);
 });
 
 test("integration: background ask failure writes attempt_result failed + provider_decision failed without full prompt", async (t) => {

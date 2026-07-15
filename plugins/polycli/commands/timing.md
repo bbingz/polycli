@@ -15,5 +15,5 @@ Present the companion stdout directly.
 
 Rules:
 - Preserve JSON or tabular timing output exactly as emitted.
-- Do not paraphrase aggregate percentiles.
+- Percentiles in the text output are comparable only within the displayed cohort: provider, kind, measurement scope, outcome, and runtime persistence. Do not combine or paraphrase them across cohorts.
 - Do not auto-run follow-up commands.

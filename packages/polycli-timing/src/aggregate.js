@@ -6,6 +6,14 @@ import {
 import { calculatePercentiles } from "./percentile.js";
 import { validateTimingRecord } from "./validate.js";
 
+const COHORT_DIMENSIONS = Object.freeze([
+  "provider",
+  "kind",
+  "measurementScope",
+  "outcome",
+  "runtimePersistence",
+]);
+
 function createMetricSummary() {
   return {
     contributingCount: 0,
@@ -24,13 +32,66 @@ function createMetricSummary() {
   };
 }
 
+function createMetricsSummary() {
+  return Object.fromEntries(TIMING_METRIC_NAMES.map((name) => [name, createMetricSummary()]));
+}
+
 function createProviderSummary() {
   return {
     recordCount: 0,
     runtimePersistenceCounts: Object.fromEntries(TIMING_RUNTIME_PERSISTENCE.map((name) => [name, 0])),
     measurementScopeCounts: Object.fromEntries(TIMING_MEASUREMENT_SCOPES.map((name) => [name, 0])),
-    metrics: Object.fromEntries(TIMING_METRIC_NAMES.map((name) => [name, createMetricSummary()])),
+    cohortCount: 0,
+    mixedDimensions: [],
+    metrics: createMetricsSummary(),
   };
+}
+
+function getCohortDimensions(record) {
+  return {
+    provider: record.provider,
+    kind: record.kind ?? null,
+    measurementScope: record.measurementScope,
+    outcome: record.outcome ?? null,
+    runtimePersistence: record.runtimePersistence,
+  };
+}
+
+function getCohortKey(dimensions) {
+  return JSON.stringify(COHORT_DIMENSIONS.map((name) => dimensions[name]));
+}
+
+function createCohort(dimensions) {
+  return {
+    provider: dimensions.provider,
+    kind: dimensions.kind,
+    measurementScope: dimensions.measurementScope,
+    outcome: dimensions.outcome,
+    runtimePersistence: dimensions.runtimePersistence,
+    recordCount: 0,
+    metrics: createMetricsSummary(),
+  };
+}
+
+function addMetric(metricSummary, metric) {
+  if (metric.status === "measured") {
+    metricSummary.measuredCount += 1;
+    metricSummary.contributingCount += 1;
+    metricSummary.measuredValues.push(metric.ms);
+  } else if (metric.status === "zero") {
+    metricSummary.zeroCount += 1;
+    metricSummary.contributingCount += 1;
+  } else if (metric.status === "missing") {
+    metricSummary.missingCount += 1;
+  } else if (metric.status === "unsupported") {
+    metricSummary.unsupportedCount += 1;
+  }
+}
+
+function addRecordMetrics(summary, record) {
+  for (const metricName of TIMING_METRIC_NAMES) {
+    addMetric(summary.metrics[metricName], record.metrics[metricName]);
+  }
 }
 
 function finalizeMetric(summary) {
@@ -59,12 +120,30 @@ function finalizeMetric(summary) {
   return summary;
 }
 
+function finalizeMetrics(summary) {
+  for (const metricName of TIMING_METRIC_NAMES) {
+    summary.metrics[metricName] = finalizeMetric(summary.metrics[metricName]);
+  }
+}
+
+function finalizeProviderCohorts(providerSummary, cohorts) {
+  providerSummary.cohortCount = cohorts.length;
+  providerSummary.mixedDimensions = COHORT_DIMENSIONS.filter(
+    (dimension) =>
+      dimension !== "provider" && new Set(cohorts.map((cohort) => cohort[dimension])).size > 1
+  );
+}
+
 export function aggregateTimingRecords(records) {
   const summary = {
     recordCount: 0,
     invalidRecords: [],
     byProvider: {},
+    cohortDimensions: [...COHORT_DIMENSIONS],
+    cohorts: [],
   };
+  const cohortsByKey = new Map();
+  const cohortsByProvider = new Map();
 
   for (const record of records) {
     const validation = validateTimingRecord(record);
@@ -81,29 +160,29 @@ export function aggregateTimingRecords(records) {
     providerSummary.measurementScopeCounts[record.measurementScope] += 1;
     summary.byProvider[provider] = providerSummary;
 
-    for (const metricName of TIMING_METRIC_NAMES) {
-      const metric = record.metrics[metricName];
-      const metricSummary = providerSummary.metrics[metricName];
-
-      if (metric.status === "measured") {
-        metricSummary.measuredCount += 1;
-        metricSummary.contributingCount += 1;
-        metricSummary.measuredValues.push(metric.ms);
-      } else if (metric.status === "zero") {
-        metricSummary.zeroCount += 1;
-        metricSummary.contributingCount += 1;
-      } else if (metric.status === "missing") {
-        metricSummary.missingCount += 1;
-      } else if (metric.status === "unsupported") {
-        metricSummary.unsupportedCount += 1;
-      }
+    const cohortDimensions = getCohortDimensions(record);
+    const cohortKey = getCohortKey(cohortDimensions);
+    let cohort = cohortsByKey.get(cohortKey);
+    if (!cohort) {
+      cohort = createCohort(cohortDimensions);
+      cohortsByKey.set(cohortKey, cohort);
+      summary.cohorts.push(cohort);
+      const providerCohorts = cohortsByProvider.get(provider) ?? [];
+      providerCohorts.push(cohort);
+      cohortsByProvider.set(provider, providerCohorts);
     }
+    cohort.recordCount += 1;
+
+    addRecordMetrics(providerSummary, record);
+    addRecordMetrics(cohort, record);
   }
 
-  for (const providerSummary of Object.values(summary.byProvider)) {
-    for (const metricName of TIMING_METRIC_NAMES) {
-      providerSummary.metrics[metricName] = finalizeMetric(providerSummary.metrics[metricName]);
-    }
+  for (const [provider, providerSummary] of Object.entries(summary.byProvider)) {
+    finalizeMetrics(providerSummary);
+    finalizeProviderCohorts(providerSummary, cohortsByProvider.get(provider) ?? []);
+  }
+  for (const cohort of summary.cohorts) {
+    finalizeMetrics(cohort);
   }
 
   return summary;

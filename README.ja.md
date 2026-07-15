@@ -27,9 +27,9 @@
 
 これは **ユーティリティ専用の Path B モノレポ** です。プロバイダ間の差異を偽の抽象化で覆い隠したり、ランタイム基底クラスを発明したりはしません。公式の上流 CLI をサブプロセスとして組み合わせ、単一のコマンド面を公開し、4 状態の timing スキーマで能力の違いを正直に表現します。
 
-## 最新リリース: v0.6.28
+## 最新リリース: v0.6.29
 
-v0.6.27 の上に、2026-06-26 の provider-state 再検証を公開します。11 種類の provider CLI についてローカルインストール・上流バージョン・adapter の flag/auth/argv 契約を確認し、バージョン差分や破壊的な CLI ドリフトは見つかりませんでした。Copilot の exact session resume は無効な空白区切りの `--resume <id>` ではなく `--session-id <id>` を使うようになり、MiniMax の JSON パーサは Anthropic-style の `stop_reason` を `finishReason` として保持します。Kimi のバージョン表記と provider-state ドキュメントも `kimi-code 0.19.1` に同期しました。Claude `ask` / `review` は引き続き headless `claude -p` 既定経路です。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.28.md`](./docs/release-notes-v0.6.28.md)。
+このパッチは Path B の境界を変えずに、現在の provider と host の表面を強化します。バックグラウンド job の cancellation・result envelope・timing・対になった run-ledger 記録は worker 異常や cancellation race でも回復可能です。fixture capture lifecycle は active、Gemini 個人ログイン経路の `retired`、parser replay 用に保持する Copilot の一時 `archived` を明示します。OpenCode は現在の `--auto` 実行面と `session.error` を扱い、OpenCode2 preview は fixture 互換チャネルとして覆います（安定 runtime は引き続き `opencode`）。`@bbingz/polycli-utils` は atomic NDJSON batch、`@bbingz/polycli-timing` は互換性のある cohort ごとの集計を提供します。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.29.md`](./docs/release-notes-v0.6.29.md)。
 
 ## なぜ polycli を使うのか？
 
@@ -116,7 +116,7 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 
 | コマンド | 動作 |
 |---|---|
-| `setup` | プロバイダ CLI のインストール状態と認証状態を確認 (モデル呼び出しなし、軽量) |
+| `setup` | プロバイダ CLI のインストール状態と status 型の認証を確認。モデルを使う認証プローブは明示的な `--probe-auth` が必要 |
 | `health` | Claude 以外は短いプロンプトでエンドツーエンド検査。Claude は auth-only status を使う。`healthyProviders` を返し、適用できる場合は timing を記録 |
 | `ask` | 一発のプロンプト |
 | `review` | 現在の `git diff` に対するコードレビュー |
@@ -173,6 +173,7 @@ polycli の timing 契約が統一するのは**状態の表現**であって、
 - `runtimePersistence` — `ephemeral | session | daemon`
 - `measurementScope` — `request | turn | job`
 - outcome diagnostics — `outcome`, `exitCode`, `terminationReason`, `responseMatched`, and `errorCode`
+- `kind` と optional outcome diagnostics は集計 cohort にも含まれます。パーセンタイルを比較できるのは `provider + kind + measurementScope + outcome + runtimePersistence` が一致する cohort 内だけです。互換性のため残る `byProvider` JSON summary は `cohortCount` と `mixedDimensions` を返します。mixed dimensions がある場合、その pooled percentile を比較結果として扱わないでください。
 
 ## パッケージ
 

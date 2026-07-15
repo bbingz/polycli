@@ -29,16 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.28
+## Latest release: v0.6.29
 
-The latest patch publishes the 2026-06-26 provider-state re-verification on top of v0.6.27:
+The latest patch hardens the current provider and host surface without changing the Path B boundary:
 
-- Re-checked all 11 provider CLIs against live installs and upstream version sources; no version gaps or breaking flag/auth/argv drift were found.
-- Copilot exact session resume now emits `--session-id <id>` instead of the invalid space-separated `--resume <id>` form.
-- MiniMax JSON parsing now preserves Anthropic-style `stop_reason` as `finishReason` when `mmx` returns Messages-shaped content blocks.
-- Kimi version labels and provider-state docs were refreshed for `kimi-code 0.19.1`. Claude `ask` and `review` still use headless `claude -p` by default with plan/no-tools/no-MCP constraints; utility packages stay on their independent v1.x cadence.
+- Background jobs now keep cancellation, result envelopes, timing, and paired run-ledger records recoverable under worker exits and cancellation races.
+- Fixture capture lifecycle is explicit: active fixtures are freshness-checked, the Gemini individual sign-in route is retained as `retired`, and the temporarily unavailable Copilot subscription route is retained as `archived` for parser replay.
+- OpenCode uses its current `--auto` execution surface and preserves `session.error` messages; `opencode2` is covered as a preview fixture compatibility channel while stable `opencode` remains the runtime route.
+- `@bbingz/polycli-utils` gains atomic NDJSON batch publication, while `@bbingz/polycli-timing` emits comparable cohorts instead of pooling incompatible timings.
 
-See [`docs/release-notes-v0.6.28.md`](./docs/release-notes-v0.6.28.md).
+See [`docs/release-notes-v0.6.29.md`](./docs/release-notes-v0.6.29.md).
 
 ## Why polycli?
 
@@ -172,7 +172,7 @@ All commands work identically across hosts:
 
 | Command | What it does |
 |---|---|
-| `setup` | Check provider CLI install + auth status (cheap; no model call) |
+| `setup` | Check provider CLI install + status-only auth; model-based auth probes require explicit `--probe-auth` |
 | `health` | End-to-end short-prompt probe for providers except Claude; Claude uses auth-only status; returns `healthyProviders` and writes timing where applicable |
 | `ask` | One-shot prompt |
 | `review` | Code review against the current `git diff` |
@@ -229,6 +229,7 @@ Each timing record also carries:
 - `runtimePersistence` — `ephemeral | session | daemon`
 - `measurementScope` — `request | turn | job`
 - outcome diagnostics — `outcome`, `exitCode`, `terminationReason`, `responseMatched`, and `errorCode`
+- `kind` and optional outcome diagnostics participate in aggregation, so percentiles are emitted only for a matching `provider + kind + measurementScope + outcome + runtimePersistence` cohort. The compatibility `byProvider` JSON summary includes `cohortCount` and `mixedDimensions`; do not compare its pooled percentiles when it reports mixed dimensions.
 
 ## Packages
 

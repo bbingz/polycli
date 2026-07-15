@@ -1,1 +1,2 @@
-{"role":"assistant","content":[{"type":"think","think":"The user wants me to reply with exactly \"HELLO_KIMI_FIXTURE\" and nothing else. This is a simple request that doesn't require any tools.","encrypted":null},{"type":"text","text":"HELLO_KIMI_FIXTURE"}]}
+{"role":"assistant","content":"HELLO_KIMI_FIXTURE"}
+{"role":"meta","type":"session.resume_hint","session_id":"session_00000000-0000-4000-8000-000000000201"}

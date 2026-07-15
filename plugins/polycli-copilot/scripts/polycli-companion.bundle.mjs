@@ -1656,10 +1656,11 @@ function parseCopilotStreamText(text) {
       continue;
     }
     events.push(event);
-    if (!sessionId && typeof event.sessionId === "string") sessionId = event.sessionId;
-    if (!sessionId && typeof event.session_id === "string") sessionId = event.session_id;
-    if (!sessionId && typeof event.session?.id === "string") sessionId = event.session.id;
-    if (!sessionId && typeof event.data?.sessionId === "string") sessionId = event.data.sessionId;
+    const eventSessionId = typeof event.sessionId === "string" ? event.sessionId : typeof event.session_id === "string" ? event.session_id : typeof event.session?.id === "string" ? event.session.id : event.data?.sessionId;
+    const isTerminalEvent = event.type === "result" || event.type === "final" || event.type === "error";
+    if (typeof eventSessionId === "string" && (!sessionId || isTerminalEvent)) {
+      sessionId = eventSessionId;
+    }
     if (!model && typeof event.model === "string") model = event.model;
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (!model && typeof event.data?.model === "string") model = event.data.model;
@@ -1672,7 +1673,7 @@ ${event.data.content}`;
       }
       continue;
     }
-    if (event.type === "result" || event.type === "final" || event.type === "error") {
+    if (isTerminalEvent) {
       resultEvent = event;
       if (!response.trim()) {
         response += extractCopilotText(event);
@@ -1682,6 +1683,11 @@ ${event.data.content}`;
     response += extractCopilotText(event);
   }
   return { events, response, sessionId, model, resultEvent };
+}
+function getCopilotResumeStatus(resumeSessionId, sessionId) {
+  if (!resumeSessionId) return null;
+  if (typeof sessionId !== "string" || sessionId.length === 0) return "unverified";
+  return sessionId === resumeSessionId ? "resumed" : "not_resumed";
 }
 function getCopilotAvailability(cwd) {
   return binaryAvailable(COPILOT_BIN, ["--version"], { cwd });
@@ -1740,6 +1746,7 @@ function runCopilotPrompt({
   if (result.error) {
     return {
       ok: false,
+      resumeStatus: getCopilotResumeStatus(resumeSessionId, null),
       error: result.error.code === "ETIMEDOUT" ? `copilot timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
     };
   }
@@ -1751,11 +1758,13 @@ function runCopilotPrompt({
   });
   const resultError = getCopilotResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
+  const sessionId = parsed.sessionId ?? resolvedSession.sessionId;
   return {
     ok: result.status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+    sessionId,
+    resumeStatus: getCopilotResumeStatus(resumeSessionId, sessionId),
     model: parsed.model,
     error: result.status === 0 ? resultError || (hasVisibleText ? null : "copilot produced no visible text") : result.stderr.trim() || formatProviderExitError("copilot", result.status),
     status: result.status
@@ -1816,10 +1825,12 @@ function runCopilotPromptStreaming({
     });
     const resultError = getCopilotResultError(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
+    const sessionId = parsed.sessionId ?? resolvedSession.sessionId;
     return {
       ...result,
       ...parsed,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      sessionId,
+      resumeStatus: getCopilotResumeStatus(resumeSessionId, sessionId),
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok ? resultError || (hasVisibleText ? null : "copilot produced no visible text") : result.error
     };
@@ -2134,7 +2145,7 @@ function buildKimiInvocation({
   const args = ["-p", String(prompt ?? ""), "--output-format", "stream-json"];
   if (model) args.push("-m", model);
   if (resumeLast) {
-    args.push("-C");
+    args.push("--continue");
   } else if (resumeSessionId) {
     args.push("--session", resumeSessionId);
   }
@@ -2903,11 +2914,24 @@ function collectOpenCodeContentText(content) {
   }
   return content.filter((block) => block && block.type === "text" && typeof block.text === "string").map((block) => block.text).join("");
 }
+function getOpenCodeSessionErrorDataMessage(event) {
+  if (!event || typeof event !== "object") return null;
+  const error = event.type === "session.error" ? event.properties?.error : event.type === "error" ? event.error : null;
+  if (typeof error?.data?.message === "string" && error.data.message.trim()) {
+    return error.data.message;
+  }
+  return null;
+}
 function getOpenCodeResultError(event) {
   if (!event || typeof event !== "object") {
     return null;
   }
+  const sessionErrorMessage = getOpenCodeSessionErrorDataMessage(event);
+  if (event.type === "session.error") {
+    return sessionErrorMessage || "opencode returned an error";
+  }
   if (event.type === "error") {
+    if (sessionErrorMessage) return sessionErrorMessage;
     if (typeof event.error?.message === "string" && event.error.message.trim()) {
       return event.error.message;
     }
@@ -3001,7 +3025,7 @@ function buildOpenCodeInvocation({
     "--dir",
     cwd || process.cwd()
   ];
-  if (skipPermissions) args.push("--dangerously-skip-permissions");
+  if (skipPermissions) args.push("--auto");
   if (model) args.push("--model", model);
   if (agent) args.push("--agent", agent);
   if (variant) args.push("--variant", variant);
@@ -3050,7 +3074,7 @@ function parseOpenCodeStreamText(text) {
     if (!model && typeof event.model === "string") model = event.model;
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (!model && typeof event.part?.model === "string") model = event.part.model;
-    if (event.type === "result" || event.type === "error") {
+    if (event.type === "result" || event.type === "error" || event.type === "session.error") {
       resultEvent = event;
       if (!response.trim()) {
         response += extractOpenCodeText(event);
@@ -3069,8 +3093,9 @@ function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel = null }
     priority: ["stdout", "stderr", "file"]
   });
   const resultError = getOpenCodeResultError(parsed.resultEvent);
+  const sessionErrorMessage = getOpenCodeSessionErrorDataMessage(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
-  const error = status === 0 ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : String(stderr ?? "").trim() || formatProviderExitError("opencode", status);
+  const error = sessionErrorMessage || (status === 0 ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : String(stderr ?? "").trim() || formatProviderExitError("opencode", status));
   return {
     ok: status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
@@ -3208,13 +3233,14 @@ function runOpenCodePromptStreaming({
       priority: ["stdout", "stderr", "file"]
     });
     const resultError = getOpenCodeResultError(parsed.resultEvent);
+    const sessionErrorMessage = getOpenCodeSessionErrorDataMessage(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
     let resolvedModel = parsed.model ?? model ?? defaultModel;
     const ok = result.ok && !resultError && hasVisibleText;
     if (ok && !resolvedModel) {
       resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? resolvedSession.sessionId, { cwd, env, bin });
     }
-    const error = result.ok ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : result.error;
+    const error = sessionErrorMessage || (result.ok ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : result.error);
     return {
       ...result,
       ...parsed,
@@ -3872,7 +3898,7 @@ function runAgyPromptStreaming({
 var GROK_BIN = process.env.GROK_CLI_BIN || "grok";
 var DEFAULT_TIMEOUT_MS11 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS11 = 3e4;
-var DEFAULT_GROK_MODEL = "grok-build";
+var DEFAULT_GROK_MODEL = "grok-4.5";
 var GROK_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|not logged in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var SUCCESS_STOP_REASONS = /* @__PURE__ */ new Set(["endturn", "end_turn", "stop", "stop_sequence", "complete", "completed", "done", "finished", "maxtokens", "max_tokens", "length"]);
 var TRANSIENT_PROBE_ERROR_PATTERNS11 = [
@@ -4150,8 +4176,53 @@ function calculatePercentiles(values, percentiles = [50, 95, 99]) {
 }
 
 // packages/polycli-timing/src/validate.js
+var TIMING_OUTCOMES = ["success", "failure", "timeout", "terminated", "cancelled"];
+var RFC3339_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-](\d{2}):(\d{2}))$/;
 function isIsoDate(value) {
-  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+  if (typeof value !== "string") return false;
+  const match = value.match(RFC3339_DATE_TIME);
+  if (!match) return false;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, offsetHourText, offsetMinuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offsetHour = offsetHourText === void 0 ? null : Number(offsetHourText);
+  const offsetMinute = offsetMinuteText === void 0 ? null : Number(offsetMinuteText);
+  const daysInMonth = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1] && hour <= 23 && minute <= 59 && second <= 60 && (offsetHour === null || offsetHour <= 23 && offsetMinute <= 59);
+}
+function isLeapYear(year) {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+function hasOwn(record, field) {
+  return Object.prototype.hasOwnProperty.call(record, field);
+}
+function validateOptionalString(record, field, errors, { nonEmpty = false } = {}) {
+  if (!hasOwn(record, field)) return;
+  if (typeof record[field] !== "string" || nonEmpty && record[field].length === 0) {
+    errors.push(`${field} must be ${nonEmpty ? "a non-empty string" : "a string"}`);
+  }
+}
+function validateDeclaredOptionalFields(record, errors) {
+  validateOptionalString(record, "providerVersion", errors);
+  validateOptionalString(record, "kind", errors);
+  validateOptionalString(record, "terminationReason", errors, { nonEmpty: true });
+  validateOptionalString(record, "errorCode", errors, { nonEmpty: true });
+  if (hasOwn(record, "outcome") && !TIMING_OUTCOMES.includes(record.outcome)) {
+    errors.push(`outcome must be one of ${TIMING_OUTCOMES.join(", ")}`);
+  }
+  if (hasOwn(record, "exitCode") && !Number.isInteger(record.exitCode)) {
+    errors.push("exitCode must be an integer");
+  }
+  if (hasOwn(record, "responseMatched") && typeof record.responseMatched !== "boolean") {
+    errors.push("responseMatched must be a boolean");
+  }
+  if (hasOwn(record, "meta") && (!record.meta || typeof record.meta !== "object" || Array.isArray(record.meta))) {
+    errors.push("meta must be an object");
+  }
 }
 function validateMetric(name, metric, errors) {
   if (!metric || typeof metric !== "object" || Array.isArray(metric)) {
@@ -4203,6 +4274,7 @@ function validateTimingRecord(record) {
   if (!isIsoDate(record.completedAt)) {
     errors.push("completedAt must be an ISO-8601 date string");
   }
+  validateDeclaredOptionalFields(record, errors);
   if (!record.metrics || typeof record.metrics !== "object" || Array.isArray(record.metrics)) {
     errors.push("metrics must be an object");
   } else {
@@ -4227,6 +4299,13 @@ function validateTimingRecord(record) {
 }
 
 // packages/polycli-timing/src/aggregate.js
+var COHORT_DIMENSIONS = Object.freeze([
+  "provider",
+  "kind",
+  "measurementScope",
+  "outcome",
+  "runtimePersistence"
+]);
 function createMetricSummary() {
   return {
     contributingCount: 0,
@@ -4244,13 +4323,60 @@ function createMetricSummary() {
     measuredValues: []
   };
 }
+function createMetricsSummary() {
+  return Object.fromEntries(TIMING_METRIC_NAMES.map((name) => [name, createMetricSummary()]));
+}
 function createProviderSummary() {
   return {
     recordCount: 0,
     runtimePersistenceCounts: Object.fromEntries(TIMING_RUNTIME_PERSISTENCE.map((name) => [name, 0])),
     measurementScopeCounts: Object.fromEntries(TIMING_MEASUREMENT_SCOPES.map((name) => [name, 0])),
-    metrics: Object.fromEntries(TIMING_METRIC_NAMES.map((name) => [name, createMetricSummary()]))
+    cohortCount: 0,
+    mixedDimensions: [],
+    metrics: createMetricsSummary()
   };
+}
+function getCohortDimensions(record) {
+  return {
+    provider: record.provider,
+    kind: record.kind ?? null,
+    measurementScope: record.measurementScope,
+    outcome: record.outcome ?? null,
+    runtimePersistence: record.runtimePersistence
+  };
+}
+function getCohortKey(dimensions) {
+  return JSON.stringify(COHORT_DIMENSIONS.map((name) => dimensions[name]));
+}
+function createCohort(dimensions) {
+  return {
+    provider: dimensions.provider,
+    kind: dimensions.kind,
+    measurementScope: dimensions.measurementScope,
+    outcome: dimensions.outcome,
+    runtimePersistence: dimensions.runtimePersistence,
+    recordCount: 0,
+    metrics: createMetricsSummary()
+  };
+}
+function addMetric(metricSummary, metric) {
+  if (metric.status === "measured") {
+    metricSummary.measuredCount += 1;
+    metricSummary.contributingCount += 1;
+    metricSummary.measuredValues.push(metric.ms);
+  } else if (metric.status === "zero") {
+    metricSummary.zeroCount += 1;
+    metricSummary.contributingCount += 1;
+  } else if (metric.status === "missing") {
+    metricSummary.missingCount += 1;
+  } else if (metric.status === "unsupported") {
+    metricSummary.unsupportedCount += 1;
+  }
+}
+function addRecordMetrics(summary, record) {
+  for (const metricName of TIMING_METRIC_NAMES) {
+    addMetric(summary.metrics[metricName], record.metrics[metricName]);
+  }
 }
 function finalizeMetric(summary) {
   const supportedCount = summary.measuredCount + summary.zeroCount + summary.missingCount;
@@ -4274,12 +4400,27 @@ function finalizeMetric(summary) {
   delete summary.measuredValues;
   return summary;
 }
+function finalizeMetrics(summary) {
+  for (const metricName of TIMING_METRIC_NAMES) {
+    summary.metrics[metricName] = finalizeMetric(summary.metrics[metricName]);
+  }
+}
+function finalizeProviderCohorts(providerSummary, cohorts) {
+  providerSummary.cohortCount = cohorts.length;
+  providerSummary.mixedDimensions = COHORT_DIMENSIONS.filter(
+    (dimension) => dimension !== "provider" && new Set(cohorts.map((cohort) => cohort[dimension])).size > 1
+  );
+}
 function aggregateTimingRecords(records) {
   const summary = {
     recordCount: 0,
     invalidRecords: [],
-    byProvider: {}
+    byProvider: {},
+    cohortDimensions: [...COHORT_DIMENSIONS],
+    cohorts: []
   };
+  const cohortsByKey = /* @__PURE__ */ new Map();
+  const cohortsByProvider = /* @__PURE__ */ new Map();
   for (const record of records) {
     const validation = validateTimingRecord(record);
     if (!validation.ok) {
@@ -4293,27 +4434,27 @@ function aggregateTimingRecords(records) {
     providerSummary.runtimePersistenceCounts[record.runtimePersistence] += 1;
     providerSummary.measurementScopeCounts[record.measurementScope] += 1;
     summary.byProvider[provider] = providerSummary;
-    for (const metricName of TIMING_METRIC_NAMES) {
-      const metric = record.metrics[metricName];
-      const metricSummary = providerSummary.metrics[metricName];
-      if (metric.status === "measured") {
-        metricSummary.measuredCount += 1;
-        metricSummary.contributingCount += 1;
-        metricSummary.measuredValues.push(metric.ms);
-      } else if (metric.status === "zero") {
-        metricSummary.zeroCount += 1;
-        metricSummary.contributingCount += 1;
-      } else if (metric.status === "missing") {
-        metricSummary.missingCount += 1;
-      } else if (metric.status === "unsupported") {
-        metricSummary.unsupportedCount += 1;
-      }
+    const cohortDimensions = getCohortDimensions(record);
+    const cohortKey = getCohortKey(cohortDimensions);
+    let cohort = cohortsByKey.get(cohortKey);
+    if (!cohort) {
+      cohort = createCohort(cohortDimensions);
+      cohortsByKey.set(cohortKey, cohort);
+      summary.cohorts.push(cohort);
+      const providerCohorts = cohortsByProvider.get(provider) ?? [];
+      providerCohorts.push(cohort);
+      cohortsByProvider.set(provider, providerCohorts);
     }
+    cohort.recordCount += 1;
+    addRecordMetrics(providerSummary, record);
+    addRecordMetrics(cohort, record);
   }
-  for (const providerSummary of Object.values(summary.byProvider)) {
-    for (const metricName of TIMING_METRIC_NAMES) {
-      providerSummary.metrics[metricName] = finalizeMetric(providerSummary.metrics[metricName]);
-    }
+  for (const [provider, providerSummary] of Object.entries(summary.byProvider)) {
+    finalizeMetrics(providerSummary);
+    finalizeProviderCohorts(providerSummary, cohortsByProvider.get(provider) ?? []);
+  }
+  for (const cohort of summary.cohorts) {
+    finalizeMetrics(cohort);
   }
   return summary;
 }
@@ -4322,7 +4463,7 @@ function aggregateTimingRecords(records) {
 var TIMING_SCHEMA_URL = new URL("../timing.schema.json", import.meta.url);
 
 // packages/polycli-runtime/src/timing.js
-var TIMING_OUTCOMES = /* @__PURE__ */ new Set(["success", "failure", "timeout", "terminated", "cancelled"]);
+var TIMING_OUTCOMES2 = /* @__PURE__ */ new Set(["success", "failure", "timeout", "terminated", "cancelled"]);
 function measuredOrZero(ms) {
   if (!Number.isFinite(ms) || ms < 0) {
     throw new Error(`Invalid measured timing value: ${ms}`);
@@ -4457,7 +4598,7 @@ function buildPromptTimingRecord({
   if (meta && typeof meta === "object" && Object.keys(meta).length > 0) {
     record.meta = meta;
   }
-  if (TIMING_OUTCOMES.has(outcome)) {
+  if (TIMING_OUTCOMES2.has(outcome)) {
     record.outcome = outcome;
   }
   addIntegerField(record, "exitCode", exitCode);
@@ -4534,6 +4675,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "status",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getClaudeAvailability,
@@ -4547,6 +4689,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getCopilotAvailability,
@@ -4560,6 +4703,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getGeminiAvailability,
@@ -4573,6 +4717,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getKimiAvailability,
@@ -4586,6 +4731,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getQwenAvailability,
@@ -4599,6 +4745,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: false,
       structuredOutput: true,
+      authProbeCost: "status",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getMiniMaxAvailability,
@@ -4612,6 +4759,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getOpenCodeAvailability,
@@ -4625,6 +4773,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getPiAvailability,
@@ -4638,6 +4787,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: false,
       structuredOutput: false,
+      authProbeCost: "status",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getCmdAvailability,
@@ -4651,6 +4801,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: false,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getAgyAvailability,
@@ -4664,6 +4815,7 @@ var RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "status",
       operations: PROVIDER_OPERATION_NAMES
     },
     getAvailability: getGrokAvailability,
@@ -4833,19 +4985,37 @@ var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     expectFlags: Object.freeze(["--tools", "--mcp-config", "--strict-mcp-config"]),
     extraArgTokens: Object.freeze(["--tools", "--mcp-config", "--strict-mcp-config"]),
     readOnlyOptionKey: "permissionMode",
-    readOnlyValue: "plan"
+    readOnlyValue: "plan",
+    stopReviewGateSafety: "enforced"
   }),
   gemini: Object.freeze({
     expectFlags: Object.freeze(["--approval-mode", "--policy"]),
     extraArgTokens: Object.freeze(["--extensions", "--allowed-mcp-server-names"]),
     readOnlyOptionKey: "approvalMode",
-    readOnlyValue: "plan"
+    readOnlyValue: "plan",
+    stopReviewGateSafety: "enforced"
   }),
   qwen: Object.freeze({
     expectFlags: Object.freeze(["--approval-mode", "--exclude-tools", "--max-session-turns"]),
+    // Qwen Code 0.19.6 emits a minimal bare `qwen --help` page.
+    // Supplying one registered option reveals the complete headless option
+    // surface, but that option itself is omitted from the rendered help. Use
+    // complementary, side-effect-free help probes so the drift check verifies
+    // every invocation flag without issuing a model request.
+    probes: Object.freeze([
+      Object.freeze({
+        helpArgs: Object.freeze(["--approval-mode", "plan", "--help"]),
+        expect: Object.freeze(["--exclude-tools", "--max-session-turns"])
+      }),
+      Object.freeze({
+        helpArgs: Object.freeze(["--max-session-turns", "1", "--help"]),
+        expect: Object.freeze(["--approval-mode"])
+      })
+    ]),
     extraArgTokens: Object.freeze(["--exclude-tools"]),
     readOnlyOptionKey: "approvalMode",
-    readOnlyValue: "plan"
+    readOnlyValue: "plan",
+    stopReviewGateSafety: "enforced"
   }),
   copilot: Object.freeze({
     expectFlags: Object.freeze([
@@ -4857,13 +5027,15 @@ var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     ]),
     extraArgTokens: Object.freeze(["--excluded-tools"]),
     readOnlyOptionKeys: Object.freeze(["allowAllTools", "allowAllPaths", "allowAllUrls"]),
-    readOnlyValue: null
+    readOnlyValue: null,
+    stopReviewGateSafety: "enforced"
   }),
   opencode: Object.freeze({
     expectFlags: Object.freeze(["--agent"]),
     extraArgTokens: Object.freeze(["--agent"]),
     readOnlyOptionKey: "skipPermissions",
-    readOnlyValue: null
+    readOnlyValue: null,
+    stopReviewGateSafety: "enforced"
   }),
   pi: Object.freeze({
     expectFlags: Object.freeze([
@@ -4880,27 +5052,33 @@ var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
       "--no-context-files"
     ]),
     readOnlyOptionKey: null,
-    readOnlyValue: null
+    readOnlyValue: null,
+    stopReviewGateSafety: "enforced"
   }),
   cmd: Object.freeze({
     expectFlags: Object.freeze(["--permission-mode"]),
     extraArgTokens: Object.freeze(["--permission-mode"]),
     readOnlyOptionKey: "yolo",
-    readOnlyValue: null
+    readOnlyValue: null,
+    stopReviewGateSafety: "enforced"
   }),
   kimi: Object.freeze({
-    // kimi-code v0.6.0: the legacy --no-thinking/--max-steps-per-turn review levers were removed
-    // upstream and -p one-shot mode rejects --plan/--auto, so review is prompt-only (extraArgTokens
-    // empty, like minimax). expectFlags are the load-bearing INVOCATION flags the runtime depends on
+    // No independently verified flag-based no-tool/read-only lever is available for Kimi prompt
+    // mode, so review is prompt-only (extraArgTokens empty, like minimax). expectFlags are the
+    // load-bearing invocation flags the runtime depends on
     // (-p/--prompt + --output-format), so the drift check warns if kimi-code renames or drops them.
     expectFlags: Object.freeze(["--prompt", "--output-format"]),
-    extraArgTokens: Object.freeze([])
+    extraArgTokens: Object.freeze([]),
+    stopReviewGateSafety: "prompt_only"
   }),
   agy: Object.freeze({
-    expectFlags: Object.freeze([]),
+    // agy 1.1.2 exposes `--mode plan`, but the non-interactive `-p` path has
+    // no verified hard no-write/no-command guarantee. Keep /review rejected
+    // until that guarantee is independently proven without yolo permissions.
+    expectFlags: Object.freeze(["--mode"]),
     extraArgTokens: Object.freeze([]),
-    forbidFlags: Object.freeze(["--approval-mode", "--permission-mode", "--policy", "--plan", "--agent"]),
-    reviewUnsupported: true
+    reviewUnsupported: true,
+    stopReviewGateSafety: "unsupported"
   }),
   minimax: Object.freeze({
     expectFlags: Object.freeze([]),
@@ -4908,7 +5086,8 @@ var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     probes: Object.freeze([
       Object.freeze({ helpArgs: Object.freeze(["text", "chat", "--help"]), expect: Object.freeze(["--message"]) }),
       Object.freeze({ helpArgs: Object.freeze(["--help"]), expect: Object.freeze(["--output", "--non-interactive"]) })
-    ])
+    ]),
+    stopReviewGateSafety: "prompt_only"
   }),
   grok: Object.freeze({
     // grok review enforces read-only via the --permission-mode plan runtimeOption (composes with
@@ -4916,7 +5095,8 @@ var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     expectFlags: Object.freeze(["--permission-mode"]),
     extraArgTokens: Object.freeze([]),
     readOnlyOptionKey: "permissionMode",
-    readOnlyValue: "plan"
+    readOnlyValue: "plan",
+    stopReviewGateSafety: "enforced"
   })
 });
 
@@ -4924,6 +5104,7 @@ var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
 import fs6 from "node:fs";
 import os4 from "node:os";
 import process4 from "node:process";
+import { spawnSync as spawnSync3 } from "node:child_process";
 
 // plugins/polycli/scripts/lib/state.mjs
 import crypto2 from "node:crypto";
@@ -5045,11 +5226,18 @@ function ensureStateDir(workspaceRoot) {
   ensurePrivateDir(resolveStateDir(workspaceRoot));
   ensurePrivateDir(resolveJobsDir(workspaceRoot));
 }
-function pruneJobsForSave(jobs) {
+function pruneJobsForSave(jobs, { preserveJobIds = [] } = {}) {
   const sorted = jobs.slice().sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
   const active = sorted.filter((job) => ACTIVE_STATUSES.has(job.status));
-  const terminal = sorted.filter((job) => !ACTIVE_STATUSES.has(job.status)).slice(0, MAX_JOBS);
-  return [...active, ...terminal].sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
+  const terminal = sorted.filter((job) => !ACTIVE_STATUSES.has(job.status));
+  const preserve = new Set(preserveJobIds);
+  const protectedTerminal = terminal.filter((job) => preserve.has(job.jobId));
+  const remainingTerminal = terminal.filter((job) => !preserve.has(job.jobId));
+  const retainedTerminal = [
+    ...protectedTerminal,
+    ...remainingTerminal.slice(0, Math.max(0, MAX_JOBS - protectedTerminal.length))
+  ];
+  return [...active, ...retainedTerminal].sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
 }
 function loadState(workspaceRoot) {
   const stateFile = resolveStateFile(workspaceRoot);
@@ -5076,10 +5264,12 @@ function loadState(workspaceRoot) {
     return defaultState();
   }
 }
-function saveState(workspaceRoot, state) {
+function saveState(workspaceRoot, state, { preserveJobIds = [] } = {}) {
   ensureStateDir(workspaceRoot);
-  const jobs = pruneJobsForSave(state.jobs);
+  const jobs = pruneJobsForSave(state.jobs, { preserveJobIds });
   const keptIds = new Set(jobs.map((job) => job.jobId));
+  const config = state.config && typeof state.config === "object" ? state.config : {};
+  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs }, { mode: PRIVATE_FILE_MODE });
   for (const job of state.jobs) {
     if (job && job.jobId && !keptIds.has(job.jobId)) {
       removeJobFile(workspaceRoot, job.jobId);
@@ -5087,8 +5277,6 @@ function saveState(workspaceRoot, state) {
       removeJobLogFile(workspaceRoot, job.jobId);
     }
   }
-  const config = state.config && typeof state.config === "object" ? state.config : {};
-  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs }, { mode: PRIVATE_FILE_MODE });
   return { version: STATE_VERSION, config, jobs };
 }
 function updateState(workspaceRoot, mutate) {
@@ -5107,7 +5295,8 @@ function updateJobAtomically(workspaceRoot, jobId, buildNext) {
     const state = loadState(workspaceRoot);
     const index = state.jobs.findIndex((job2) => job2.jobId === jobId);
     const current = index >= 0 ? state.jobs[index] : null;
-    const next = buildNext(current);
+    const currentEnvelope = readJobFile(resolveJobFile(workspaceRoot, jobId));
+    const next = buildNext(current, currentEnvelope);
     if (!next) {
       return { written: false, job: current, envelope: null };
     }
@@ -5118,12 +5307,19 @@ function updateJobAtomically(workspaceRoot, jobId, buildNext) {
     if (Object.prototype.hasOwnProperty.call(next, "envelope")) {
       writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), next.envelope, { mode: PRIVATE_FILE_MODE });
     }
+    if (typeof next.beforeStateCommit === "function") {
+      next.beforeStateCommit({
+        current,
+        job,
+        envelope: next.envelope ?? null
+      });
+    }
     if (index >= 0) {
       state.jobs[index] = job;
     } else {
       state.jobs.push(job);
     }
-    saveState(workspaceRoot, state);
+    saveState(workspaceRoot, state, { preserveJobIds: [jobId] });
     return { written: true, job, envelope: next.envelope ?? null };
   });
 }
@@ -5174,11 +5370,6 @@ function recordLastUsedProvider(workspaceRoot, provider) {
     state.config.lastUsedProvider = provider.trim();
     state.config.lastUsedProviderAt = (/* @__PURE__ */ new Date()).toISOString();
   });
-}
-function writeJobFile(workspaceRoot, jobId, payload) {
-  ensureStateDir(workspaceRoot);
-  writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
-  return resolveJobFile(workspaceRoot, jobId);
 }
 function readJobFile(jobFile) {
   try {
@@ -5231,6 +5422,27 @@ function safeParseLine(line) {
     return null;
   }
 }
+function retainCompactedLines(lines, keepFrom, retentionGroupKey) {
+  const entries = [];
+  for (const line of lines) {
+    const record = safeParseLine(line);
+    if (record != null) {
+      entries.push({ line, record });
+    }
+  }
+  if (typeof retentionGroupKey !== "function") {
+    return entries.slice(keepFrom).map((entry) => entry.line);
+  }
+  const grouped = entries.map((entry) => ({
+    ...entry,
+    retentionGroup: retentionGroupKey(entry.record)
+  }));
+  const retainedStart = keepFrom < 0 ? Math.max(0, grouped.length + keepFrom) : Math.min(keepFrom, grouped.length);
+  const retainedGroups = new Set(
+    grouped.slice(keepFrom).map((entry) => entry.retentionGroup).filter((group) => group != null)
+  );
+  return grouped.filter((entry, index) => index >= retainedStart || entry.retentionGroup != null && retainedGroups.has(entry.retentionGroup)).map((entry) => entry.line);
+}
 function chmodIfRequested(filePath, mode) {
   if (mode === 438) return;
   try {
@@ -5262,7 +5474,15 @@ function readNdjson(filePath) {
   }
   return records;
 }
-function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs = 25, maxBytes = null, keepRatio = 0.5, mode = 438 } = {}) {
+function appendNdjson(filePath, record, {
+  timeoutMs = 1e4,
+  staleMs = 3e4,
+  pollMs = 25,
+  maxBytes = null,
+  keepRatio = 0.5,
+  retentionGroupKey = null,
+  mode = 438
+} = {}) {
   const lockPath = `${filePath}.lock`;
   return withLockfile(lockPath, () => {
     ensureParentDir(filePath);
@@ -5292,14 +5512,67 @@ function appendNdjson(filePath, record, { timeoutMs = 1e4, staleMs = 3e4, pollMs
       const stat = fs4.statSync(filePath);
       if (stat.size > maxBytes) {
         const lines = fs4.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
-        const valid = lines.filter((entry) => safeParseLine(entry) != null);
-        const keepFrom = Math.floor(valid.length * (1 - keepRatio));
-        const kept = valid.slice(keepFrom);
+        const validCount = lines.reduce((count, entry) => count + (safeParseLine(entry) != null ? 1 : 0), 0);
+        const keepFrom = Math.floor(validCount * (1 - keepRatio));
+        const kept = retainCompactedLines(lines, keepFrom, retentionGroupKey);
         writeFileAtomic(filePath, `${kept.join("\n")}
 `, { encoding: "utf8", mode });
         chmodIfRequested(filePath, mode);
       }
     }
+    return true;
+  }, { timeoutMs, staleMs, pollMs });
+}
+function appendNdjsonBatch(filePath, records, {
+  timeoutMs = 1e4,
+  staleMs = 3e4,
+  pollMs = 25,
+  maxBytes = null,
+  keepRatio = 0.5,
+  retentionGroupKey = null,
+  mode = 438
+} = {}) {
+  if (!Array.isArray(records)) {
+    throw new TypeError("records must be an array");
+  }
+  if (records.length === 0) {
+    return true;
+  }
+  const serializedBatch = records.map((record) => {
+    const serialized = JSON.stringify(record);
+    if (typeof serialized !== "string") {
+      throw new TypeError("each record must be JSON-serializable");
+    }
+    return serialized;
+  });
+  const batch = `${serializedBatch.join("\n")}
+`;
+  const lockPath = `${filePath}.lock`;
+  return withLockfile(lockPath, () => {
+    ensureParentDir(filePath);
+    let text = "";
+    try {
+      text = fs4.readFileSync(filePath, "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    let nextText = `${text}${text.length > 0 && !text.endsWith("\n") ? "\n" : ""}${batch}`;
+    if (maxBytes != null && Buffer.byteLength(nextText, "utf8") > maxBytes) {
+      const existing = text.split("\n").filter((entry) => safeParseLine(entry) != null);
+      const targetCount = Math.max(
+        serializedBatch.length,
+        Math.ceil((existing.length + serializedBatch.length) * keepRatio)
+      );
+      const allLines = [...existing, ...serializedBatch];
+      const keepFrom = Math.max(0, allLines.length - targetCount);
+      const kept = retainCompactedLines(allLines, keepFrom, retentionGroupKey);
+      nextText = `${kept.join("\n")}
+`;
+    }
+    writeFileAtomic(filePath, nextText, { encoding: "utf8", mode });
+    chmodIfRequested(filePath, mode);
     return true;
   }, { timeoutMs, staleMs, pollMs });
 }
@@ -5333,6 +5606,13 @@ var VALID_HOST_SURFACES = /* @__PURE__ */ new Set([
   "opencode-plugin",
   "unknown"
 ]);
+var TERMINAL_LEDGER_PHASES = /* @__PURE__ */ new Set(["attempt_result", "provider_decision"]);
+function terminalLedgerRetentionGroupKey(event) {
+  if (!TERMINAL_LEDGER_PHASES.has(event?.phase) || !event.runId || !event.jobId) {
+    return null;
+  }
+  return JSON.stringify([event.runId, event.jobId]);
+}
 function resolveRunLedgerFile(workspaceRoot) {
   return path4.join(resolveStateDir(workspaceRoot), "run-ledger.ndjson");
 }
@@ -5473,6 +5753,7 @@ function createRunLedgerEvent(event = {}) {
     durationMs: event.durationMs ?? null,
     errorCode: event.errorCode ?? null,
     failureClass: event.failureClass ?? null,
+    terminalDescriptor: event.terminalDescriptor ?? null,
     pid: event.pid ?? null,
     logFile: event.logFile ?? null,
     argv: event.argv || [],
@@ -5492,8 +5773,150 @@ function appendRunLedgerEvent(workspaceRoot, event) {
     workspaceRoot: workspaceRoot ?? event.workspaceRoot ?? null,
     workspaceSlug: event.workspaceSlug ?? workspaceSlug
   });
-  appendNdjson(file, full, { maxBytes: MAX_LEDGER_BYTES, keepRatio: KEEP_RATIO, mode: PRIVATE_FILE_MODE2 });
+  appendNdjson(file, full, {
+    maxBytes: MAX_LEDGER_BYTES,
+    keepRatio: KEEP_RATIO,
+    retentionGroupKey: terminalLedgerRetentionGroupKey,
+    mode: PRIVATE_FILE_MODE2
+  });
   return full;
+}
+function appendRunLedgerEvents(workspaceRoot, events) {
+  if (!Array.isArray(events)) {
+    throw new TypeError("events must be an array");
+  }
+  if (events.length === 0) return [];
+  if (workspaceRoot) ensureStateDir(workspaceRoot);
+  const file = resolveRunLedgerFile(workspaceRoot);
+  const workspaceSlug = workspaceRoot ? computeWorkspaceSlug(workspaceRoot) : null;
+  const full = events.map((event) => createRunLedgerEvent({
+    ...event,
+    workspaceRoot: workspaceRoot ?? event.workspaceRoot ?? null,
+    workspaceSlug: event.workspaceSlug ?? workspaceSlug
+  }));
+  appendNdjsonBatch(file, full, {
+    maxBytes: MAX_LEDGER_BYTES,
+    keepRatio: KEEP_RATIO,
+    retentionGroupKey: terminalLedgerRetentionGroupKey,
+    mode: PRIVATE_FILE_MODE2
+  });
+  return full;
+}
+function canonicalTerminalValue(value) {
+  if (value == null || typeof value !== "object") return value ?? null;
+  if (Array.isArray(value)) return value.map((entry) => canonicalTerminalValue(entry));
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalTerminalValue(value[key])]));
+}
+function terminalEventMaterial(event) {
+  return {
+    phase: event.phase ?? null,
+    status: event.status ?? null,
+    reason: event.reason ?? null,
+    provider: event.provider ?? null,
+    command: event.command ?? null,
+    kind: event.kind ?? null,
+    hostSurface: event.hostSurface || "unknown",
+    attempt: canonicalTerminalValue(event.attempt),
+    sessionId: event.sessionId ?? null,
+    model: event.model ?? null,
+    defaultModel: event.defaultModel ?? null,
+    timingRef: canonicalTerminalValue(event.timingRef),
+    error: canonicalTerminalValue(event.error),
+    errorCode: event.errorCode ?? null,
+    failureClass: event.failureClass ?? null
+  };
+}
+function stableTerminalJson(value) {
+  return JSON.stringify(canonicalTerminalValue(value));
+}
+function validateTerminalPair(events) {
+  if (!Array.isArray(events) || events.length !== 2) {
+    throw new TypeError("terminal ledger pair must contain exactly two events");
+  }
+  const [first] = events;
+  const runId = first?.runId;
+  const jobId = first?.jobId;
+  if (!runId || !jobId || events.some((event) => event?.runId !== runId || event?.jobId !== jobId || !TERMINAL_LEDGER_PHASES.has(event?.phase)) || new Set(events.map((event) => event.phase)).size !== TERMINAL_LEDGER_PHASES.size) {
+    throw new TypeError("terminal ledger pair must share runId/jobId and contain attempt_result plus provider_decision");
+  }
+  return { runId, jobId };
+}
+function createTerminalLedgerDescriptor(events) {
+  const { runId, jobId } = validateTerminalPair(events);
+  return {
+    version: 1,
+    runId,
+    jobId,
+    events: events.map((event) => terminalEventMaterial(event)).sort((left, right) => left.phase.localeCompare(right.phase))
+  };
+}
+function descriptorsMatch(left, right) {
+  return stableTerminalJson(left) === stableTerminalJson(right);
+}
+function legacyTerminalEventMatches(existing, expected) {
+  const actual = terminalEventMaterial(existing);
+  const wanted = terminalEventMaterial(expected);
+  for (const key of ["phase", "status", "reason", "provider", "command", "kind", "hostSurface"]) {
+    if (actual[key] !== wanted[key]) return false;
+  }
+  for (const key of ["attempt", "sessionId", "model", "defaultModel", "timingRef", "error", "errorCode", "failureClass"]) {
+    if (actual[key] != null && stableTerminalJson(actual[key]) !== stableTerminalJson(wanted[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+function terminalEventMatches(existing, expected) {
+  if (existing.phase !== expected.phase) return false;
+  if (existing.terminalDescriptor != null) {
+    return descriptorsMatch(existing.terminalDescriptor, expected.terminalDescriptor);
+  }
+  return legacyTerminalEventMatches(existing, expected);
+}
+function terminalPairMatches(existing, expected) {
+  if (existing.length !== expected.length || new Set(existing.map((event) => event.phase)).size !== TERMINAL_LEDGER_PHASES.size) {
+    return false;
+  }
+  const descriptorCount = existing.filter((event) => event.terminalDescriptor != null).length;
+  if (descriptorCount !== 0 && descriptorCount !== existing.length) return false;
+  return expected.every((expectedEvent) => existing.some((event) => terminalEventMatches(event, expectedEvent)));
+}
+function buildExpectedTerminalPair(events) {
+  const rawExpected = events.map((event) => createRunLedgerEvent(event));
+  const descriptor = createTerminalLedgerDescriptor(rawExpected);
+  const supplied = rawExpected.map((event) => event.terminalDescriptor).filter((value) => value != null);
+  if (supplied.length > 0 && (supplied.length !== rawExpected.length || supplied.some((value) => !descriptorsMatch(value, descriptor)))) {
+    throw new Error("Terminal ledger descriptor does not match the terminal event pair");
+  }
+  return {
+    descriptor,
+    expected: rawExpected.map((event) => ({ ...event, terminalDescriptor: descriptor }))
+  };
+}
+function ensureRunLedgerTerminalPair(workspaceRoot, events) {
+  if (!Array.isArray(events) || events.length !== 2) {
+    throw new TypeError("terminal ledger pair must contain exactly two events");
+  }
+  const { expected, descriptor } = buildExpectedTerminalPair(events);
+  const { runId, jobId } = validateTerminalPair(expected);
+  const existing = readRunLedgerEvents(workspaceRoot).filter((event) => event.runId === runId && event.jobId === jobId && TERMINAL_LEDGER_PHASES.has(event.phase));
+  if (existing.length === 0) {
+    return appendRunLedgerEvents(workspaceRoot, expected);
+  }
+  if (existing.length === 1) {
+    const [partial] = existing;
+    const matchingExpected = expected.find((event) => event.phase === partial.phase);
+    if (!matchingExpected || !terminalEventMatches(partial, matchingExpected)) {
+      throw new Error(`Incomplete or conflicting terminal ledger pair for job ${jobId}`);
+    }
+    const missing = expected.find((event) => event.phase !== partial.phase);
+    const repair = partial.terminalDescriptor == null ? { ...missing, terminalDescriptor: null } : { ...missing, terminalDescriptor: descriptor };
+    return [...existing, ...appendRunLedgerEvents(workspaceRoot, [repair])];
+  }
+  if (!terminalPairMatches(existing, expected)) {
+    throw new Error(`Incomplete or conflicting terminal ledger pair for job ${jobId}`);
+  }
+  return existing;
 }
 function readRunLedgerEvents(workspaceRoot) {
   const file = resolveRunLedgerFile(workspaceRoot);
@@ -5805,6 +6228,25 @@ function isProcessAlive(pid) {
     return false;
   }
 }
+function isExpectedWorkerProcess(pid, configFile) {
+  if (!Number.isInteger(pid) || pid <= 0 || !configFile) return null;
+  try {
+    const result = process4.platform === "win32" ? spawnSync3("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`
+    ], { encoding: "utf8", stdio: "pipe" }) : spawnSync3("ps", ["-ww", "-o", "command=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: "pipe"
+    });
+    if (result.error) return null;
+    if (result.status !== 0) return false;
+    return result.stdout.includes("_job-worker") && result.stdout.includes(configFile);
+  } catch {
+    return null;
+  }
+}
 function sortJobsNewestFirst(jobs) {
   return jobs.slice().sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
 }
@@ -5825,30 +6267,19 @@ function enrichJob(workspaceRoot, job) {
     result: envelope?.result ?? null
   };
 }
-function hasLedgerPhase(events, runId, jobId, phase) {
-  return events.some((event) => event.runId === runId && event.jobId === jobId && event.phase === phase);
+function isTerminalEnvelope(envelope) {
+  return Boolean(envelope?.job && TERMINAL_STATUSES.has(envelope.job.status));
 }
-function recoverLedgerTerminalEvents(workspaceRoot, job, { result = null, reason = "worker_exited", skipRuntimeCleanup = false } = {}) {
-  const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
-  const runContext = config?.runContext;
-  if (!runContext?.runId) {
-    if (!skipRuntimeCleanup) cleanupRuntimePaths(config);
-    removeJobConfigFile(workspaceRoot, job.jobId);
-    return;
-  }
-  const recoverLock = `${resolveRunLedgerFile(workspaceRoot)}.recover.lock`;
-  withLockfile(recoverLock, () => writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result, reason, skipRuntimeCleanup }));
-}
-function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited", skipRuntimeCleanup = false } = {}) {
-  const events = readRunLedgerEvents(workspaceRoot);
+function buildRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited", terminalDescriptor = null } = {}) {
   const command = runContext.command || config?.execution?.kind || job.kind || null;
   const provider = runContext.provider || config?.execution?.provider || job.provider || null;
   const kind = runContext.kind || config?.execution?.kind || job.kind || command;
-  const cancelled = reason === "cancelled" || job.status === "cancelled" || result?.error === "cancelled";
-  const status = cancelled ? "cancelled" : result?.ok ? "completed" : "failed";
-  const decisionStatus = cancelled ? "cancelled" : result?.ok ? "adopted" : "failed";
-  const decisionReason = result?.ok ? null : reason;
-  const errorMessage = result?.ok ? null : result?.error || job.error || "worker exited before writing a result envelope";
+  const cancelled = reason === "cancelled" || job.status === "cancelled";
+  const succeeded = !cancelled && job.status === "completed" && result?.ok !== false;
+  const status = cancelled ? "cancelled" : succeeded ? "completed" : "failed";
+  const decisionStatus = cancelled ? "cancelled" : succeeded ? "adopted" : "failed";
+  const terminalReason = succeeded ? null : reason;
+  const errorMessage = succeeded ? null : result?.error || job.error || "worker exited before writing a result envelope";
   const recoveredSessionId = result?.sessionId ?? job.sessionId ?? null;
   const recoveredCwd = config?.execution?.cwd ?? config?.workspaceRoot ?? workspaceRoot ?? null;
   const sessionArtifactPath = recoveredSessionId && recoveredCwd ? recordArtifactPath(
@@ -5869,17 +6300,20 @@ function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
     jobId: job.jobId,
     sessionId: recoveredSessionId,
     sessionArtifactPath,
-    model: result?.model || runContext.model || config?.execution?.model || job.model || null,
-    defaultModel: result?.defaultModel || runContext.defaultModel || config?.execution?.defaultModel || null,
+    // A descriptor-bearing envelope came from the worker finalizer, whose terminal event records
+    // only upstream-returned model fields. Do not substitute configured defaults during recovery:
+    // doing so would manufacture a different terminal identity after a crash.
+    model: terminalDescriptor ? result?.model ?? null : result?.model || runContext.model || config?.execution?.model || job.model || null,
+    defaultModel: terminalDescriptor ? result?.defaultModel ?? null : result?.defaultModel || runContext.defaultModel || config?.execution?.defaultModel || null,
     hostSurface: runContext.hostSurface || "unknown",
     logFile: runContext.logFile || job.logFile || null
   };
-  if (!hasLedgerPhase(events, runContext.runId, job.jobId, "attempt_result")) {
-    appendRunLedgerEvent(workspaceRoot, {
+  return [
+    {
       ...base,
       phase: "attempt_result",
       status,
-      reason,
+      reason: terminalReason,
       attempt: { ordinal: 1 },
       preview: result?.response ? String(result.response).slice(0, 180) : null,
       stdoutBytes: result?.stdoutBytes ?? null,
@@ -5892,18 +6326,59 @@ function writeRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
         completedAt: result.timing.completedAt
       } : null,
       error: errorMessage ? { message: String(errorMessage).slice(0, 300) } : null
-    });
-  }
-  if (!hasLedgerPhase(events, runContext.runId, job.jobId, "provider_decision")) {
-    appendRunLedgerEvent(workspaceRoot, {
+    },
+    {
       ...base,
       phase: "provider_decision",
       status: decisionStatus,
-      reason: decisionReason
-    });
+      reason: terminalReason
+    }
+  ];
+}
+function applyTerminalDescriptor(events, terminalDescriptor) {
+  if (!terminalDescriptor) return events;
+  const byPhase = new Map((terminalDescriptor.events || []).map((event) => [event.phase, event]));
+  return events.map((event) => {
+    const material = byPhase.get(event.phase);
+    if (!material) return event;
+    return {
+      ...event,
+      phase: material.phase,
+      status: material.status,
+      reason: material.reason,
+      provider: material.provider,
+      command: material.command,
+      kind: material.kind,
+      hostSurface: material.hostSurface,
+      attempt: material.attempt,
+      sessionId: material.sessionId,
+      model: material.model,
+      defaultModel: material.defaultModel,
+      timingRef: material.timingRef,
+      error: material.error,
+      errorCode: material.errorCode,
+      failureClass: material.failureClass
+    };
+  });
+}
+function prepareRecoveredTerminalEvents(workspaceRoot, job, config, { result = null, reason = "worker_exited", terminalDescriptor = null } = {}) {
+  const runContext = config?.runContext;
+  if (!runContext?.runId) return { events: [], terminalDescriptor };
+  const events = buildRecoveredTerminalEvents(workspaceRoot, job, config, runContext, {
+    result,
+    reason,
+    terminalDescriptor
+  });
+  const descriptor = terminalDescriptor || createTerminalLedgerDescriptor(events);
+  return {
+    events: applyTerminalDescriptor(events, terminalDescriptor).map((event) => ({ ...event, terminalDescriptor: descriptor })),
+    terminalDescriptor: descriptor
+  };
+}
+function ensureRecoveredTerminalEvents(workspaceRoot, prepared) {
+  if (prepared.events.length > 0) {
+    ensureRunLedgerTerminalPair(workspaceRoot, prepared.events);
   }
-  if (!skipRuntimeCleanup) cleanupRuntimePaths(config);
-  removeJobConfigFile(workspaceRoot, job.jobId);
 }
 function cleanupRuntimePaths(config) {
   const cleanupPaths = config?.execution?.runtimeOptions?.cleanupPaths;
@@ -5920,37 +6395,74 @@ function refreshJob(workspaceRoot, job) {
   if (!job || !ACTIVE_STATUSES2.has(job.status)) {
     return job ? enrichJob(workspaceRoot, job) : null;
   }
-  if (!job.pid || isProcessAlive(job.pid)) {
+  const storedEnvelope = readJobFile(resolveJobFile(workspaceRoot, job.jobId));
+  if (!job.pid && !isTerminalEnvelope(storedEnvelope)) {
     return enrichJob(workspaceRoot, job);
   }
-  const envelope = readJobFile(resolveJobFile(workspaceRoot, job.jobId));
-  if (envelope?.job) {
-    const finalized = {
-      ...job,
-      ...envelope.job,
-      pid: null
-    };
-    upsertJob(workspaceRoot, finalized);
-    recoverLedgerTerminalEvents(workspaceRoot, finalized, { result: envelope.result || null, reason: `${finalized.kind || job.kind}_failed` });
-    return enrichJob(workspaceRoot, finalized);
+  if (isProcessAlive(job.pid)) {
+    const identity = isExpectedWorkerProcess(job.pid, resolveJobConfigFile(workspaceRoot, job.jobId));
+    if (!isTerminalEnvelope(storedEnvelope) || identity !== false) {
+      return enrichJob(workspaceRoot, job);
+    }
   }
-  const failed = {
-    ...job,
-    status: "failed",
-    pid: null,
-    finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    error: "worker exited before writing a result envelope"
-  };
-  upsertJob(workspaceRoot, failed);
-  writeJobFile(workspaceRoot, job.jobId, {
-    job: failed,
-    result: { ok: false, error: failed.error }
-  });
-  recoverLedgerTerminalEvents(workspaceRoot, failed, {
-    result: { ok: false, error: failed.error },
-    reason: "worker_exited"
-  });
-  return enrichJob(workspaceRoot, failed);
+  try {
+    const write = updateJobAtomically(workspaceRoot, job.jobId, (latest, storedEnvelope2) => {
+      if (!latest || !ACTIVE_STATUSES2.has(latest.status)) return null;
+      const hasStoredTerminalIntent = isTerminalEnvelope(storedEnvelope2);
+      const finalizedAt = (/* @__PURE__ */ new Date()).toISOString();
+      const finalizedBase = hasStoredTerminalIntent ? {
+        ...latest,
+        ...storedEnvelope2.job,
+        pid: null
+      } : {
+        ...latest,
+        status: "failed",
+        pid: null,
+        finishedAt: finalizedAt,
+        error: "worker exited before writing a result envelope"
+      };
+      const finalized = {
+        ...finalizedBase,
+        finishedAt: finalizedBase.finishedAt || finalizedAt,
+        updatedAt: finalizedAt
+      };
+      const result = hasStoredTerminalIntent ? storedEnvelope2.result || {
+        ok: finalized.status === "completed",
+        error: finalized.status === "cancelled" ? "cancelled" : finalized.error || null
+      } : { ok: false, error: finalized.error };
+      const inferredReason = finalized.status === "cancelled" ? "cancelled" : result.ok ? null : result.error === "worker exited before writing a result envelope" ? "worker_exited" : `${finalized.kind || latest.kind}_failed`;
+      const terminalReason = hasStoredTerminalIntent && Object.prototype.hasOwnProperty.call(storedEnvelope2, "terminalReason") ? storedEnvelope2.terminalReason : inferredReason;
+      const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, latest.jobId));
+      const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalized, config, {
+        result,
+        reason: terminalReason,
+        terminalDescriptor: storedEnvelope2?.terminalDescriptor ?? null
+      });
+      return {
+        job: finalized,
+        envelope: {
+          job: finalized,
+          result,
+          terminalReason,
+          terminalDescriptor: terminal.terminalDescriptor
+        },
+        // The envelope is the recoverable intent. Do not publish the terminal state until the
+        // ledger has either atomically accepted the complete pair or already contains that pair.
+        beforeStateCommit() {
+          ensureRecoveredTerminalEvents(workspaceRoot, terminal);
+        }
+      };
+    });
+    if (write.written) {
+      const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
+      cleanupRuntimePaths(config);
+      removeJobConfigFile(workspaceRoot, job.jobId);
+    }
+    const current = write.written ? write.job : getJob(workspaceRoot, job.jobId) || job;
+    return enrichJob(workspaceRoot, current);
+  } catch {
+    return enrichJob(workspaceRoot, getJob(workspaceRoot, job.jobId) || job);
+  }
 }
 function buildStatusSnapshot(workspaceRoot, { showAll = false } = {}) {
   const refreshed = sortJobsNewestFirst(listJobs(workspaceRoot)).map((job) => refreshJob(workspaceRoot, job));
@@ -5997,11 +6509,17 @@ async function waitForJob(workspaceRoot, jobId, { timeoutMs = 24e4, pollInterval
   const timed = getJob(workspaceRoot, jobId);
   return { job: timed ? refreshJob(workspaceRoot, timed) : null, waitTimedOut: true };
 }
-async function cancelJob(workspaceRoot, jobId, { terminate = terminateProcessTree } = {}) {
+async function cancelJob(workspaceRoot, jobId, {
+  terminate = terminateProcessTree,
+  isWorkerAlive = isProcessAlive,
+  isExpectedWorker = isExpectedWorkerProcess
+} = {}) {
   let pidToKill = null;
+  let configForCleanup = null;
+  let cancellationEnvelope = null;
   let reason = null;
-  const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-  const write = updateJobAtomically(workspaceRoot, jobId, (current) => {
+  const requestedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const intentWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
     if (!current) {
       reason = "not_found";
       return null;
@@ -6010,29 +6528,57 @@ async function cancelJob(workspaceRoot, jobId, { terminate = terminateProcessTre
       reason = "not_cancellable";
       return null;
     }
+    const resumingCancellation = storedEnvelope?.job?.status === "cancelled";
+    if (isTerminalEnvelope(storedEnvelope) && !resumingCancellation) {
+      reason = "not_cancellable";
+      return null;
+    }
     pidToKill = current.pid ?? null;
-    const nextJob = {
+    configForCleanup = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
+    const intentJob = resumingCancellation ? {
+      ...current,
+      ...storedEnvelope.job,
+      status: "cancelled",
+      pid: null,
+      finishedAt: storedEnvelope.job.finishedAt || requestedAt,
+      updatedAt: requestedAt
+    } : {
       ...current,
       status: "cancelled",
       pid: null,
-      finishedAt
+      finishedAt: requestedAt,
+      updatedAt: requestedAt
+    };
+    const cancellationResult = resumingCancellation ? storedEnvelope.result || { ok: false, error: "cancelled" } : { ok: false, error: "cancelled" };
+    const terminal = prepareRecoveredTerminalEvents(workspaceRoot, intentJob, configForCleanup, {
+      result: cancellationResult,
+      reason: "cancelled",
+      terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null
+    });
+    cancellationEnvelope = {
+      job: intentJob,
+      result: cancellationResult,
+      terminalReason: "cancelled",
+      terminalDescriptor: terminal.terminalDescriptor
     };
     return {
-      job: nextJob,
-      envelope: {
-        job: nextJob,
-        result: {
-          ok: false,
-          error: "cancelled"
-        }
+      // Do not make the state terminal yet. It remains the recovery point if this process exits
+      // after persisting the intent but before the worker receives its signal.
+      job: current,
+      envelope: cancellationEnvelope,
+      beforeStateCommit() {
+        ensureRecoveredTerminalEvents(workspaceRoot, terminal);
       }
     };
   });
-  if (!write.written) {
+  if (!intentWrite.written) {
     return { cancelled: false, reason: reason || "not_cancellable", jobId };
   }
-  let killWarning = null;
-  if (pidToKill) {
+  const configFile = resolveJobConfigFile(workspaceRoot, jobId);
+  if (pidToKill && isWorkerAlive(pidToKill)) {
+    if (!isExpectedWorker(pidToKill, configFile)) {
+      return { cancelled: false, reason: "worker_identity_unverified", jobId };
+    }
     try {
       await terminate(pidToKill, {
         signal: "SIGINT",
@@ -6040,15 +6586,69 @@ async function cancelJob(workspaceRoot, jobId, { terminate = terminateProcessTre
         forceAfterMs: 2e3
       });
     } catch (error) {
-      killWarning = error.message;
+      return { cancelled: false, reason: "kill_failed", jobId, killWarning: error.message };
+    }
+    if (isWorkerAlive(pidToKill)) {
+      const postSignalIdentity = isExpectedWorker(pidToKill, configFile);
+      if (postSignalIdentity === true) {
+        return { cancelled: false, reason: "worker_still_running", jobId };
+      }
+      if (postSignalIdentity == null) {
+        return { cancelled: false, reason: "worker_identity_unverified", jobId };
+      }
     }
   }
-  recoverLedgerTerminalEvents(workspaceRoot, write.job, {
-    result: write.envelope?.result || { ok: false, error: "cancelled" },
-    reason: "cancelled",
-    skipRuntimeCleanup: killWarning != null
+  let finalConfig = configForCleanup;
+  const finalWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
+    if (!current) {
+      reason = "not_found";
+      return null;
+    }
+    if (current.status === "cancelled") return null;
+    if (!ACTIVE_STATUSES2.has(current.status) || storedEnvelope?.job?.status !== "cancelled") {
+      reason = "cancellation_finalization_pending";
+      return null;
+    }
+    finalConfig = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId)) || finalConfig;
+    const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const finalJob = {
+      ...current,
+      ...storedEnvelope.job,
+      status: "cancelled",
+      pid: null,
+      finishedAt: storedEnvelope.job.finishedAt || finishedAt,
+      updatedAt: finishedAt
+    };
+    const result = storedEnvelope.result || cancellationEnvelope?.result || { ok: false, error: "cancelled" };
+    const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalJob, finalConfig, {
+      result,
+      reason: "cancelled",
+      terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null
+    });
+    return {
+      job: finalJob,
+      envelope: {
+        ...storedEnvelope,
+        job: finalJob,
+        result,
+        terminalReason: "cancelled",
+        terminalDescriptor: terminal.terminalDescriptor
+      },
+      beforeStateCommit() {
+        ensureRecoveredTerminalEvents(workspaceRoot, terminal);
+      }
+    };
   });
-  return killWarning ? { cancelled: true, jobId, killWarning } : { cancelled: true, jobId };
+  if (!finalWrite.written) {
+    const current = getJob(workspaceRoot, jobId);
+    if (current?.status === "cancelled") {
+      return { cancelled: true, jobId };
+    }
+    return { cancelled: false, reason: reason || "cancellation_finalization_pending", jobId };
+  }
+  cleanupRuntimePaths(finalConfig);
+  removeJobConfigFile(workspaceRoot, jobId);
+  return { cancelled: true, jobId };
 }
 
 // plugins/polycli/scripts/lib/prompt-runtime.mjs
@@ -6216,7 +6816,8 @@ var DEFAULT_MAX_DIFF_BYTES = null;
 var REVIEW_SCOPES = /* @__PURE__ */ new Set(["auto", "staged", "unstaged", "working-tree", "branch"]);
 var REVIEW_APPEND_SYSTEM = "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
 var REVIEW_CONSTRAINT_ERROR = "non-overridable review hard constraints";
-var AGY_REVIEW_UNSUPPORTED_ERROR = "agy does not expose a non-interactive plan mode; /review cannot enforce read-only constraints.";
+var AGY_REVIEW_UNSUPPORTED_ERROR = "agy --mode plan is not a verified non-interactive hard read-only mode; /review cannot enforce constraints.";
+var STOP_REVIEW_GATE_SAFETY_ERROR = "cannot enforce stop-review safety";
 var REVIEW_UNSUPPORTED_PROVIDERS = /* @__PURE__ */ new Set(["agy"]);
 var GEMINI_REVIEW_DISABLED_MCP_NAME = "__polycli_review_no_mcp__";
 var COPILOT_REVIEW_EXCLUDED_TOOLS = [
@@ -6289,6 +6890,11 @@ function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
 function assertReviewProviderSupported(provider) {
   if (REVIEW_UNSUPPORTED_PROVIDERS.has(provider)) {
     throw new Error(AGY_REVIEW_UNSUPPORTED_ERROR);
+  }
+}
+function assertStopReviewGateProviderSupported(provider) {
+  if (REVIEW_FLAG_EXPECTATIONS[provider]?.stopReviewGateSafety !== "enforced") {
+    throw new Error(`Provider '${provider}' ${STOP_REVIEW_GATE_SAFETY_ERROR}.`);
   }
 }
 var REVIEW_HARD_CONSTRAINTS = {
@@ -6693,6 +7299,8 @@ var RUN_TRACKED_COMMANDS = /* @__PURE__ */ new Set([
   "review",
   "adversarial-review"
 ]);
+var TERMINAL_JOB_STATUSES = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
+var ACTIVE_JOB_STATUSES = /* @__PURE__ */ new Set(["queued", "running"]);
 var RUN_CONTEXT = {
   runId: null,
   command: null,
@@ -6712,20 +7320,124 @@ function buildCurrentRunContext(overrides = {}) {
     ...overrides
   };
 }
-async function recordRunEventForContext(workspaceRoot, runContext, base = {}) {
+function buildRunEventForContext(runContext, base = {}) {
   if (!runContext?.runId) return null;
   const command = base.command || runContext.command;
   const commands = Array.from(
     new Set([...runContext.commands || [], command, ...base.commands || []].filter(Boolean))
   ).sort();
-  return appendRunLedgerEvent(workspaceRoot, {
+  return {
     runId: runContext.runId,
     hostSurface: runContext.hostSurface,
     argv: runContext.argv || [],
     ...base,
     command,
     commands
+  };
+}
+function recordRunEventForContext(workspaceRoot, runContext, base = {}) {
+  const event = buildRunEventForContext(runContext, base);
+  return event ? appendRunLedgerEvent(workspaceRoot, event) : null;
+}
+function prepareTerminalRunEventsForContext(runContext, bases = []) {
+  const events = bases.map((base) => buildRunEventForContext(runContext, base)).filter(Boolean);
+  if (events.length === 0) return { events, terminalDescriptor: null };
+  const terminalDescriptor = createTerminalLedgerDescriptor(events);
+  return {
+    events: events.map((event) => ({ ...event, terminalDescriptor })),
+    terminalDescriptor
+  };
+}
+function ensureTerminalRunEventsForContext(workspaceRoot, prepared) {
+  return prepared.events.length > 0 ? ensureRunLedgerTerminalPair(workspaceRoot, prepared.events) : [];
+}
+function hasTerminalJobEnvelope(envelope) {
+  return TERMINAL_JOB_STATUSES.has(envelope?.job?.status);
+}
+function claimBackgroundWorker(workspaceRoot, jobId) {
+  const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
+    if (!latest || !ACTIVE_JOB_STATUSES.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
+      return null;
+    }
+    if (latest.pid != null && latest.pid !== process5.pid) {
+      return null;
+    }
+    return {
+      job: {
+        ...latest,
+        status: "running",
+        pid: process5.pid,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    };
   });
+  return write.written ? write.job : null;
+}
+function shouldRetainJobConfig(workspaceRoot, jobId) {
+  const current = getJob(workspaceRoot, jobId);
+  return current?.status === "queued" || current?.status === "running";
+}
+function recordBackgroundSpawnFailure(workspaceRoot, jobId, execution, runContext, error) {
+  const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
+  try {
+    const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
+      if (!latest || !ACTIVE_JOB_STATUSES.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
+        return null;
+      }
+      const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+      const failedJob = {
+        ...latest,
+        ...execution.jobMeta,
+        status: "failed",
+        pid: null,
+        finishedAt,
+        updatedAt: finishedAt,
+        error: error.message
+      };
+      const terminalReason = `${execution.kind}_failed`;
+      const terminalEvents = [
+        {
+          command: runContext?.command || execution.kind,
+          kind: execution.kind,
+          provider: execution.provider,
+          phase: "attempt_result",
+          status: "failed",
+          reason: terminalReason,
+          attempt: { ordinal: 1 },
+          jobId,
+          error: { message: String(error.message || error).slice(0, 300) },
+          logFile: failedJob.logFile || null
+        },
+        {
+          command: runContext?.command || execution.kind,
+          kind: execution.kind,
+          provider: execution.provider,
+          phase: "provider_decision",
+          status: "failed",
+          reason: terminalReason,
+          jobId
+        }
+      ];
+      const terminal = prepareTerminalRunEventsForContext(runContext, terminalEvents);
+      return {
+        job: failedJob,
+        envelope: {
+          job: failedJob,
+          result: { ok: false, error: error.message },
+          terminalReason,
+          terminalDescriptor: terminal.terminalDescriptor
+        },
+        beforeStateCommit() {
+          ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+        }
+      };
+    });
+    if (write.written) {
+      cleanupRuntimeOptions(config?.execution?.runtimeOptions);
+      removeJobConfigFile(workspaceRoot, jobId);
+    }
+  } catch {
+  }
 }
 async function recordRunEvent(workspaceRoot, base = {}) {
   return recordRunEventForContext(workspaceRoot, buildCurrentRunContext(), base);
@@ -6746,7 +7458,7 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  polycli-companion.mjs setup [--provider <provider>] [--json]",
+      "  polycli-companion.mjs setup [--provider <provider>] [--probe-auth] [--json]",
       "    [--enable-review-gate|--disable-review-gate]",
       "  polycli-companion.mjs health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]",
       "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
@@ -6827,17 +7539,42 @@ function cacheProviderModel(workspaceRoot, provider, model) {
     writeJsonAtomic(cacheFile, { ...readProviderModelCache(workspaceRoot), [provider]: model }, { mode: 384 });
   });
 }
-async function inspectProvider(provider) {
+function normalizeAuthProbeCost(runtime) {
+  const value = runtime.capabilities?.authProbeCost;
+  return value === "status" || value === "model" ? value : "unknown";
+}
+function deriveAuthState(auth) {
+  if (!auth) return "unknown";
+  const detail = String(auth.detail ?? auth.reason ?? "");
+  if (/auth probe inconclusive/i.test(detail)) return "unknown";
+  if (auth.loggedIn === true) return "authenticated";
+  if (auth.loggedIn === false) return "unauthenticated";
+  return "unknown";
+}
+function skippedAuthDetail({ available, authProbeCost }) {
+  if (!available) return "not checked because the provider CLI is unavailable";
+  if (authProbeCost === "model") {
+    return "not checked by default because authentication uses a model prompt; rerun setup --probe-auth to opt in";
+  }
+  return "not checked because this provider has no declared safe auth-status probe";
+}
+async function inspectProvider(provider, { probeAuth = false } = {}) {
   const runtime = getProviderRuntime(provider);
   const availability = await Promise.resolve(runtime.getAvailability(process5.cwd()));
-  const auth = await Promise.resolve(runtime.getAuthStatus(process5.cwd()));
+  const available = availability.available === true;
+  const authProbeCost = normalizeAuthProbeCost(runtime);
+  const authChecked = available && (probeAuth || authProbeCost === "status");
+  const auth = authChecked ? await Promise.resolve(runtime.getAuthStatus(process5.cwd())) : null;
   const row = {
     provider,
-    available: availability.available ?? false,
+    available,
     availabilityDetail: availability.detail ?? null,
-    loggedIn: auth.loggedIn ?? false,
-    authDetail: auth.detail ?? auth.reason ?? null,
-    model: auth.model ?? null,
+    loggedIn: auth?.loggedIn ?? null,
+    authState: deriveAuthState(auth),
+    authChecked,
+    authProbeCost,
+    authDetail: auth?.detail ?? auth?.reason ?? skippedAuthDetail({ available, authProbeCost }),
+    model: auth?.model ?? null,
     capabilities: runtime.capabilities
   };
   cacheProviderModel(resolveWorkspaceRoot(process5.cwd()), provider, row.model);
@@ -6846,11 +7583,15 @@ async function inspectProvider(provider) {
 async function inspectProviderAvailability(provider) {
   const runtime = getProviderRuntime(provider);
   const availability = await Promise.resolve(runtime.getAvailability(process5.cwd()));
+  const authProbeCost = normalizeAuthProbeCost(runtime);
   return {
     provider,
     available: availability.available ?? false,
     availabilityDetail: availability.detail ?? null,
     loggedIn: null,
+    authState: "unknown",
+    authChecked: false,
+    authProbeCost,
     authDetail: "not checked by health",
     model: null,
     capabilities: runtime.capabilities
@@ -7272,6 +8013,9 @@ async function startBackgroundExecution(execution, asJson) {
     stdio: ["ignore", logFd, logFd],
     detached: true
   });
+  child.once("error", (error) => {
+    recordBackgroundSpawnFailure(workspaceRoot, job.jobId, execution, runContext, error);
+  });
   child.unref();
   fs9.closeSync(logFd);
   const runningWrite = updateJobAtomically(workspaceRoot, job.jobId, (latest) => {
@@ -7286,7 +8030,10 @@ async function startBackgroundExecution(execution, asJson) {
     };
   });
   const runningJob = runningWrite.written ? runningWrite.job : getJob(workspaceRoot, job.jobId) || job;
-  if (runContext) {
+  if (!ACTIVE_JOB_STATUSES.has(runningJob.status)) {
+    removeJobConfigFile(workspaceRoot, job.jobId);
+  }
+  if (runContext && ACTIVE_JOB_STATUSES.has(runningJob.status)) {
     await recordRunEventForContext(workspaceRoot, runContext, {
       command: execution.kind,
       kind: execution.kind,
@@ -7308,7 +8055,7 @@ async function startBackgroundExecution(execution, asJson) {
 }
 async function runSetup(rawArgs) {
   const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json", "enable-review-gate", "disable-review-gate"],
+    booleanOptions: ["json", "probe-auth", "enable-review-gate", "disable-review-gate"],
     valueOptions: ["provider"]
   });
   if (options["enable-review-gate"] && options["disable-review-gate"]) {
@@ -7332,7 +8079,7 @@ async function runSetup(rawArgs) {
   const results = [];
   for (const provider of providers) {
     results.push({
-      ...await inspectProvider(provider),
+      ...await inspectProvider(provider, { probeAuth: Boolean(options["probe-auth"]) }),
       stopReviewGate: gateConfig.stopReviewGate === true,
       stopReviewGateWorkspace: workspaceRoot
     });
@@ -7347,7 +8094,8 @@ async function runSetup(rawArgs) {
       [
         `[${row.provider}]`,
         `available=${row.available ? "yes" : "no"}`,
-        `loggedIn=${row.loggedIn ? "yes" : "no"}`,
+        `auth=${row.authState}`,
+        `authProbe=${row.authChecked ? "checked" : `skipped:${row.authProbeCost}`}`,
         row.model ? `model=${row.model}` : null,
         row.availabilityDetail ? `version=${row.availabilityDetail}` : null,
         row.authDetail ? `detail=${row.authDetail}` : null
@@ -7583,6 +8331,51 @@ async function runRescue(rawArgs) {
   }
   await runForegroundExecution(execution, options.json);
 }
+function buildStopReviewGateExecution(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, {
+    booleanOptions: ["json"],
+    valueOptions: ["provider"]
+  });
+  const { provider, remainingPositionals } = resolveProvider({
+    provider: options.provider,
+    positionals
+  });
+  assertStopReviewGateProviderSupported(provider);
+  const prompt = remainingPositionals.join(" ").trim();
+  if (!prompt) {
+    throw new Error("Missing prompt text for stop-review-gate.");
+  }
+  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const defaultModel = readCachedProviderModel(workspaceRoot, provider);
+  return {
+    options,
+    execution: {
+      provider,
+      // This private command uses the normal review timing budget and schema,
+      // but its separate kind keeps stop-time gate latency out of ordinary
+      // review cohorts. It also does not record a last-used provider or expose
+      // a general-purpose prompt surface.
+      kind: "stop-review-gate",
+      prompt,
+      userPrompt: "stop-time review gate",
+      model: null,
+      defaultModel,
+      cwd: process5.cwd(),
+      timeout: resolveTimeoutMs(provider, "review", { defaultModel }),
+      meta: { stopReviewGate: true },
+      jobMeta: {},
+      measurementScope: "request",
+      runtimeOptions: buildReviewRuntimeOptions({
+        provider,
+        cwd: process5.cwd()
+      })
+    }
+  };
+}
+async function runStopReviewGate(rawArgs) {
+  const { options, execution } = buildStopReviewGateExecution(rawArgs);
+  await runForegroundExecution(execution, options.json);
+}
 function buildReviewExecution(rawArgs, { adversarial }) {
   const { options, positionals } = parseArgs(rawArgs, {
     booleanOptions: ["json", "background", "wait"],
@@ -7802,6 +8595,9 @@ function formatMetric(metric) {
   }
   return metric.status;
 }
+function formatCohortValue(value) {
+  return value ?? "unspecified";
+}
 function renderTimingReport(records, aggregate) {
   if (records.length === 0) {
     return "No timing records found.";
@@ -7819,12 +8615,17 @@ function renderTimingReport(records, aggregate) {
       return `- ${record.completedAt} ${record.provider} ${record.kind || "prompt"} ${record.measurementScope} ${suffix}`;
     }),
     "",
-    "Aggregate:"
+    "Comparable timing cohorts (percentiles stay within provider, kind, scope, outcome, and runtime persistence):"
   ];
-  for (const [provider, summary] of Object.entries(aggregate.byProvider)) {
+  for (const cohort of aggregate.cohorts) {
     lines.push(
-      `- ${provider}: count=${summary.recordCount} total.p50=${summary.metrics.total.p50} total.p95=${summary.metrics.total.p95}`
+      `- provider=${cohort.provider} kind=${formatCohortValue(cohort.kind)} scope=${cohort.measurementScope} outcome=${formatCohortValue(cohort.outcome)} persistence=${cohort.runtimePersistence}: count=${cohort.recordCount} total.p50=${cohort.metrics.total.p50} total.p95=${cohort.metrics.total.p95}`
     );
+  }
+  lines.push("", "Provider summary (counts/capability only; use comparable cohorts for percentiles):");
+  for (const [provider, summary] of Object.entries(aggregate.byProvider)) {
+    const mixed = summary.mixedDimensions.length > 0 ? ` mixed=${summary.mixedDimensions.join(",")}` : "";
+    lines.push(`- ${provider}: count=${summary.recordCount} cohorts=${summary.cohortCount}${mixed}`);
   }
   return lines.join("\n");
 }
@@ -7863,7 +8664,8 @@ async function runTiming(rawArgs) {
     provider,
     historyLimit: limit == null ? "all" : limit,
     recordCount: records.length,
-    aggregateScope: "records"
+    aggregateScope: "records",
+    percentileCohortDimensions: aggregate.cohortDimensions
   };
   if (options.json) {
     output({ records, aggregate, metadata }, true);
@@ -7881,9 +8683,9 @@ async function runJobWorker(rawArgs) {
     throw new Error(`Unable to read job config ${configFile}`);
   }
   const { workspaceRoot, execution, jobId, runContext } = payload;
-  const current = getJob(workspaceRoot, jobId);
+  const current = claimBackgroundWorker(workspaceRoot, jobId);
   if (!current) {
-    throw new Error(`Unknown job ${jobId}`);
+    return;
   }
   if (runContext?.runId) {
     await recordRunEventForContext(workspaceRoot, runContext, {
@@ -7916,179 +8718,161 @@ async function runJobWorker(rawArgs) {
         appendPreview(current.logFile, execution.provider, event);
       }
     });
-    const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {
-      if (!latest || latest.status === "cancelled") {
+    if (result.timing) {
+      appendTimingRecord(workspaceRoot, result.timing);
+    }
+    cacheProviderModel(workspaceRoot, execution.provider, result.model);
+    const compactResult = compactProviderResult(result);
+    const sessionArtifactPath = resolveSessionArtifactPath(
+      execution.provider,
+      result.sessionId,
+      execution.cwd
+    );
+    const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
+      if (!latest || latest.status === "cancelled" || hasTerminalJobEnvelope(storedEnvelope)) {
         return null;
       }
+      const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
       const finishedJob = {
         ...latest,
         ...execution.jobMeta,
         status: result.ok ? "completed" : "failed",
         pid: null,
-        finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        finishedAt,
+        updatedAt: finishedAt,
         sessionId: result.sessionId ?? null,
         error: result.error ?? null
       };
-      return {
-        job: finishedJob,
-        envelope: {
-          job: finishedJob,
-          result: compactProviderResult(result)
-        }
-      };
-    });
-    if (!write.written) {
-      const latest = getJob(workspaceRoot, jobId);
-      if (runContext?.runId && latest && latest.status === "cancelled") {
-        await recordRunEventForContext(workspaceRoot, runContext, {
+      const terminalReason = result.ok ? null : `${execution.kind}_failed`;
+      const terminalEvents = runContext?.runId ? [
+        {
           command: runContext.command || execution.kind,
           kind: execution.kind,
           provider: execution.provider,
           phase: "attempt_result",
-          status: "cancelled",
+          status: result.ok ? "completed" : "failed",
+          reason: terminalReason,
           attempt: { ordinal: 1 },
           jobId,
+          model: result.model || null,
           sessionId: result.sessionId ?? null,
-          durationMs: Date.now() - startedAt
-        });
-        await recordRunEventForContext(workspaceRoot, runContext, {
+          sessionArtifactPath,
+          defaultModel: result.defaultModel || null,
+          preview: result.response ? String(result.response).slice(0, 180) : null,
+          stdoutBytes: compactResult.stdoutBytes ?? null,
+          stderrBytes: compactResult.stderrBytes ?? null,
+          errorCode: result.errorCode ?? result.timing?.errorCode ?? null,
+          failureClass: result.errorCode ?? result.timing?.errorCode ?? null,
+          durationMs: Date.now() - startedAt,
+          timingRef: result.timing ? {
+            provider: result.timing.provider,
+            kind: result.timing.kind,
+            completedAt: result.timing.completedAt
+          } : null,
+          error: result.ok || !result.error ? null : { message: String(result.error).slice(0, 300) },
+          logFile: finishedJob.logFile || null
+        },
+        {
           command: runContext.command || execution.kind,
           kind: execution.kind,
           provider: execution.provider,
           phase: "provider_decision",
-          status: "cancelled",
-          reason: "job_cancelled",
+          status: result.ok ? "adopted" : "failed",
+          reason: terminalReason,
           jobId,
-          sessionId: result.sessionId ?? null
-        });
+          sessionId: result.sessionId ?? null,
+          sessionArtifactPath
+        }
+      ] : [];
+      const terminal = prepareTerminalRunEventsForContext(runContext, terminalEvents);
+      return {
+        job: finishedJob,
+        envelope: {
+          job: finishedJob,
+          result: compactResult,
+          terminalReason,
+          terminalDescriptor: terminal.terminalDescriptor
+        },
+        // state.mjs writes this envelope first. A crash or ledger failure leaves a recoverable
+        // intent instead of exposing a terminal state with only half of its ledger pair.
+        beforeStateCommit() {
+          ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+        }
+      };
+    });
+    if (!write.written) {
+      if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
+        removeJobConfigFile(workspaceRoot, jobId);
       }
-      removeJobConfigFile(workspaceRoot, jobId);
       return;
-    }
-    if (result.timing) {
-      appendTimingRecord(workspaceRoot, result.timing);
-    }
-    cacheProviderModel(workspaceRoot, execution.provider, result.model);
-    if (runContext?.runId) {
-      const compactResult = compactProviderResult(result);
-      const sessionArtifactPath = resolveSessionArtifactPath(
-        execution.provider,
-        result.sessionId,
-        execution.cwd
-      );
-      await recordRunEventForContext(workspaceRoot, runContext, {
-        command: runContext.command || execution.kind,
-        kind: execution.kind,
-        provider: execution.provider,
-        phase: "attempt_result",
-        status: result.ok ? "completed" : "failed",
-        attempt: { ordinal: 1 },
-        jobId,
-        model: result.model || null,
-        sessionId: result.sessionId ?? null,
-        sessionArtifactPath,
-        defaultModel: result.defaultModel || null,
-        preview: result.response ? String(result.response).slice(0, 180) : null,
-        stdoutBytes: compactResult.stdoutBytes ?? null,
-        stderrBytes: compactResult.stderrBytes ?? null,
-        errorCode: result.errorCode ?? result.timing?.errorCode ?? null,
-        failureClass: result.errorCode ?? result.timing?.errorCode ?? null,
-        durationMs: Date.now() - startedAt,
-        timingRef: result.timing ? {
-          provider: result.timing.provider,
-          kind: result.timing.kind,
-          completedAt: result.timing.completedAt
-        } : null,
-        error: result.ok || !result.error ? null : { message: String(result.error).slice(0, 300) },
-        logFile: current.logFile || null
-      });
-      await recordRunEventForContext(workspaceRoot, runContext, {
-        command: runContext.command || execution.kind,
-        kind: execution.kind,
-        provider: execution.provider,
-        phase: "provider_decision",
-        status: result.ok ? "adopted" : "failed",
-        reason: result.ok ? null : `${execution.kind}_failed`,
-        jobId,
-        sessionId: result.sessionId ?? null,
-        sessionArtifactPath
-      });
     }
     removeJobConfigFile(workspaceRoot, jobId);
   } catch (error) {
-    const write = updateJobAtomically(workspaceRoot, jobId, (latest) => {
-      if (!latest || latest.status === "cancelled") {
+    const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
+      if (!latest || latest.status === "cancelled" || hasTerminalJobEnvelope(storedEnvelope)) {
         return null;
       }
+      const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
       const failedJob = {
         ...latest,
         ...execution.jobMeta,
         status: "failed",
         pid: null,
-        finishedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        finishedAt,
+        updatedAt: finishedAt,
         error: error.message
       };
-      return {
-        job: failedJob,
-        envelope: {
-          job: failedJob,
-          result: { ok: false, error: error.message }
-        }
-      };
-    });
-    if (!write.written) {
-      const latest = getJob(workspaceRoot, jobId);
-      if (runContext?.runId && latest && latest.status === "cancelled") {
-        await recordRunEventForContext(workspaceRoot, runContext, {
+      const terminalReason = `${execution.kind}_failed`;
+      const terminalEvents = runContext?.runId ? [
+        {
           command: runContext.command || execution.kind,
           kind: execution.kind,
           provider: execution.provider,
           phase: "attempt_result",
-          status: "cancelled",
+          status: "failed",
+          reason: terminalReason,
           attempt: { ordinal: 1 },
           jobId,
-          durationMs: Date.now() - startedAt
-        });
-        await recordRunEventForContext(workspaceRoot, runContext, {
+          durationMs: Date.now() - startedAt,
+          error: { message: String(error?.message || error).slice(0, 300) },
+          logFile: failedJob.logFile || null
+        },
+        {
           command: runContext.command || execution.kind,
           kind: execution.kind,
           provider: execution.provider,
           phase: "provider_decision",
-          status: "cancelled",
-          reason: "job_cancelled",
+          status: "failed",
+          reason: terminalReason,
           jobId
-        });
+        }
+      ] : [];
+      const terminal = prepareTerminalRunEventsForContext(runContext, terminalEvents);
+      return {
+        job: failedJob,
+        envelope: {
+          job: failedJob,
+          result: { ok: false, error: error.message },
+          terminalReason,
+          terminalDescriptor: terminal.terminalDescriptor
+        },
+        beforeStateCommit() {
+          ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+        }
+      };
+    });
+    if (!write.written) {
+      if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
+        removeJobConfigFile(workspaceRoot, jobId);
       }
-      removeJobConfigFile(workspaceRoot, jobId);
       return;
-    }
-    if (runContext?.runId) {
-      await recordRunEventForContext(workspaceRoot, runContext, {
-        command: runContext.command || execution.kind,
-        kind: execution.kind,
-        provider: execution.provider,
-        phase: "attempt_result",
-        status: "failed",
-        attempt: { ordinal: 1 },
-        jobId,
-        durationMs: Date.now() - startedAt,
-        error: { message: String(error?.message || error).slice(0, 300) },
-        logFile: current.logFile || null
-      });
-      await recordRunEventForContext(workspaceRoot, runContext, {
-        command: runContext.command || execution.kind,
-        kind: execution.kind,
-        provider: execution.provider,
-        phase: "provider_decision",
-        status: "failed",
-        reason: `${execution.kind}_failed`,
-        jobId
-      });
     }
     removeJobConfigFile(workspaceRoot, jobId);
     throw error;
   } finally {
-    cleanupRuntimeOptions(execution.runtimeOptions);
+    if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
+      cleanupRuntimeOptions(execution.runtimeOptions);
+    }
   }
 }
 function formatDebugRunsTable(runs) {
@@ -8249,6 +9033,7 @@ async function dispatchCommand(command, rawArgs) {
   if (command === "timing") return runTiming(rawArgs);
   if (command === "debug") return runDebugCommand(rawArgs);
   if (command === "sessions") return runSessionsCommand(rawArgs);
+  if (command === "_stop-review-gate") return runStopReviewGate(rawArgs);
   if (command === "_job-worker") return runJobWorker(rawArgs);
   throw new Error(`Unknown subcommand '${command}'.`);
 }

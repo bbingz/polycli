@@ -46,7 +46,7 @@ Choose Polycli with @, then ask it to run: review --provider gemini --scope stag
 Choose Polycli with @, then ask it to run: rescue --provider kimi --background "debug this failure"
 ```
 
-Prompt-bearing commands should include `--provider`. Do not use `setup` as a routine preflight; `setup` is only the cheap install/auth diagnostic when a model request is not appropriate.
+Prompt-bearing commands should include `--provider`. Do not use `setup` as a routine preflight; by default it performs install and status-only auth inspection, skipping any auth check that would send a model prompt. Pass `setup --probe-auth` only when that model-based auth probe is explicitly desired.
 
 ## Observability
 

@@ -97,6 +97,80 @@ test("validateTimingRecord rejects negative metric milliseconds", () => {
   assert.match(result.errors.join("\n"), /metrics\.ttft\.ms must be > 0/);
 });
 
+test("validateTimingRecord rejects invalid values for declared optional schema fields", () => {
+  const validRecord = {
+    version: 1,
+    provider: "claude",
+    runtimePersistence: "session",
+    measurementScope: "request",
+    completedAt: "2026-04-21T10:00:00.000Z",
+    providerVersion: "2.1.209",
+    kind: "ask",
+    outcome: "success",
+    exitCode: 0,
+    terminationReason: "completed",
+    responseMatched: true,
+    errorCode: "none",
+    meta: { source: "test" },
+    metrics: {
+      cold: { status: "unsupported", ms: null },
+      ttft: { status: "measured", ms: 20 },
+      gen: { status: "measured", ms: 30 },
+      tool: { status: "missing", ms: null },
+      retry: { status: "unsupported", ms: null },
+      tail: { status: "measured", ms: 5 },
+      total: { status: "measured", ms: 66 },
+    },
+  };
+  const invalidCases = [
+    ["providerVersion", 2, /providerVersion must be a string/],
+    ["kind", false, /kind must be a string/],
+    ["outcome", "partial", /outcome must be one of/],
+    ["exitCode", 0.5, /exitCode must be an integer/],
+    ["terminationReason", "", /terminationReason must be a non-empty string/],
+    ["responseMatched", "true", /responseMatched must be a boolean/],
+    ["errorCode", "", /errorCode must be a non-empty string/],
+    ["meta", [], /meta must be an object/],
+    ["completedAt", "2026-04-21", /completedAt must be an ISO-8601 date string/],
+    ["completedAt", "2026-02-30T10:00:00.000Z", /completedAt must be an ISO-8601 date string/],
+  ];
+
+  for (const [field, value, expectedError] of invalidCases) {
+    const result = validateTimingRecord({ ...validRecord, [field]: value });
+    assert.equal(result.ok, false, `${field} should be rejected`);
+    assert.match(result.errors.join("\n"), expectedError, `${field} error should explain the mismatch`);
+  }
+});
+
+test("validateTimingRecord accepts optional fields that match the timing schema", () => {
+  const result = validateTimingRecord({
+    version: 1,
+    provider: "claude",
+    runtimePersistence: "session",
+    measurementScope: "request",
+    completedAt: "2026-04-21T10:00:00+08:00",
+    providerVersion: "2.1.209",
+    kind: "ask",
+    outcome: "terminated",
+    exitCode: 143,
+    terminationReason: "signal",
+    responseMatched: false,
+    errorCode: "terminated",
+    meta: { source: "test" },
+    metrics: {
+      cold: { status: "unsupported", ms: null },
+      ttft: { status: "measured", ms: 20 },
+      gen: { status: "measured", ms: 30 },
+      tool: { status: "missing", ms: null },
+      retry: { status: "unsupported", ms: null },
+      tail: { status: "measured", ms: 5 },
+      total: { status: "measured", ms: 66 },
+    },
+  });
+
+  assert.deepEqual(result, { ok: true, errors: [] });
+});
+
 test("timing JSON schema mirrors validator status/ms and total contracts", () => {
   const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
   const metricBranches = schema.$defs.metric.oneOf;

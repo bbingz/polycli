@@ -8,6 +8,7 @@ test("utils index exports expected surface", () => {
     "LockfileTimeoutError",
     "UUID_SESSION_ID_REGEX",
     "appendNdjson",
+    "appendNdjsonBatch",
     "binaryAvailable",
     "createLineDecoder",
     "ensureParentDir",

@@ -8,7 +8,7 @@ description: Internal guidance for composing Grok (xAI) prompts for coding, revi
 Guidance for prompts sent to the Grok Build CLI via `/polycli:ask|rescue|review --provider grok`.
 
 ## When to reach for grok
-- A fast, capable second opinion on coding/review tasks; current local default is `grok-build`.
+- A fast, capable second opinion on coding/review tasks; current local default is `grok-4.5`.
 - Reasoning-heavy diagnosis: pass `--effort high` (or `xhigh`/`max`) so grok spends more reasoning.
 
 ## Prompt shape

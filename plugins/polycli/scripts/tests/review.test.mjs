@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  assertStopReviewGateProviderSupported,
   buildReviewPrompt,
   buildReviewRuntimeOptions,
   collectReviewContext,
@@ -155,14 +156,23 @@ test("buildReviewRuntimeOptions applies cmd plan-mode hard constraints", () => {
   assert.deepEqual(options.extraArgs, ["--permission-mode", "plan"]);
 });
 
-test("buildReviewRuntimeOptions rejects agy because it has no plan mode", () => {
+test("buildReviewRuntimeOptions rejects agy until its non-interactive plan safety is verified", () => {
   assert.throws(
     () => buildReviewRuntimeOptions({
       provider: "agy",
       cwd: process.cwd(),
     }),
-    /agy does not expose a non-interactive plan mode; \/review cannot enforce read-only constraints\./
+    /agy --mode plan is not a verified non-interactive hard read-only mode; \/review cannot enforce constraints\./
   );
+});
+
+test("stop-review gate accepts only providers with enforced runtime constraints", () => {
+  for (const provider of ["claude", "copilot", "gemini", "qwen", "opencode", "pi", "cmd", "grok"]) {
+    assert.doesNotThrow(() => assertStopReviewGateProviderSupported(provider), provider);
+  }
+  for (const provider of ["agy", "kimi", "minimax"]) {
+    assert.throws(() => assertStopReviewGateProviderSupported(provider), /cannot enforce stop-review safety/i);
+  }
 });
 
 test("buildReviewRuntimeOptions leaves minimax on mmx text chat defaults", () => {

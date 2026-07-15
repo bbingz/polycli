@@ -98,9 +98,9 @@ const CHECKS = [
   {
     provider: "qwen",
     bin: "qwen",
-    helpArgs: ["--help"],
     expect: REVIEW_FLAG_EXPECTATIONS.qwen.expectFlags,
-    notes: "Prompt/review constraints use approval-mode plan and exclude-tools; ask is bounded at --max-session-turns 20 instead of the broken one-turn cap.",
+    probes: REVIEW_FLAG_EXPECTATIONS.qwen.probes,
+    notes: "Prompt/review constraints use approval-mode plan and exclude-tools; ask is bounded at --max-session-turns 20. Qwen's minimal bare help requires complementary side-effect-free option+help probes.",
   },
   {
     provider: "copilot",
@@ -135,19 +135,14 @@ const CHECKS = [
     bin: process.env.KIMI_CLI_BIN || "kimi",
     helpArgs: ["--help"],
     expect: REVIEW_FLAG_EXPECTATIONS.kimi.expectFlags,
-    notes: "kimi-code one-shot uses -p/--prompt + --output-format stream-json (review is prompt-only; -p mode rejects --plan/--auto). Drift here means the runtime invocation contract changed.",
+    notes: "kimi-code one-shot uses -p/--prompt + --output-format stream-json. Review is prompt-only because no independently verified flag-based no-tool/read-only lever is available. Drift here means the runtime invocation contract changed.",
   },
   {
     provider: "agy",
     bin: process.env.AGY_CLI_BIN || "agy",
     helpArgs: ["--help"],
     expect: REVIEW_FLAG_EXPECTATIONS.agy.expectFlags,
-    // agy is review-unsupported because it has NO plan/approval flag. An empty
-    // `expect` can only catch flags disappearing, so we also `forbid` the
-    // plan-mode flags other providers use: if any appears, agy may now support
-    // a read-only mode and /review support should be re-evaluated.
-    forbid: REVIEW_FLAG_EXPECTATIONS.agy.forbidFlags,
-    notes: "agy has no plan-mode flag; /review is unsupported. If a forbidden plan/approval flag appears, re-evaluate enabling /review for agy.",
+    notes: "agy exposes --mode plan, but /review remains unsupported: its non-interactive -p path has no verified hard no-write/no-command guarantee, and --dangerously-skip-permissions applies command permissions in every mode.",
   },
   {
     provider: "minimax",
@@ -192,20 +187,20 @@ function probe({ bin, helpArgs }) {
   }
 }
 
-function check(entry) {
+export function checkCliFlags(entry, { probeFn = probe } = {}) {
   const { provider, expect, forbid = [], notes } = entry;
   const probes = entry.probes ?? [{ helpArgs: entry.helpArgs, expect }];
   const missing = [];
-  let lastText = "";
+  const texts = [];
   for (const probeEntry of probes) {
-    const result = probe({ ...entry, helpArgs: probeEntry.helpArgs });
+    const result = probeFn({ ...entry, helpArgs: probeEntry.helpArgs });
     if (result.skipped) {
       return { provider, status: "skipped", reason: result.reason, notes };
     }
-    lastText = result.text;
+    texts.push(result.text);
     missing.push(...probeEntry.expect.filter((flag) => !result.text.includes(flag)));
   }
-  const appeared = forbid.filter((flag) => lastText.includes(flag));
+  const appeared = forbid.filter((flag) => texts.some((text) => text.includes(flag)));
   if (missing.length === 0 && appeared.length === 0) {
     return { provider, status: "ok" };
   }
@@ -249,7 +244,7 @@ function formatAnchorRow(row) {
 
 function main(argv = process.argv.slice(2)) {
   const strict = argv.includes("--strict");
-  const results = CHECKS.map((entry) => check(entry));
+  const results = CHECKS.map((entry) => checkCliFlags(entry));
   const envReminders = ENV_ONLY.map((entry) => ({
     provider: entry.provider,
     status: "env-only",

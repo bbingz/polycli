@@ -34,6 +34,7 @@ The root export mirrors `src/index.js`:
 - `runtimePersistence` distinguishes `ephemeral`, `session`, and `daemon` runtimes.
 - `measurementScope` distinguishes `request`, `turn`, and `job` measurements.
 - Aggregation preserves capability-aware metric summaries plus `runtimePersistenceCounts` and `measurementScopeCounts`.
+- `aggregateTimingRecords()` also returns additive `cohorts`, keyed by `provider`, `kind`, `measurementScope`, `outcome`, and `runtimePersistence`. Use a cohort's percentiles for comparisons. The backward-compatible `byProvider` summary exposes `cohortCount` and `mixedDimensions`; its pooled percentiles are not a comparable cross-cohort result when `mixedDimensions` is non-empty.
 
 ## Example
 

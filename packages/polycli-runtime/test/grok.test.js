@@ -28,8 +28,8 @@ function withFakeGrokBin(source, fn) {
 
 test("buildGrokInvocation builds the -p one-shot with model/effort/permission/approve/resume", () => {
   assert.deepEqual(
-    buildGrokInvocation({ prompt: "hello", model: "grok-build", effort: "high", alwaysApprove: true }).args,
-    ["-p", "hello", "--output-format", "json", "-m", "grok-build", "--effort", "high", "--always-approve"]
+    buildGrokInvocation({ prompt: "hello", model: "grok-4.5", effort: "high", alwaysApprove: true }).args,
+    ["-p", "hello", "--output-format", "json", "-m", "grok-4.5", "--effort", "high", "--always-approve"]
   );
   assert.deepEqual(
     buildGrokInvocation({ prompt: "rev", outputFormat: "streaming-json", permissionMode: "plan" }).args,
@@ -54,6 +54,16 @@ test("parseGrokJsonResult reads text + structured sessionId, never scanning pros
   assert.equal(parsed.ok, true);
   assert.match(parsed.response, /123e4567/);
   assert.equal(parsed.sessionId, "019e8685-1031-70a0-9ac4-37dcbcefc163");
+});
+
+test("parseGrokJsonResult falls back to the current Grok default model", () => {
+  const parsed = parseGrokJsonResult(
+    JSON.stringify({ text: "answer", stopReason: "EndTurn", sessionId: "019e8685-1031-70a0-9ac4-37dcbcefc163" }),
+    "",
+    0
+  );
+
+  assert.equal(parsed.model, "grok-4.5");
 });
 
 test("parseGrokJsonResult fails on a non-zero exit even with valid JSON", () => {
@@ -199,10 +209,10 @@ process.exit(2);
 
 test("getGrokAuthStatus infers login state from `grok models` without spending a model call", () => {
   const authed = getGrokAuthStatus(process.cwd(), {
-    runner: () => ({ error: null, status: 0, stdout: "You are logged in with grok.com.\n\nDefault model: grok-build\n", stderr: "" }),
+    runner: () => ({ error: null, status: 0, stdout: "You are logged in with grok.com.\n\nDefault model: grok-4.5\n", stderr: "" }),
   });
   assert.equal(authed.loggedIn, true);
-  assert.equal(authed.model, "grok-build");
+  assert.equal(authed.model, "grok-4.5");
 
   const loggedOut = getGrokAuthStatus(process.cwd(), {
     runner: () => ({ error: null, status: 1, stdout: "", stderr: "Please log in with `grok login`." }),

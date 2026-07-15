@@ -27,9 +27,9 @@
 
 这是一个 **utility-only 的 Path B monorepo**：不假装能抹平 provider 之间的差异，也不引入 runtime 基类。它把官方上游 CLI 作为子进程组合起来，统一命令面，并通过四态 timing schema 如实暴露能力差异。
 
-## 最新版本：v0.6.28
+## 最新版本：v0.6.29
 
-在 v0.6.27 基础上发布 2026-06-26 provider-state 复核结果：重新检查 11 个 provider CLI 的本地安装、上游版本源和 adapter flag/auth/argv 契约，未发现版本缺口或破坏性漂移；Copilot 精确 session resume 改为 `--session-id <id>`，避免无效的空格分隔 `--resume <id>`；MiniMax JSON 解析现在把 Anthropic-style `stop_reason` 保留为 `finishReason`；Kimi 版本标签和 provider-state 文档同步到 `kimi-code 0.19.1`。Claude `ask` / `review` 仍走 headless `claude -p` 默认路径。详情见英文 release notes：[`docs/release-notes-v0.6.28.md`](./docs/release-notes-v0.6.28.md)。
+本次补丁加固当前 provider 与 host 表面，不改变 Path B 边界：后台 job 的取消、结果 envelope、timing 与成对 run-ledger 记录在 worker 异常或取消竞态下仍可恢复；fixture capture lifecycle 明确区分 active、Gemini 个体登录路线的 `retired`，以及为 parser replay 保留的 Copilot 暂时 `archived` 路线；OpenCode 改用当前 `--auto` 执行面并保留 `session.error`，同时以 fixture 兼容通道覆盖 OpenCode2 preview（稳定 runtime 仍为 `opencode`）；`@bbingz/polycli-utils` 增加原子 NDJSON batch 写入，`@bbingz/polycli-timing` 按可比较 cohort 输出而不混合不兼容时序。详情见英文 release notes：[`docs/release-notes-v0.6.29.md`](./docs/release-notes-v0.6.29.md)。
 
 ## 为什么要用 polycli？
 
@@ -116,7 +116,7 @@ Choose Polycli with @, then ask it to run: rescue --provider gemini --background
 
 | 命令 | 作用 |
 |---|---|
-| `setup` | 检查 provider CLI 是否安装、是否登录（不发模型请求，便宜） |
+| `setup` | 检查 provider CLI 安装与 status 型认证；可能发送模型 prompt 的认证探测需显式加 `--probe-auth` |
 | `health` | 除 Claude 外的端到端短 prompt 探针；Claude 使用 auth-only status；返回 `healthyProviders` 并在适用时写入 timing |
 | `ask` | 单次提问 |
 | `review` | 基于当前 `git diff` 做代码审查 |
@@ -173,6 +173,7 @@ polycli 的 timing 契约统一的是**状态表达**，不是数值。每个指
 - `runtimePersistence` —— `ephemeral | session | daemon`
 - `measurementScope` —— `request | turn | job`
 - outcome diagnostics —— `outcome`, `exitCode`, `terminationReason`, `responseMatched`, and `errorCode`
+- `kind` 与可选 outcome diagnostics 会参与聚合 cohort。百分位数只在 `provider + kind + measurementScope + outcome + runtimePersistence` 完全一致的 cohort 内可比较；兼容保留的 `byProvider` JSON 汇总会给出 `cohortCount` 和 `mixedDimensions`，一旦存在 mixed dimensions，就不要把其中汇总的百分位数当作可比较结果。
 
 ## Packages
 

@@ -1,0 +1,18 @@
+{
+  "provider": "opencode2",
+  "name": "stream-success",
+  "capturedAt": "2026-07-14T23:50:51.016Z",
+  "version": "opencode2 v0.0.0-next-15493",
+  "argv": [
+    "run",
+    "Reply with exactly HELLO_OPENCODE2_FIXTURE and nothing else.",
+    "--format",
+    "json",
+    "--agent",
+    "plan"
+  ],
+  "expected": {
+    "response": "HELLO_OPENCODE2_FIXTURE",
+    "sessionId": "[REDACTED]"
+  }
+}

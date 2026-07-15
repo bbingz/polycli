@@ -139,6 +139,145 @@ test("validateFixtureMetadata rejects metadata without a matching stream capture
   );
 });
 
+test("validateFixtureMetadata requires a complete retired lifecycle record", () => {
+  const root = makeTempRoot();
+  writeMeta(root, "gemini/stream-success.meta.json", {
+    provider: "gemini",
+    name: "stream-success",
+    capturedAt: "2026-04-22T12:44:18.282Z",
+    version: "0.38.2",
+    argv: ["prompt"],
+    expected: { response: "HELLO_GEMINI_FIXTURE" },
+    lifecycle: {
+      status: "retired",
+      retiredAt: "2026-07-15T00:00:00.000Z",
+    },
+  });
+  writeStream(root, "gemini/stream-success.stream.txt");
+
+  assert.throws(
+    () => validateFixtureMetadata({ fixtureRoot: root, requiredSuccessProviders: ["gemini"] }),
+    /gemini\/stream-success\.meta\.json: lifecycle\.reason must be a non-empty string/
+  );
+});
+
+test("validateFixtureMetadata rejects an unknown fixture lifecycle status", () => {
+  const root = makeTempRoot();
+  writeMeta(root, "gemini/stream-success.meta.json", {
+    provider: "gemini",
+    name: "stream-success",
+    capturedAt: "2026-04-22T12:44:18.282Z",
+    version: "0.38.2",
+    argv: ["prompt"],
+    expected: { response: "HELLO_GEMINI_FIXTURE" },
+    lifecycle: {
+      status: "paused",
+      retiredAt: "2026-07-15T00:00:00.000Z",
+      reason: "not a supported lifecycle state",
+    },
+  });
+  writeStream(root, "gemini/stream-success.stream.txt");
+
+  assert.throws(
+    () => validateFixtureMetadata({ fixtureRoot: root, requiredSuccessProviders: ["gemini"] }),
+    /gemini\/stream-success\.meta\.json: lifecycle\.status must be "retired" or "archived" when present/
+  );
+});
+
+test("validateFixtureMetadata requires a complete archived lifecycle record", () => {
+  const root = makeTempRoot();
+  writeMeta(root, "copilot/stream-success.meta.json", {
+    provider: "copilot",
+    name: "stream-success",
+    capturedAt: "2026-04-22T12:44:18.282Z",
+    version: "1.0.34",
+    argv: ["prompt"],
+    expected: { response: "HELLO_COPILOT_FIXTURE" },
+    lifecycle: {
+      status: "archived",
+      reason: "subscription capture route is temporarily archived",
+    },
+  });
+  writeStream(root, "copilot/stream-success.stream.txt");
+
+  assert.throws(
+    () => validateFixtureMetadata({ fixtureRoot: root, requiredSuccessProviders: ["copilot"] }),
+    /copilot\/stream-success\.meta\.json: lifecycle\.archivedAt must be a non-empty string/
+  );
+});
+
+test("validateFixtureMetadata accepts an archived success fixture", () => {
+  const root = makeTempRoot();
+  writeMeta(root, "copilot/stream-success.meta.json", {
+    provider: "copilot",
+    name: "stream-success",
+    capturedAt: "2026-07-15T01:19:45.000Z",
+    version: "1.0.34",
+    argv: ["prompt"],
+    expected: { response: "HELLO_COPILOT_FIXTURE" },
+    lifecycle: {
+      status: "archived",
+      archivedAt: "2026-07-15T01:19:45.000Z",
+      reason: "subscription capture route is temporarily archived",
+    },
+  });
+  writeStream(root, "copilot/stream-success.stream.txt");
+
+  const result = validateFixtureMetadata({ fixtureRoot: root, requiredSuccessProviders: ["copilot"] });
+
+  assert.deepEqual(result, {
+    ok: true,
+    checked: ["copilot/stream-success.meta.json"],
+    missingSuccess: [],
+  });
+});
+
+test("validateFixtureMetadata rejects an invalid retired lifecycle calendar date", () => {
+  const root = makeTempRoot();
+  writeMeta(root, "gemini/stream-success.meta.json", {
+    provider: "gemini",
+    name: "stream-success",
+    capturedAt: "2026-04-22T12:44:18.282Z",
+    version: "0.38.2",
+    argv: ["prompt"],
+    expected: { response: "HELLO_GEMINI_FIXTURE" },
+    lifecycle: {
+      status: "retired",
+      retiredAt: "2026-02-30T00:00:00.000Z",
+      reason: "invalid calendar day",
+    },
+  });
+  writeStream(root, "gemini/stream-success.stream.txt");
+
+  assert.throws(
+    () => validateFixtureMetadata({ fixtureRoot: root, requiredSuccessProviders: ["gemini"] }),
+    /gemini\/stream-success\.meta\.json: lifecycle\.retiredAt must be a canonical UTC ISO timestamp/
+  );
+});
+
+test("validateFixtureMetadata rejects an invalid archived lifecycle calendar date", () => {
+  const root = makeTempRoot();
+  writeMeta(root, "copilot/stream-success.meta.json", {
+    provider: "copilot",
+    name: "stream-success",
+    capturedAt: "2026-04-22T12:44:18.282Z",
+    version: "1.0.34",
+    argv: ["prompt"],
+    expected: { response: "HELLO_COPILOT_FIXTURE" },
+    lifecycle: {
+      status: "archived",
+      archivedAt: "2026-02-30T00:00:00.000Z",
+      reason: "invalid calendar day",
+    },
+  });
+  writeStream(root, "copilot/stream-success.stream.txt");
+
+  assert.throws(
+    () => validateFixtureMetadata({ fixtureRoot: root, requiredSuccessProviders: ["copilot"] }),
+    /copilot\/stream-success\.meta\.json: lifecycle\.archivedAt must be a canonical UTC ISO timestamp/
+  );
+});
+
 test("validateFixtureMetadata requires success fixtures unless explicitly allowlisted", () => {
   const root = makeTempRoot();
   writeMeta(root, "qwen/stream-alt.meta.json", {

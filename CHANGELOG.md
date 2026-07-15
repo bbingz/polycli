@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-07-15 — Codex — release: v0.6.29 candidate (provider and lifecycle hardening)
+
+- Prepared the full current release batch: durable background-job terminal transactions and session-artifact handling, status-only default setup auth probes, current provider invocation/parser contracts, and review-safety drift checks. The release keeps the runtime flat and `@bbingz/polycli-runtime` private.
+- Refreshed parser fixtures from authorized local CLI captures, pinned Claude at `2.1.210`, added OpenCode2 preview fixture coverage, marked the Gemini individual sign-in capture route `retired`, and marked the temporarily unavailable Copilot subscription capture route `archived` without removing its runtime provider or host plugin.
+- Bumped host/OpenCode/terminal packages to `0.6.29`, `@bbingz/polycli-utils` to `1.0.3`, and `@bbingz/polycli-timing` to `1.0.2`; the release gate and registry verification are recorded in the subsequent published closeout.
+
 ## 2026-06-26 — Codex — release: v0.6.28 published (provider-state review)
 
 - Published **v0.6.28** to npm: `@bbingz/polycli@0.6.28` (shasum `6ab1bc8e4f8f241ac529058ef325c41f80983e6f`) and `@bbingz/polycli-opencode@0.6.28` (shasum `0cb4db0ee36d9463122533bf1906ceea954222df`), both `latest`. GitHub release `v0.6.28` (`publishedAt` `2026-06-26T15:21:35Z`) + tag `v0.6.28`. Utility packages unchanged.

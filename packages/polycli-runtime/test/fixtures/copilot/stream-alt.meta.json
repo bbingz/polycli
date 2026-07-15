@@ -18,5 +18,10 @@
   "expected": {
     "response": "HELLO_COPILOT_FIXTURE_ALT",
     "sessionId": "f7d44e47-5aaf-4dcb-afa3-5f6c7f530afd"
+  },
+  "lifecycle": {
+    "status": "archived",
+    "archivedAt": "2026-07-15T01:19:45.000Z",
+    "reason": "The local Copilot subscription is not active; this capture channel is temporarily archived pending an explicit reactivation under a suitable plan."
   }
 }

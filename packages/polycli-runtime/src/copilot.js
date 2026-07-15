@@ -153,10 +153,15 @@ export function parseCopilotStreamText(text) {
     }
 
     events.push(event);
-    if (!sessionId && typeof event.sessionId === "string") sessionId = event.sessionId;
-    if (!sessionId && typeof event.session_id === "string") sessionId = event.session_id;
-    if (!sessionId && typeof event.session?.id === "string") sessionId = event.session.id;
-    if (!sessionId && typeof event.data?.sessionId === "string") sessionId = event.data.sessionId;
+    const eventSessionId = typeof event.sessionId === "string"
+      ? event.sessionId
+      : (typeof event.session_id === "string"
+        ? event.session_id
+        : (typeof event.session?.id === "string" ? event.session.id : event.data?.sessionId));
+    const isTerminalEvent = event.type === "result" || event.type === "final" || event.type === "error";
+    if (typeof eventSessionId === "string" && (!sessionId || isTerminalEvent)) {
+      sessionId = eventSessionId;
+    }
     if (!model && typeof event.model === "string") model = event.model;
     if (!model && typeof event.session?.model === "string") model = event.session.model;
     if (!model && typeof event.data?.model === "string") model = event.data.model;
@@ -168,7 +173,7 @@ export function parseCopilotStreamText(text) {
       }
       continue;
     }
-    if (event.type === "result" || event.type === "final" || event.type === "error") {
+    if (isTerminalEvent) {
       resultEvent = event;
       if (!response.trim()) {
         response += extractCopilotText(event);
@@ -180,6 +185,12 @@ export function parseCopilotStreamText(text) {
   }
 
   return { events, response, sessionId, model, resultEvent };
+}
+
+function getCopilotResumeStatus(resumeSessionId, sessionId) {
+  if (!resumeSessionId) return null;
+  if (typeof sessionId !== "string" || sessionId.length === 0) return "unverified";
+  return sessionId === resumeSessionId ? "resumed" : "not_resumed";
 }
 
 export function getCopilotAvailability(cwd) {
@@ -245,6 +256,7 @@ export function runCopilotPrompt({
   if (result.error) {
     return {
       ok: false,
+      resumeStatus: getCopilotResumeStatus(resumeSessionId, null),
       error: result.error.code === "ETIMEDOUT"
         ? `copilot timed out after ${Math.round(timeout / 1000)}s`
         : result.error.message,
@@ -259,12 +271,14 @@ export function runCopilotPrompt({
   });
   const resultError = getCopilotResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
+  const sessionId = parsed.sessionId ?? resolvedSession.sessionId;
 
   return {
     ok: result.status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+    sessionId,
+    resumeStatus: getCopilotResumeStatus(resumeSessionId, sessionId),
     model: parsed.model,
     error: result.status === 0
       ? (resultError || (hasVisibleText ? null : "copilot produced no visible text"))
@@ -327,10 +341,12 @@ export function runCopilotPromptStreaming({
     });
     const resultError = getCopilotResultError(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
+    const sessionId = parsed.sessionId ?? resolvedSession.sessionId;
     return {
       ...result,
       ...parsed,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      sessionId,
+      resumeStatus: getCopilotResumeStatus(resumeSessionId, sessionId),
       ok: result.ok && !resultError && hasVisibleText,
       error: result.ok
         ? (resultError || (hasVisibleText ? null : "copilot produced no visible text"))

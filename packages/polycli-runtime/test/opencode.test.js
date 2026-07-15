@@ -29,7 +29,7 @@ function withFakeOpenCodeBin(source, fn) {
   }
 }
 
-test("buildOpenCodeInvocation targets run json mode with session support", () => {
+test("buildOpenCodeInvocation targets run json mode with documented auto mode and session support", () => {
   const invocation = buildOpenCodeInvocation({
     prompt: "ping",
     model: "anthropic/claude-sonnet-4.5",
@@ -44,7 +44,7 @@ test("buildOpenCodeInvocation targets run json mode with session support", () =>
     "json",
     "--dir",
     "/tmp/project",
-    "--dangerously-skip-permissions",
+    "--auto",
     "--model",
     "anthropic/claude-sonnet-4.5",
     "--session",
@@ -60,6 +60,7 @@ test("buildOpenCodeInvocation omits skip-permissions when disabled", () => {
     extraArgs: ["--agent", "plan"],
   });
 
+  assert.equal(invocation.args.includes("--auto"), false);
   assert.equal(invocation.args.includes("--dangerously-skip-permissions"), false);
   assert.deepEqual(invocation.args.slice(-2), ["--agent", "plan"]);
 });
@@ -126,6 +127,26 @@ test("parseOpenCodeJsonResult extracts final response from raw event output", ()
   assert.equal(parsed.ok, true);
   assert.equal(parsed.response, "pong");
   assert.equal(parsed.sessionId, "open-2");
+});
+
+test("parseOpenCodeJsonResult preserves session.error data.message emitted by the CLI", () => {
+  const message = "OpenCode API request was rejected";
+  const parsed = parseOpenCodeJsonResult(
+    JSON.stringify({
+      type: "error",
+      timestamp: 1,
+      sessionID: "open-error-sync-1",
+      error: {
+        name: "APIError",
+        data: { message, statusCode: 429, isRetryable: true },
+      },
+    }),
+    "",
+    1
+  );
+
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error, message);
 });
 
 test("parseOpenCodeJsonResult falls back to default model when events omit one", () => {
@@ -308,6 +329,37 @@ test("runOpenCodePromptStreaming captures standalone error events as terminal fa
   assert.equal(result.error, "permission denied");
 });
 
+test("runOpenCodePromptStreaming preserves session.error data.message emitted by the CLI", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {};
+  const message = "OpenCode API request was rejected";
+
+  const result = await runOpenCodePromptStreaming({
+    prompt: "ping",
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", `${JSON.stringify({
+          type: "error",
+          timestamp: 1,
+          sessionID: "open-error-stream-1",
+          error: {
+            name: "APIError",
+            data: { message, statusCode: 429, isRetryable: true },
+          },
+        })}\n`);
+        child.emit("close", 1, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, message);
+});
+
 test("runOpenCodePromptStreaming passes custom env through to the spawned process", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -335,6 +387,14 @@ test("runOpenCodePromptStreaming passes custom env through to the spawned proces
 
 test("parseOpenCodeStreamText replays a captured real cli fixture", () => {
   const { stream, meta } = loadStreamFixture("opencode", "stream-success");
+  const parsed = parseOpenCodeStreamText(stream);
+
+  assert.equal(parsed.response, meta.expected.response);
+  assert.equal(parsed.sessionId, meta.expected.sessionId);
+});
+
+test("parseOpenCodeStreamText replays a captured OpenCode 2 preview fixture", () => {
+  const { stream, meta } = loadStreamFixture("opencode2", "stream-success");
   const parsed = parseOpenCodeStreamText(stream);
 
   assert.equal(parsed.response, meta.expected.response);

@@ -14,11 +14,17 @@ const REQUIRED_SUCCESS_FIXTURE_PROVIDERS = [
   "kimi",
   "minimax",
   "opencode",
+  "opencode2",
   "pi",
   "qwen",
   "grok",
 ];
 const DEFAULT_MISSING_SUCCESS_ALLOWLIST = new Map();
+const UTC_ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const LIFECYCLE_TIMESTAMP_FIELDS = Object.freeze({
+  retired: "retiredAt",
+  archived: "archivedAt",
+});
 
 function walkMetaFiles(root, current = root) {
   const entries = fs.readdirSync(current, { withFileTypes: true });
@@ -41,6 +47,22 @@ function assertNonEmptyString(value, label) {
   assert.ok(value.trim().length > 0, `${label} must be a non-empty string`);
 }
 
+function isCanonicalUtcIsoTimestamp(value) {
+  if (typeof value !== "string" || !UTC_ISO_TIMESTAMP_RE.test(value)) return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+function validateLifecycle(relativePath, lifecycle) {
+  if (lifecycle === undefined) return;
+  assert.ok(lifecycle && typeof lifecycle === "object" && !Array.isArray(lifecycle), `${relativePath}: lifecycle must be an object when present`);
+  const timestampField = LIFECYCLE_TIMESTAMP_FIELDS[lifecycle.status];
+  assert.ok(timestampField, `${relativePath}: lifecycle.status must be \"retired\" or \"archived\" when present`);
+  assertNonEmptyString(lifecycle.reason, `${relativePath}: lifecycle.reason`);
+  assertNonEmptyString(lifecycle[timestampField], `${relativePath}: lifecycle.${timestampField}`);
+  assert.ok(isCanonicalUtcIsoTimestamp(lifecycle[timestampField]), `${relativePath}: lifecycle.${timestampField} must be a canonical UTC ISO timestamp`);
+}
+
 function validateMeta(relativePath, meta, { fixtureRoot }) {
   assertNonEmptyString(meta.provider, `${relativePath}: provider`);
   assertNonEmptyString(meta.name, `${relativePath}: name`);
@@ -57,9 +79,14 @@ function validateMeta(relativePath, meta, { fixtureRoot }) {
   assert.ok(meta.argv.length > 0, `${relativePath}: argv must not be empty`);
   assert.ok(meta.expected && typeof meta.expected === "object", `${relativePath}: expected must be an object`);
   assertNonEmptyString(meta.expected.response, `${relativePath}: expected.response`);
+  if (meta.provider === "minimax") {
+    assertNonEmptyString(meta.expected.finishReason, `${relativePath}: expected.finishReason`);
+    assert.ok(Array.isArray(meta.expected.toolCalls), `${relativePath}: expected.toolCalls must be an array`);
+  }
   if (meta.expected.sessionId !== undefined && meta.expected.sessionId !== null) {
     assert.equal(typeof meta.expected.sessionId, "string", `${relativePath}: expected.sessionId must be a string when present`);
   }
+  validateLifecycle(relativePath, meta.lifecycle);
   const base = relativePath.slice(0, -".meta.json".length);
   assert.ok(fs.existsSync(path.join(fixtureRoot, `${base}.stream.txt`)), `${relativePath}: missing matching .stream.txt capture`);
 }

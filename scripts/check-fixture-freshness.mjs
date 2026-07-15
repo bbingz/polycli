@@ -8,17 +8,15 @@
 // When a CLI is absent (ENOENT) or its version probe errors, the row is a
 // SKIP (warning), never a failure — mirrors scripts/check-review-cli-drift.mjs.
 //
-// Not wired into release:check: depends on installed CLIs, which are
-// developer-machine specific (like check:review-drift / check:provider-paths).
+// Wired into release:check in strict mode. It remains developer-machine
+// specific, so unavailable or unprobeable CLIs are explicit skips.
 //
 // Version-flag deviations (confirmed against memory reference_cli_provider_versions
 // and the installed CLIs):
 //   - gemini uses `-v`, NOT `--version`.
 //   - kimi uses `-V` (capital V), NOT `-v`.
-//   - minimax fixtures pin the legacy `mini-agent 0.1.0` capture, but the live
-//     provider binary is mmx (MMX_CLI_BIN). mini-agent's version is frozen at
-//     0.1.0 upstream, so a token mismatch here is informational only; the bin
-//     resolution still mirrors the drift script for consistency.
+//   - minimax fixtures use the current mmx CLI. The bin resolution mirrors the
+//     drift script for consistency and honors MMX_CLI_BIN/MINIMAX_CLI_BIN.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -29,7 +27,12 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const DEFAULT_FIXTURE_ROOT = path.join(REPO_ROOT, "packages/polycli-runtime/test/fixtures");
 
-const SEMVER_RE = /\d+\.\d+\.\d+/;
+const VERSION_TOKEN_RE = /\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?/;
+const UTC_ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const LIFECYCLE_TIMESTAMP_FIELDS = Object.freeze({
+  retired: "retiredAt",
+  archived: "archivedAt",
+});
 
 // Per-provider version probe. Bin resolution mirrors check-review-cli-drift.mjs
 // (incl. MMX_CLI_BIN/MINIMAX_CLI_BIN/AGY_CLI_BIN env overrides).
@@ -39,6 +42,7 @@ export const PROVIDER_VERSION_PROBES = {
   qwen: { bin: "qwen", versionArgs: ["--version"] },
   copilot: { bin: "copilot", versionArgs: ["--version"] },
   opencode: { bin: "opencode", versionArgs: ["--version"] },
+  opencode2: { bin: process.env.OPENCODE2_CLI_BIN || "opencode2", versionArgs: ["--version"] },
   pi: { bin: "pi", versionArgs: ["--version"] },
   kimi: { bin: "kimi", versionArgs: ["-V"] },
   minimax: {
@@ -50,11 +54,12 @@ export const PROVIDER_VERSION_PROBES = {
   grok: { bin: process.env.GROK_CLI_BIN || "grok", versionArgs: ["--version"] },
 };
 
-// Extract a semver-ish token (`\d+\.\d+\.\d+`) from heterogeneous CLI output,
-// e.g. "2.1.147 (Claude Code)", "gemini version 0.43.1", "kimi, version 1.37.0".
+// Extract a semver-ish token, including prereleases, from heterogeneous CLI output,
+// e.g. "2.1.147 (Claude Code)", "gemini version 0.43.1", or
+// "opencode2 v0.0.0-next-15493".
 export function extractVersionToken(text) {
   if (typeof text !== "string" || text.length === 0) return null;
-  const match = text.match(SEMVER_RE);
+  const match = text.match(VERSION_TOKEN_RE);
   return match ? match[0] : null;
 }
 
@@ -94,7 +99,7 @@ function defaultSpawn(bin, args) {
 }
 
 // Walk fixture meta files, probe each provider's installed CLI version, and
-// classify each row as ok / stale / skipped / unknown. `spawnFn` is injectable
+// classify each row as ok / stale / retired / archived / skipped / unknown. `spawnFn` is injectable
 // so unit tests run without any installed CLI.
 export function checkFixtureFreshness({ fixtureRoot = DEFAULT_FIXTURE_ROOT, spawnFn = defaultSpawn } = {}) {
   const metaFiles = walkMetaFiles(fixtureRoot);
@@ -105,6 +110,17 @@ export function checkFixtureFreshness({ fixtureRoot = DEFAULT_FIXTURE_ROOT, spaw
     const filePath = path.join(fixtureRoot, relativePath);
     const meta = JSON.parse(fs.readFileSync(filePath, "utf8"));
     const provider = meta.provider;
+    const lifecycle = getExcludedLifecycle(meta);
+    if (lifecycle) {
+      rows.push({
+        provider,
+        fixture: relativePath,
+        status: lifecycle.status,
+        reason: lifecycle.reason,
+        timestamp: lifecycle.timestamp,
+      });
+      continue;
+    }
     const probe = PROVIDER_VERSION_PROBES[provider];
 
     if (!probe) {
@@ -136,9 +152,26 @@ export function checkFixtureFreshness({ fixtureRoot = DEFAULT_FIXTURE_ROOT, spaw
   return {
     rows,
     stale: rows.filter((r) => r.status === "stale"),
+    retired: rows.filter((r) => r.status === "retired"),
+    archived: rows.filter((r) => r.status === "archived"),
     skipped: rows.filter((r) => r.status === "skipped"),
     unknown: rows.filter((r) => r.status === "unknown"),
   };
+}
+
+function getExcludedLifecycle(meta) {
+  const lifecycle = meta?.lifecycle;
+  const timestampField = LIFECYCLE_TIMESTAMP_FIELDS[lifecycle?.status];
+  if (!timestampField) return null;
+  if (typeof lifecycle.reason !== "string" || !lifecycle.reason.trim()) return null;
+  if (!isCanonicalUtcIsoTimestamp(lifecycle[timestampField])) return null;
+  return { status: lifecycle.status, reason: lifecycle.reason, timestamp: lifecycle[timestampField] };
+}
+
+function isCanonicalUtcIsoTimestamp(value) {
+  if (typeof value !== "string" || !UTC_ISO_TIMESTAMP_RE.test(value)) return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
 }
 
 function runProbe(probe, spawnFn) {
@@ -168,6 +201,10 @@ function formatRow(row) {
       return `[ ?      ] ${row.fixture} — could not parse version (pinned ${row.pinned ?? "?"}, installed ${row.installed ?? "?"})`;
     case "stale":
       return `[ STALE  ] ${row.fixture} — pinned ${row.pinned}, installed ${row.installed} — re-capture`;
+    case "retired":
+      return `[ retired] ${row.fixture} — ${row.reason} (retired ${row.timestamp})`;
+    case "archived":
+      return `[ archived] ${row.fixture} — ${row.reason} (archived ${row.timestamp})`;
     default:
       return `[ ??     ] ${row.fixture}`;
   }
@@ -193,6 +230,16 @@ function main() {
   if (report.skipped.length > 0) {
     console.log(
       `${report.skipped.length} fixture${report.skipped.length === 1 ? "" : "s"} skipped (CLI not installed or unprobeable locally).`,
+    );
+  }
+  if (report.retired.length > 0) {
+    console.log(
+      `${report.retired.length} retired fixture${report.retired.length === 1 ? "" : "s"} retained for parser replay and excluded from freshness drift.`,
+    );
+  }
+  if (report.archived.length > 0) {
+    console.log(
+      `${report.archived.length} archived fixture${report.archived.length === 1 ? "" : "s"} retained for parser replay and excluded from freshness drift until explicitly reactivated.`,
     );
   }
 

@@ -7,6 +7,7 @@ import {
   buildMiniMaxInvocation,
   extractMiniMaxLogPath,
   extractMiniMaxResponseFromLogText,
+  extractMiniMaxResponseFromMmxJson,
   getMiniMaxAuthStatus,
   parseMiniMaxResponseBlocks,
   runMiniMaxPrompt,
@@ -180,10 +181,17 @@ test("runMiniMaxPrompt reports empty mmx output as no visible text", async () =>
 });
 
 test("minimax helpers replay a captured real cli fixture", () => {
-  const { stream, logText, meta } = loadStreamFixture("minimax", "run-success");
+  const { stream, meta } = loadStreamFixture("minimax", "run-success");
+  const parsed = extractMiniMaxResponseFromMmxJson(stream);
 
-  assert.ok(extractMiniMaxLogPath(stream));
-  assert.deepEqual(extractMiniMaxResponseFromLogText(logText), meta.expected);
+  assert.deepEqual(
+    {
+      response: parsed.response,
+      finishReason: parsed.finishReason,
+      toolCalls: parsed.toolCalls,
+    },
+    meta.expected,
+  );
 });
 
 test("getMiniMaxAuthStatus stays inconclusive (loggedIn:true) on a probe timeout", async () => {

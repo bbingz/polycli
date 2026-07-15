@@ -96,7 +96,7 @@ test("POLYCLI_STATE_ROOT takes precedence over CLAUDE_PLUGIN_DATA for timing his
   }
 });
 
-test("summarizeTimingRecords aggregates by provider", () => {
+test("summarizeTimingRecords keeps the compatibility provider summary and comparable cohorts", () => {
   withPluginData(() => {
     const workspaceRoot = "/tmp/polycli-timing-summary";
     appendTimingRecord(workspaceRoot, makeRecord("qwen", 1000, "2026-04-22T00:00:00.000Z"));
@@ -110,6 +110,16 @@ test("summarizeTimingRecords aggregates by provider", () => {
     assert.equal(summary.byProvider.qwen.recordCount, 2);
     assert.equal(summary.byProvider.qwen.metrics.total.p50, 1000);
     assert.equal(summary.byProvider.kimi.metrics.total.p50, 2000);
+    assert.equal(summary.cohorts.length, 2);
+    assert.deepEqual(summary.cohortDimensions, [
+      "provider",
+      "kind",
+      "measurementScope",
+      "outcome",
+      "runtimePersistence",
+    ]);
+    assert.equal(summary.byProvider.qwen.cohortCount, 1);
+    assert.deepEqual(summary.byProvider.qwen.mixedDimensions, []);
   });
 });
 
@@ -142,6 +152,13 @@ test("timing --all --json returns full history and store metadata", () => {
     assert.equal(payload.records.length, 25);
     assert.equal(payload.metadata.historyLimit, "all");
     assert.equal(payload.metadata.aggregateScope, "records");
+    assert.deepEqual(payload.metadata.percentileCohortDimensions, [
+      "provider",
+      "kind",
+      "measurementScope",
+      "outcome",
+      "runtimePersistence",
+    ]);
     assert.equal(payload.metadata.recordCount, 25);
     assert.equal(payload.metadata.stateRoot, stateRoot);
     assert.equal(payload.metadata.stateRootSource, "POLYCLI_STATE_ROOT");
@@ -152,6 +169,45 @@ test("timing --all --json returns full history and store metadata", () => {
     else process.env.POLYCLI_STATE_ROOT = previousStateRoot;
     if (previousPluginData == null) delete process.env.CLAUDE_PLUGIN_DATA;
     else process.env.CLAUDE_PLUGIN_DATA = previousPluginData;
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    fs.rmSync(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("timing text output prints percentile cohorts instead of pooled provider percentiles", () => {
+  const workspaceRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "polycli-timing-text-")));
+  const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-state-root-"));
+  const previousStateRoot = process.env.POLYCLI_STATE_ROOT;
+  process.env.POLYCLI_STATE_ROOT = stateRoot;
+
+  try {
+    appendTimingRecord(workspaceRoot, makeRecord("qwen", 1000, "2026-04-22T00:00:00.000Z"));
+    appendTimingRecord(workspaceRoot, {
+      ...makeRecord("qwen", 9000, "2026-04-22T00:00:01.000Z"),
+      kind: "rescue",
+      runtimePersistence: "session",
+      measurementScope: "job",
+      outcome: "success",
+    });
+
+    const stdout = execFileSync(process.execPath, [COMPANION, "timing", "--all"], {
+      cwd: workspaceRoot,
+      env: {
+        ...process.env,
+        POLYCLI_STATE_ROOT: stateRoot,
+      },
+      encoding: "utf8",
+    });
+
+    assert.match(stdout, /Comparable timing cohorts/);
+    assert.match(stdout, /provider=qwen kind=ask scope=request outcome=unspecified persistence=ephemeral: count=1 total\.p50=1000/);
+    assert.match(stdout, /provider=qwen kind=rescue scope=job outcome=success persistence=session: count=1 total\.p50=9000/);
+    assert.match(stdout, /Provider summary \(counts\/capability only; use comparable cohorts for percentiles\):/);
+    assert.match(stdout, /- qwen: count=2 cohorts=2 mixed=kind,measurementScope,outcome,runtimePersistence/);
+    assert.doesNotMatch(stdout, /- qwen: count=2 total\.p50=/);
+  } finally {
+    if (previousStateRoot == null) delete process.env.POLYCLI_STATE_ROOT;
+    else process.env.POLYCLI_STATE_ROOT = previousStateRoot;
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
     fs.rmSync(stateRoot, { recursive: true, force: true });
   }

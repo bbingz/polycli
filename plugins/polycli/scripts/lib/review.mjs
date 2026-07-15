@@ -10,7 +10,8 @@ const REVIEW_SCOPES = new Set(["auto", "staged", "unstaged", "working-tree", "br
 const REVIEW_APPEND_SYSTEM =
   "Always emit a visible final markdown answer in assistant text. Never finish with reasoning blocks only. If there are no actionable issues, output exactly: No issues found.";
 const REVIEW_CONSTRAINT_ERROR = "non-overridable review hard constraints";
-const AGY_REVIEW_UNSUPPORTED_ERROR = "agy does not expose a non-interactive plan mode; /review cannot enforce read-only constraints.";
+const AGY_REVIEW_UNSUPPORTED_ERROR = "agy --mode plan is not a verified non-interactive hard read-only mode; /review cannot enforce constraints.";
+const STOP_REVIEW_GATE_SAFETY_ERROR = "cannot enforce stop-review safety";
 const REVIEW_UNSUPPORTED_PROVIDERS = new Set(["agy"]);
 const GEMINI_REVIEW_DISABLED_MCP_NAME = "__polycli_review_no_mcp__";
 const COPILOT_REVIEW_EXCLUDED_TOOLS = [
@@ -96,11 +97,17 @@ export function assertReviewProviderSupported(provider) {
   }
 }
 
+export function assertStopReviewGateProviderSupported(provider) {
+  if (REVIEW_FLAG_EXPECTATIONS[provider]?.stopReviewGateSafety !== "enforced") {
+    throw new Error(`Provider '${provider}' ${STOP_REVIEW_GATE_SAFETY_ERROR}.`);
+  }
+}
+
 const REVIEW_HARD_CONSTRAINTS = {
   kimi() {
-    // kimi-code dropped --no-thinking/--max-steps-per-turn and its -p one-shot mode rejects
-    // --plan/--auto, so there is no flag-based read-only lever. Review is prompt-only (the review
-    // prompt forbids tools/edits), matching the minimax tier. No extra flags are emitted.
+    // No independently verified flag-based no-tool/read-only lever is available for Kimi prompt
+    // mode. Review is prompt-only (the review prompt forbids tools/edits), matching the minimax
+    // tier. No extra flags are emitted.
     return {};
   },
   qwen() {

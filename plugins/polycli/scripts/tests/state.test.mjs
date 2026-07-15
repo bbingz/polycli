@@ -271,6 +271,57 @@ test("updateJobAtomically can skip stale worker writes after cancellation", () =
   });
 });
 
+test("updateJobAtomically preserves a terminal envelope when its pre-state hook fails", () => {
+  withPluginData(() => {
+    const workspaceRoot = "/tmp/polycli-atomic-pre-state-hook";
+    ensureStateDir(workspaceRoot);
+    upsertJob(workspaceRoot, {
+      jobId: "job-recoverable",
+      provider: "qwen",
+      kind: "review",
+      status: "running",
+    });
+
+    assert.throws(() => {
+      updateJobAtomically(workspaceRoot, "job-recoverable", (current, currentEnvelope) => {
+        assert.equal(current?.status, "running");
+        assert.equal(currentEnvelope ?? null, null);
+        const job = { ...current, status: "completed" };
+        const envelope = {
+          job,
+          result: { ok: true, response: "durable terminal intent" },
+        };
+        return {
+          job,
+          envelope,
+          beforeStateCommit({ current: hookCurrent, job: hookJob, envelope: hookEnvelope }) {
+            assert.equal(hookCurrent?.status, "running");
+            assert.equal(hookJob.status, "completed");
+            assert.deepEqual(hookEnvelope, envelope);
+            assert.deepEqual(readJobFile(resolveJobFile(workspaceRoot, "job-recoverable")), envelope);
+            assert.equal(loadState(workspaceRoot).jobs[0].status, "running");
+            throw new Error("terminal ledger unavailable");
+          },
+        };
+      });
+    }, /terminal ledger unavailable/);
+
+    assert.equal(listJobs(workspaceRoot)[0].status, "running");
+    const envelope = readJobFile(resolveJobFile(workspaceRoot, "job-recoverable"));
+    assert.equal(envelope.job.status, "completed");
+    assert.equal(envelope.result.response, "durable terminal intent");
+
+    let recoveredEnvelope = null;
+    const retry = updateJobAtomically(workspaceRoot, "job-recoverable", (current, currentEnvelope) => {
+      assert.equal(current?.status, "running");
+      recoveredEnvelope = currentEnvelope;
+      return null;
+    });
+    assert.equal(retry.written, false);
+    assert.equal(recoveredEnvelope.job.status, "completed");
+  });
+});
+
 test("updateJobAtomically can skip queued-to-running writes after terminal completion", () => {
   withPluginData(() => {
     const workspaceRoot = "/tmp/polycli-queued-running-cas";

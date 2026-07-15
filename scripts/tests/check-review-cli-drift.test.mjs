@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  checkCliFlags,
   extractRegexSource,
   checkAuthAnchors,
 } from "../check-review-cli-drift.mjs";
@@ -97,6 +98,51 @@ test("checkAuthAnchors against the REAL runtime source confirms current regexes 
   assert.equal(byProvider.kimi.status, "ok");
 });
 
+test("checkCliFlags supports contextual help probes for Qwen's minimal bare help", () => {
+  const calls = [];
+  const entry = {
+    provider: "qwen",
+    notes: "contextual help",
+    probes: [
+      {
+        helpArgs: ["--approval-mode", "plan", "--help"],
+        expect: ["--exclude-tools", "--max-session-turns"],
+      },
+      {
+        helpArgs: ["--max-session-turns", "1", "--help"],
+        expect: ["--approval-mode"],
+      },
+    ],
+  };
+
+  const result = checkCliFlags(entry, {
+    probeFn({ helpArgs }) {
+      calls.push(helpArgs);
+      if (helpArgs[0] === "--approval-mode") {
+        return { text: "--exclude-tools\n--max-session-turns" };
+      }
+      return { text: "--approval-mode" };
+    },
+  });
+
+  assert.equal(result.status, "ok");
+  assert.deepEqual(calls, entry.probes.map((probe) => probe.helpArgs));
+});
+
+test("checkCliFlags identifies a missing option from a contextual help probe", () => {
+  const result = checkCliFlags(
+    {
+      provider: "qwen",
+      notes: "contextual help",
+      probes: [{ helpArgs: ["--approval-mode", "plan", "--help"], expect: ["--exclude-tools"] }],
+    },
+    { probeFn: () => ({ text: "--max-session-turns" }) }
+  );
+
+  assert.equal(result.status, "drift");
+  assert.deepEqual(result.missing, ["--exclude-tools"]);
+});
+
 test("RELEASE_STEPS wires check:review-drift after the deterministic validators", () => {
   const npmRunScripts = RELEASE_STEPS
     .filter(([cmd, args]) => cmd === "npm" && args[0] === "run")
@@ -113,4 +159,13 @@ test("RELEASE_STEPS wires check:review-drift after the deterministic validators"
   );
   assert.ok(lastValidateIdx >= 0, "expected at least one validate:* step");
   assert.ok(driftIdx > lastValidateIdx, "check:review-drift must run after the validate:* steps");
+});
+
+test("RELEASE_STEPS requires strict fixture freshness before publishing checks", () => {
+  const freshnessIdx = RELEASE_STEPS.findIndex(
+    ([cmd, args]) => cmd === "npm" && args[1] === "check:fixture-freshness" && args[2] === "--" && args[3] === "--strict",
+  );
+  const driftIdx = RELEASE_STEPS.findIndex(([cmd, args]) => cmd === "npm" && args[1] === "check:review-drift");
+  assert.ok(freshnessIdx >= 0, "release gate must invoke check:fixture-freshness -- --strict");
+  assert.ok(freshnessIdx < driftIdx, "strict fixture freshness must run before installed-CLI drift review");
 });

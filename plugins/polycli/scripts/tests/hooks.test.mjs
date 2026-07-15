@@ -243,8 +243,35 @@ await new Promise((resolve) => setTimeout(resolve, 100));
   }
 });
 
+test("runStopReview never invokes a provider without enforced stop-review safety", () => {
+  const fake = createFakeCompanion(`
+process.stderr.write("unsupported provider should not be invoked\\n");
+process.exit(9);
+`);
+  try {
+    for (const provider of ["agy", "kimi", "minimax"]) {
+      const result = runStopReview({
+        cwd: process.cwd(),
+        companionPath: fake.script,
+        provider,
+        input: { last_assistant_message: "done" },
+      });
+
+      assert.equal(result.ok, true, provider);
+      assert.equal(result.skipped, true, provider);
+      assert.match(result.note, new RegExp(`provider '${provider}'.*cannot enforce`, "i"));
+    }
+  } finally {
+    fake.cleanup();
+  }
+});
+
 test("runStopReview requires the per-run sentinel token from the prompt", () => {
   const fake = createFakeCompanion(`
+if (process.argv[2] !== "_stop-review-gate") {
+  process.stdout.write(JSON.stringify({ error: "wrong stop-review command" }) + "\\n");
+  process.exit(0);
+}
 const prompt = process.argv.at(-1) || "";
 const match = prompt.match(/ALLOW (POLYCLI_STOP_REVIEW_[A-Za-z0-9_]+):/);
 if (!match) {
@@ -274,35 +301,27 @@ process.stdout.write(JSON.stringify({
   }
 });
 
-test("resolveReviewProvider skips cleanly when no last-used provider and health finds none", () => {
+test("resolveReviewProvider skips cleanly when no last-used provider is recorded", () => {
   withPluginData(() => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
-    const fake = createFakeCompanion(`
-if (process.argv[2] === "health") {
-  process.stdout.write(JSON.stringify({ anyHealthy: false, healthyProviders: [], results: [] }) + "\\n");
-  process.exit(2);
-}
-process.exit(9);
-`);
     try {
       writeWorkspaceState(workspaceRoot, { version: 1, config: { stopReviewGate: true }, jobs: [] });
 
       const result = resolveReviewProvider({
         workspaceRoot,
-        companionPath: fake.script,
         cwd: workspaceRoot,
       });
 
       assert.equal(result.provider, null);
-      assert.match(result.reason, /No current provider/);
+      assert.equal(result.source, "none");
+      assert.match(result.reason, /No last-used provider/i);
     } finally {
-      fake.cleanup();
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
   });
 });
 
-test("resolveReviewProvider prefers the recorded last-used provider over health fallback", () => {
+test("resolveReviewProvider uses the recorded last-used enforced provider without a health probe", () => {
   withPluginData(() => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
     const fake = createFakeCompanion(`
@@ -334,27 +353,34 @@ process.exit(9);
   });
 });
 
-test("resolveReviewProvider uses the first healthy provider when no last-used provider is recorded", () => {
+test("resolveReviewProvider skips prompt-only and unsupported last-used providers without probing health", () => {
   withPluginData(() => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
     const fake = createFakeCompanion(`
 if (process.argv[2] === "health") {
-  process.stdout.write(JSON.stringify({ anyHealthy: true, healthyProviders: ["gemini", "qwen"], results: [] }) + "\\n");
+  process.stdout.write(JSON.stringify({ anyHealthy: true, healthyProviders: ["agy"], results: [] }) + "\\n");
   process.exit(0);
 }
 process.exit(9);
 `);
     try {
-      writeWorkspaceState(workspaceRoot, { version: 1, config: { stopReviewGate: true }, jobs: [] });
+      for (const provider of ["agy", "kimi", "minimax"]) {
+        writeWorkspaceState(workspaceRoot, {
+          version: 1,
+          config: { stopReviewGate: true, lastUsedProvider: provider },
+          jobs: [],
+        });
 
-      const result = resolveReviewProvider({
-        workspaceRoot,
-        companionPath: fake.script,
-        cwd: workspaceRoot,
-      });
+        const result = resolveReviewProvider({
+          workspaceRoot,
+          companionPath: fake.script,
+          cwd: workspaceRoot,
+        });
 
-      assert.equal(result.provider, "gemini");
-      assert.equal(result.source, "health");
+        assert.equal(result.provider, null, provider);
+        assert.equal(result.source, "none", provider);
+        assert.match(result.reason, new RegExp(`${provider}.*not safe`, "i"));
+      }
     } finally {
       fake.cleanup();
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
@@ -363,34 +389,20 @@ process.exit(9);
 });
 
 test("Stop hook skips without blocking when provider cannot be resolved", async () => {
-  const fake = createFakeCompanion(`
-if (process.argv[2] === "health") {
-  process.stdout.write(JSON.stringify({ anyHealthy: false, healthyProviders: [], results: [] }) + "\\n");
-  process.exit(2);
-}
-process.exit(9);
-`);
-  try {
-    await withPluginData(async () => {
+  await withPluginData(async () => {
       const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
       try {
         writeWorkspaceState(workspaceRoot, { version: 1, config: { stopReviewGate: true }, jobs: [] });
         const result = await runNode(stopHookPath, [], {
           cwd: workspaceRoot,
           input: JSON.stringify({ cwd: workspaceRoot, last_assistant_message: "done" }),
-          env: {
-            POLYCLI_COMPANION_PATH: fake.script,
-          },
         });
 
         assert.equal(result.code, 0, result.stderr);
         assert.equal(result.stdout, "");
-        assert.match(result.stderr, /No current provider/);
+        assert.match(result.stderr, /No last-used provider/);
       } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
       }
     });
-  } finally {
-    fake.cleanup();
-  }
 });

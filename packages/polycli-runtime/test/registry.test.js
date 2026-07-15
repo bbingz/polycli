@@ -25,6 +25,7 @@ test("provider registry exposes the eleven integrated runtimes", () => {
     assert.equal(typeof runtime.runPromptStreaming, "function");
     assert.equal(typeof runtime.capabilities.streaming, "boolean");
     assert.equal(typeof runtime.capabilities.sessionResume, "boolean");
+    assert.match(runtime.capabilities.authProbeCost, /^(status|model)$/);
     assert.deepEqual(runtime.capabilities.operations, PROVIDER_OPERATION_NAMES);
   }
 });
@@ -40,6 +41,7 @@ test("agy runtime reflects documented text-only session-resumable scope", () => 
     streaming: true,
     sessionResume: true,
     structuredOutput: false,
+    authProbeCost: "model",
     operations: PROVIDER_OPERATION_NAMES,
   });
 });
@@ -322,6 +324,41 @@ test("runProviderPromptStreaming marks claude tmux TUI text timings as unsupport
       runPromptStreaming: async ({ onEvent }) => {
         now = 1_200;
         onEvent({ type: "content_block_delta", delta: { type: "text_delta", text: "started" } });
+        now = 1_400;
+        return {
+          ok: true,
+          response: "Started Claude TUI tmux session 'polycli-claude-test'.",
+          model: "claude-test",
+          sessionId: null,
+          tmuxSession: "polycli-claude-test",
+          detached: true,
+        };
+      },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.timing.runtimePersistence, "session");
+  assert.equal(result.timing.metrics.ttft.status, "unsupported");
+  assert.equal(result.timing.metrics.gen.status, "unsupported");
+  assert.equal(result.timing.metrics.tail.status, "unsupported");
+  assert.equal(result.timing.metrics.total.status, "measured");
+  assert.equal(result.timing.meta.tmuxDetached, true);
+  assert.equal(result.timing.meta.timingScope, "tmux_startup");
+  assert.equal(result.timing.meta.llmCompletionObserved, false);
+});
+
+test("runProviderPrompt marks claude tmux TUI text timings as unsupported", async () => {
+  let now = 1_000;
+  const result = await runProviderPrompt({
+    provider: "claude",
+    prompt: "ping",
+    cwd: process.cwd(),
+    executionMode: "tmux-tui",
+    timeout: 5_000,
+    nowMs: () => now,
+    runtime: {
+      runPrompt: async () => {
         now = 1_400;
         return {
           ok: true,

@@ -26,7 +26,7 @@ The target is not a daemon and not a provider framework. The target is a short-l
 
 - README now points unsupported hosts at the real `@bbingz/polycli` terminal CLI while keeping host-plugin invocation rules explicit.
 - Keep the host plugins. The terminal CLI/TUI is a fifth surface, not a replacement for Claude Code, Codex, Copilot CLI, or OpenCode adapters.
-- Preserve the current `setup` vs `health` distinction: `setup` is cheap install/auth inspection; `health` is a real model probe and should not become a routine preflight.
+- Preserve the current `setup` vs `health` distinction: default `setup` is install plus status-only auth inspection and skips model-based auth probes unless passed `--probe-auth`; `health` is a real model probe and should not become a routine preflight.
 - Do not promote `@bbingz/polycli-runtime` into a public provider framework as part of this work. The CLI should wrap existing companion semantics while provider modules remain flat and explicit.
 - Do not add daemon, monitor, or server mode. Every command and TUI session should be short-lived and compatible with the current timing contract.
 - Preserve the captured `cmd` ask failure and `pi` health failure examples as schema-shaped docs/fixtures; live provider repro remains environment-gated.

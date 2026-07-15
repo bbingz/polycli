@@ -145,13 +145,23 @@ export function ensureStateDir(workspaceRoot) {
   ensurePrivateDir(resolveJobsDir(workspaceRoot));
 }
 
-function pruneJobsForSave(jobs) {
+function pruneJobsForSave(jobs, { preserveJobIds = [] } = {}) {
   const sorted = jobs
     .slice()
     .sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
   const active = sorted.filter((job) => ACTIVE_STATUSES.has(job.status));
-  const terminal = sorted.filter((job) => !ACTIVE_STATUSES.has(job.status)).slice(0, MAX_JOBS);
-  return [...active, ...terminal]
+  const terminal = sorted.filter((job) => !ACTIVE_STATUSES.has(job.status));
+  const preserve = new Set(preserveJobIds);
+  // updateJobAtomically has already made a terminal envelope durable before it calls saveState.
+  // Keep that just-committed job in this state snapshot even if a skewed clock or old imported
+  // records would otherwise rank it outside the normal terminal-history window.
+  const protectedTerminal = terminal.filter((job) => preserve.has(job.jobId));
+  const remainingTerminal = terminal.filter((job) => !preserve.has(job.jobId));
+  const retainedTerminal = [
+    ...protectedTerminal,
+    ...remainingTerminal.slice(0, Math.max(0, MAX_JOBS - protectedTerminal.length)),
+  ];
+  return [...active, ...retainedTerminal]
     .sort((left, right) => (right.updatedAt || "").localeCompare(left.updatedAt || ""));
 }
 
@@ -183,13 +193,15 @@ export function loadState(workspaceRoot) {
   }
 }
 
-export function saveState(workspaceRoot, state) {
+export function saveState(workspaceRoot, state, { preserveJobIds = [] } = {}) {
   ensureStateDir(workspaceRoot);
-  const jobs = pruneJobsForSave(state.jobs);
+  const jobs = pruneJobsForSave(state.jobs, { preserveJobIds });
   const keptIds = new Set(jobs.map((job) => job.jobId));
-  // Reclaim on-disk artifacts for terminal jobs pruned out of the persisted list (active jobs are
-  // never pruned, so this only ever removes aged-out terminal history). Without this the jobs dir
-  // grows unbounded as terminal jobs age past MAX_JOBS.
+  const config = state.config && typeof state.config === "object" ? state.config : {};
+  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs }, { mode: PRIVATE_FILE_MODE });
+  // Publish the state snapshot before reclaiming pruned artifacts. A failed/interrupted state
+  // write must leave its prior snapshot and every file it still references intact; an interrupted
+  // cleanup only leaks old terminal artifacts and is safely retried by a later save.
   for (const job of state.jobs) {
     if (job && job.jobId && !keptIds.has(job.jobId)) {
       removeJobFile(workspaceRoot, job.jobId);
@@ -197,8 +209,6 @@ export function saveState(workspaceRoot, state) {
       removeJobLogFile(workspaceRoot, job.jobId);
     }
   }
-  const config = state.config && typeof state.config === "object" ? state.config : {};
-  writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs }, { mode: PRIVATE_FILE_MODE });
   return { version: STATE_VERSION, config, jobs };
 }
 
@@ -219,7 +229,8 @@ export function updateJobAtomically(workspaceRoot, jobId, buildNext) {
     const state = loadState(workspaceRoot);
     const index = state.jobs.findIndex((job) => job.jobId === jobId);
     const current = index >= 0 ? state.jobs[index] : null;
-    const next = buildNext(current);
+    const currentEnvelope = readJobFile(resolveJobFile(workspaceRoot, jobId));
+    const next = buildNext(current, currentEnvelope);
 
     if (!next) {
       return { written: false, job: current, envelope: null };
@@ -234,12 +245,20 @@ export function updateJobAtomically(workspaceRoot, jobId, buildNext) {
       writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), next.envelope, { mode: PRIVATE_FILE_MODE });
     }
 
+    if (typeof next.beforeStateCommit === "function") {
+      next.beforeStateCommit({
+        current,
+        job,
+        envelope: next.envelope ?? null,
+      });
+    }
+
     if (index >= 0) {
       state.jobs[index] = job;
     } else {
       state.jobs.push(job);
     }
-    saveState(workspaceRoot, state);
+    saveState(workspaceRoot, state, { preserveJobIds: [jobId] });
     return { written: true, job, envelope: next.envelope ?? null };
   });
 }

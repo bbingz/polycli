@@ -29,7 +29,7 @@ Claude Code 专属补丁。基础规则见 [AGENTS.md](AGENTS.md)，此处只列
 
 ## Claude-specific provider notes
 - `claude` runtime 的 print/headless 路径用 `--output-format stream-json` 时必须带 `--verbose`，这是 CLI 契约；不要把这个 `-p`/stream-json 规则套到默认 ask/review 的 tmux TUI 路径上
-- `claude` ask/review 默认启动 detached tmux TUI session，响应包含 `tmuxSession`/`attachCommand`，timing 只覆盖 tmux 启动和 prompt 提交，不代表 LLM 完成时间
+- `claude` ask/review 默认走 headless `claude -p --output-format stream-json`；review 仍保留 plan/no-tools/no-MCP 约束。detached tmux TUI 仅保留为显式/内部路径，响应包含 `tmuxSession`/`attachCommand`，其 timing 只覆盖 tmux 启动和 prompt 提交，不代表 LLM 完成时间
 - `claude` 可能通过 `subtype: "error"` 而非 `is_error` 报错，sync/streaming 两路错误处理必须对齐
 - `gemini` 无独立 auth-status 子命令，auth probe 是推断式；不要把 timeout/429 倒退回 `loggedIn=false`
 - `pi` 在 trivial prompt 上仍可能调 tool，属上游行为；非本地解析问题

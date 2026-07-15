@@ -90,6 +90,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "status",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getClaudeAvailability,
@@ -103,6 +104,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getCopilotAvailability,
@@ -116,6 +118,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getGeminiAvailability,
@@ -129,6 +132,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getKimiAvailability,
@@ -142,6 +146,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getQwenAvailability,
@@ -155,6 +160,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: false,
       structuredOutput: true,
+      authProbeCost: "status",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getMiniMaxAvailability,
@@ -168,6 +174,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getOpenCodeAvailability,
@@ -181,6 +188,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getPiAvailability,
@@ -194,6 +202,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: false,
       structuredOutput: false,
+      authProbeCost: "status",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getCmdAvailability,
@@ -207,6 +216,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: false,
+      authProbeCost: "model",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getAgyAvailability,
@@ -220,6 +230,7 @@ const RUNTIMES = Object.freeze({
       streaming: true,
       sessionResume: true,
       structuredOutput: true,
+      authProbeCost: "status",
       operations: PROVIDER_OPERATION_NAMES,
     },
     getAvailability: getGrokAvailability,
@@ -353,6 +364,7 @@ export async function runProviderPrompt({
   ...options
 }) {
   const startedAt = nowMs();
+  const timingSupport = getTimingSupportForRun(provider, options);
   const selectedRuntime = runtime ?? getProviderRuntime(provider);
   const result = await selectedRuntime.runPrompt({ ...options, defaultModel });
   const runtimePersistence = inferRuntimePersistence(provider, result);
@@ -366,8 +378,8 @@ export async function runProviderPrompt({
     runtimePersistence,
     measurementScope,
     totalMs: Math.max(nowMs() - startedAt, 0),
-    supportedMetrics: getTimingSupport(provider),
-    meta: buildTimingMeta(provider, result, meta),
+    supportedMetrics: timingSupport,
+    meta: buildTimingMeta(provider, result, meta, timingSupport),
   });
 }
 

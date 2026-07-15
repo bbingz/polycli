@@ -1,9 +1,10 @@
 {
   "provider": "qwen",
   "name": "stream-alt",
-  "capturedAt": "2026-04-22T12:44:18.282Z",
-  "version": "0.14.5",
+  "capturedAt": "2026-07-14T20:00:39.738Z",
+  "version": "0.19.6",
   "argv": [
+    "--safe-mode",
     "--output-format",
     "stream-json",
     "--approval-mode",
@@ -14,6 +15,6 @@
   ],
   "expected": {
     "response": "HELLO_QWEN_FIXTURE_ALT",
-    "sessionId": "9fe46ac6-b8c5-419f-b395-ac50fe4e752f"
+    "sessionId": "00000000-0000-4000-8000-000000000302"
   }
 }

@@ -36,16 +36,15 @@ export function buildKimiInvocation({
   extraArgs = [],
   bin = KIMI_BIN,
 } = {}) {
-  // kimi-code one-shot mode: `-p <prompt> --output-format stream-json`. NOTE: `-p` cannot be
-  // combined with `--yolo`, `--auto`, or `--plan` (the CLI rejects them) — `-p` is itself the
-  // non-interactive headless runner, so no approval flag is passed. Resume is delegated to the
+  // kimi-code one-shot mode: `-p <prompt> --output-format stream-json`. The adapter deliberately
+  // emits no approval-mode flag here; `-p` is the non-interactive headless runner. Resume is delegated to the
   // CLI: `--session <id>` (kimi-code's `-S, --session [id]`, per its own
-  // session.resume_hint) or `-C` to continue the last session. NOTE: the legacy python
-  // kimi-cli used `-r`; kimi-code has no `-r` flag and rejects it.
+  // session.resume_hint) or `-c, --continue` to continue the last session. The legacy Python
+  // kimi-cli used `-r`; this adapter deliberately uses the currently documented `--session` form.
   const args = ["-p", String(prompt ?? ""), "--output-format", "stream-json"];
   if (model) args.push("-m", model);
   if (resumeLast) {
-    args.push("-C");
+    args.push("--continue");
   } else if (resumeSessionId) {
     args.push("--session", resumeSessionId);
   }

@@ -133,6 +133,14 @@ test("aggregateTimingRecords handles empty input", () => {
   assert.equal(summary.recordCount, 0);
   assert.deepEqual(summary.invalidRecords, []);
   assert.deepEqual(summary.byProvider, {});
+  assert.deepEqual(summary.cohortDimensions, [
+    "provider",
+    "kind",
+    "measurementScope",
+    "outcome",
+    "runtimePersistence",
+  ]);
+  assert.deepEqual(summary.cohorts, []);
 });
 
 test("aggregateTimingRecords preserves unsupported-only metrics without fake percentiles", () => {
@@ -206,4 +214,107 @@ test("aggregateTimingRecords labels a metric 'mixed' when unsupported in one rec
   assert.equal(ttft.missingCount, 0);
   // a metric unsupported in BOTH records remains 'unsupported', not 'mixed'
   assert.equal(summary.byProvider.qwen.metrics.cold.capability, "unsupported");
+});
+
+test("aggregateTimingRecords keeps health requests and rescue jobs in separate comparable cohorts", () => {
+  function record({ kind, measurementScope, outcome, runtimePersistence, totalMs, toolMetric }) {
+    return {
+      version: 1,
+      provider: "gemini",
+      kind,
+      runtimePersistence,
+      measurementScope,
+      outcome,
+      completedAt: "2026-04-21T10:00:00.000Z",
+      metrics: {
+        cold: { status: "unsupported", ms: null },
+        ttft: { status: "measured", ms: 20 },
+        gen: { status: "measured", ms: totalMs - 40 },
+        tool: toolMetric,
+        retry: { status: "unsupported", ms: null },
+        tail: { status: "measured", ms: 20 },
+        total: { status: "measured", ms: totalMs },
+      },
+    };
+  }
+
+  const summary = aggregateTimingRecords([
+    record({
+      kind: "health",
+      measurementScope: "request",
+      outcome: "success",
+      runtimePersistence: "ephemeral",
+      totalMs: 120,
+      toolMetric: { status: "zero", ms: 0 },
+    }),
+    record({
+      kind: "rescue",
+      measurementScope: "job",
+      outcome: "success",
+      runtimePersistence: "session",
+      totalMs: 9000,
+      toolMetric: { status: "missing", ms: null },
+    }),
+    record({
+      kind: "rescue",
+      measurementScope: "job",
+      outcome: "failure",
+      runtimePersistence: "session",
+      totalMs: 7000,
+      toolMetric: { status: "missing", ms: null },
+    }),
+  ]);
+
+  assert.deepEqual(summary.cohortDimensions, [
+    "provider",
+    "kind",
+    "measurementScope",
+    "outcome",
+    "runtimePersistence",
+  ]);
+  assert.equal(summary.cohorts.length, 3);
+
+  const health = summary.cohorts.find((cohort) => cohort.kind === "health");
+  assert.deepEqual(
+    {
+      provider: health.provider,
+      kind: health.kind,
+      measurementScope: health.measurementScope,
+      outcome: health.outcome,
+      runtimePersistence: health.runtimePersistence,
+    },
+    {
+      provider: "gemini",
+      kind: "health",
+      measurementScope: "request",
+      outcome: "success",
+      runtimePersistence: "ephemeral",
+    }
+  );
+  assert.equal(health.recordCount, 1);
+  assert.equal(health.metrics.total.p50, 120);
+  assert.equal(health.metrics.tool.zeroCount, 1);
+  assert.equal(health.metrics.tool.missingCount, 0);
+
+  const rescueSuccess = summary.cohorts.find(
+    (cohort) => cohort.kind === "rescue" && cohort.outcome === "success"
+  );
+  assert.equal(rescueSuccess.recordCount, 1);
+  assert.equal(rescueSuccess.metrics.total.p50, 9000);
+  assert.equal(rescueSuccess.metrics.tool.zeroCount, 0);
+  assert.equal(rescueSuccess.metrics.tool.missingCount, 1);
+
+  const rescueFailure = summary.cohorts.find(
+    (cohort) => cohort.kind === "rescue" && cohort.outcome === "failure"
+  );
+  assert.equal(rescueFailure.recordCount, 1);
+  assert.equal(rescueFailure.metrics.total.p50, 7000);
+
+  assert.equal(summary.byProvider.gemini.cohortCount, 3);
+  assert.deepEqual(summary.byProvider.gemini.mixedDimensions, [
+    "kind",
+    "measurementScope",
+    "outcome",
+    "runtimePersistence",
+  ]);
 });

@@ -74,7 +74,7 @@ Choose Polycli with @, then ask it to run: sessions list --json
 ## Operator Notes
 
 - Always pass `--provider` on prompt-bearing commands.
-- `health` is the canonical end-to-end provider check; `setup` is the cheaper install/auth diagnostic.
+- `health` is the canonical end-to-end provider check; default `setup` performs install plus status-only auth inspection, and `setup --probe-auth` explicitly enables model-based auth probes where needed.
 - `status`, `result`, `cancel`, and `timing` are safe read/control commands after a background run.
 
 For the full routing, fallback, and observability contract, see [`docs/codex-adapter-operability.md`](../../docs/codex-adapter-operability.md).
