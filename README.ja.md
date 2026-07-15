@@ -29,7 +29,9 @@
 
 ## 最新リリース: v0.6.31
 
-この review-remediation リリースは agent-native control plane と Path B の境界を維持しつつ、v0.6.30 後の全面 review で確認された 14 件をすべて解消します。provider 実行には bounded capture・typed failure・安全な stdin/argv transport・POSIX process-group escalation・信頼できる session identity を追加し、background start・cancel・SessionEnd・recovery sidecar・terminal ledger publication は障害や race の下でも回復可能です。no-change JSON v2・provider target parsing・TUI effects・active-job status・ledger preview は authoritative かつ redacted な状態を返し、source-derived validator は in-place build より前に 5 個の companion bundle と terminal metadata を検証します。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.31.md`](./docs/release-notes-v0.6.31.md)。
+この review-remediation リリースは agent-native control plane と Path B の境界を維持しつつ、v0.6.30 後の全面 review で確認された 14 件をすべて解消します。provider 実行には bounded capture・typed failure・安全な stdin/argv transport・POSIX process-group escalation・信頼できる session identity を追加し、background start・cancel・SessionEnd・recovery sidecar・terminal ledger publication は障害や race の下でも回復可能です。no-change JSON v2・provider target parsing・TUI effects・active-job status・ledger preview は authoritative かつ redacted な状態を返し、source-derived validator は in-place build より前に 5 個の companion bundle と terminal metadata を検証します。
+
+リリースノート: [English](./docs/release-notes-v0.6.31.md) · [简体中文](./docs/release-notes-v0.6.31.zh-CN.md) · **[日本語](./docs/release-notes-v0.6.31.ja.md)**。
 
 ## なぜ polycli を使うのか？
 

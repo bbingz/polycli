@@ -12,6 +12,7 @@ As of `2026-07-15`, the current public release is **v0.6.31**:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
 - GitHub release: `v0.6.31` — https://github.com/bbingz/polycli/releases/tag/v0.6.31 (`publishedAt` `2026-07-15T14:39:17Z`; tag commit `a70eb093bc7892e2f6b653ed29ca8bba5d66489b`)
+- Release notes: [English](./release-notes-v0.6.31.md) · [简体中文](./release-notes-v0.6.31.zh-CN.md) · [日本語](./release-notes-v0.6.31.ja.md)
 - Published npm packages:
   - `@bbingz/polycli@0.6.31` (`latest`, registry time `2026-07-15T14:37:53.706Z`, shasum `57d0f77811767c4310623af03f27af82375abae8`)
   - `@bbingz/polycli-utils@1.0.5` (`latest`, registry time `2026-07-15T14:37:22.557Z`, shasum `99df508a6bffe601e79569927bedf4016d3d471f`)

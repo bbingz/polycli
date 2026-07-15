@@ -1,5 +1,7 @@
 # polycli v0.6.31
 
+**English** · [简体中文](https://github.com/bbingz/polycli/blob/main/docs/release-notes-v0.6.31.zh-CN.md) · [日本語](https://github.com/bbingz/polycli/blob/main/docs/release-notes-v0.6.31.ja.md)
+
 Review-remediation patch on top of `v0.6.30`. This release closes every confirmed issue from the post-release comprehensive review while preserving the Path B boundary: provider adapters remain flat and explicit, the runtime package remains private, and no provider protocol framework is introduced.
 
 ## What changed

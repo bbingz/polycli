@@ -38,7 +38,7 @@ This review-remediation release preserves the agent-native control plane and the
 - No-change JSON v2 results, provider target parsing, TUI effects, active-job status, and persisted ledger previews now report the authoritative state.
 - Source-derived validation checks all five companion bundles plus terminal metadata before any in-place rebuild can hide drift.
 
-See [`docs/release-notes-v0.6.31.md`](./docs/release-notes-v0.6.31.md).
+Release notes: **[English](./docs/release-notes-v0.6.31.md)** · [简体中文](./docs/release-notes-v0.6.31.zh-CN.md) · [日本語](./docs/release-notes-v0.6.31.ja.md).
 
 ## Why polycli?
 

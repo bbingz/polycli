@@ -10,7 +10,7 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.31** — see `docs/release-notes-v0.6.31.md`. It retains the self-describing agent contract from v0.6.30 while hardening provider process/prompt/session handling, recoverable background lifecycle publication, truthful CLI observation, and pre-build generated-artifact freshness.
+- Latest public release: **v0.6.31** — release notes: [English](./release-notes-v0.6.31.md) · [简体中文](./release-notes-v0.6.31.zh-CN.md) · [日本語](./release-notes-v0.6.31.ja.md). It retains the self-describing agent contract from v0.6.30 while hardening provider process/prompt/session handling, recoverable background lifecycle publication, truthful CLI observation, and pre-build generated-artifact freshness.
 - 11 stable providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok); `opencode2` is a separately captured preview compatibility channel, not a replacement for stable `opencode`. See `docs/provider-paths.md`.
 - Everything through v0.6.31, including the agent-native CLI control plane and the comprehensive review remediation, is published.
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.

@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-07-15 — Codex — docs: multilingual v0.6.31 release closeout
+
+- Added complete Simplified Chinese and Japanese v0.6.31 release notes, connected all three language editions, and changed each root README to lead readers to the release notes in its own language.
+- Reconciled the current-release references in `docs/release.md` and `docs/roadmap.md` so the English, Simplified Chinese, and Japanese evidence surfaces are discoverable from the canonical release and open-work documents.
+- Preserved the release boundary: the immutable `v0.6.31` tag still points at the published release commit; these post-publication documentation translations live on `main` and are linked from the GitHub release body.
+
 ## 2026-07-15 — Codex — release: v0.6.31 published
 
 - Published and registry-verified `@bbingz/polycli@0.6.31` (`latest`, registry time `2026-07-15T14:37:53.706Z`, shasum `57d0f77811767c4310623af03f27af82375abae8`), `@bbingz/polycli-utils@1.0.5` (`2026-07-15T14:37:22.557Z`, `99df508a6bffe601e79569927bedf4016d3d471f`), and `@bbingz/polycli-opencode@0.6.31` (`2026-07-15T14:38:07.324Z`, `65c990f89df099bb0a1a95104a0a8400abb0f6ca`). `@bbingz/polycli-timing@1.0.2` was unchanged and not republished.

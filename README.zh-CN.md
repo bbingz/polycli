@@ -29,7 +29,9 @@
 
 ## 最新版本：v0.6.31
 
-本次 review-remediation 发布保持 agent-native control plane 和 Path B 边界，同时关闭 v0.6.30 后全面 review 确认的 14 个问题：provider 执行新增有界输出、类型化失败、安全 stdin/argv 传输、POSIX 进程组升级终止与可信 session identity；后台启动、取消、SessionEnd、恢复 sidecar 和 terminal ledger 发布在失败及竞态下保持可恢复；no-change JSON v2、provider 目标解析、TUI effects、active-job 状态和 ledger preview 均返回权威且脱敏的事实；source-derived validator 会在任何原地构建前校验五份 companion bundle 和 terminal metadata。详情见英文 release notes：[`docs/release-notes-v0.6.31.md`](./docs/release-notes-v0.6.31.md)。
+本次 review-remediation 发布保持 agent-native control plane 和 Path B 边界，同时关闭 v0.6.30 后全面 review 确认的 14 个问题：provider 执行新增有界输出、类型化失败、安全 stdin/argv 传输、POSIX 进程组升级终止与可信 session identity；后台启动、取消、SessionEnd、恢复 sidecar 和 terminal ledger 发布在失败及竞态下保持可恢复；no-change JSON v2、provider 目标解析、TUI effects、active-job 状态和 ledger preview 均返回权威且脱敏的事实；source-derived validator 会在任何原地构建前校验五份 companion bundle 和 terminal metadata。
+
+发布说明：[English](./docs/release-notes-v0.6.31.md) · **[简体中文](./docs/release-notes-v0.6.31.zh-CN.md)** · [日本語](./docs/release-notes-v0.6.31.ja.md)。
 
 ## 为什么要用 polycli？
 
