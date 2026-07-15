@@ -745,6 +745,7 @@ export function runClaudePromptStreaming({
   maxTurns = 10,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
+  killGraceMs,
   extraArgs = [],
   resumeSessionId = null,
   defaultModel = null,
@@ -793,6 +794,7 @@ export function runClaudePromptStreaming({
     env,
     input: invocation.input,
     timeout,
+    killGraceMs,
     spawnImpl,
     onStdoutLine(line) {
       const parsed = parseStreamJsonLine(line, { allowPrefix: true });
@@ -816,7 +818,11 @@ export function runClaudePromptStreaming({
       && parsed.resultEvent.type === "result"
       && !isClaudeErrorResultEvent(parsed.resultEvent)
     );
-    const completed = result.ok || (result.timedOut && hasSuccessfulResult);
+    const recoveredTimeout = result.timedOut
+      && hasSuccessfulResult
+      && !result.closeTimedOut
+      && !result.terminationFailure;
+    const completed = result.ok || recoveredTimeout;
 
     return {
       ...result,

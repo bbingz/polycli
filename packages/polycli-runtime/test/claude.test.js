@@ -358,6 +358,47 @@ test("runClaudePromptStreaming treats a successful final result before timeout a
   assert.equal(result.sessionId, "claude-stream-timeout");
 });
 
+test("runClaudePromptStreaming preserves timeout failure when termination cannot be confirmed", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = (signal) => {
+    const error = new Error(`kill ${signal} EPERM`);
+    error.code = "EPERM";
+    throw error;
+  };
+  const pending = Symbol("pending");
+
+  const resultPromise = runClaudePromptStreaming({
+    prompt: "ping",
+    timeout: 5,
+    killGraceMs: 5,
+    spawnImpl() {
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"content_block_delta","delta":{"type":"text_delta","text":"review complete"}}\n');
+        child.stdout.emit("data", '{"type":"result","subtype":"success","is_error":false,"result":"review complete"}\n');
+      });
+      return child;
+    },
+  });
+  const boundedTimeout = new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(pending), 5_000);
+    timer.unref?.();
+  });
+  const result = await Promise.race([resultPromise, boundedTimeout]);
+
+  assert.notEqual(result, pending, "Claude streaming must settle when termination never closes");
+  assert.equal(result.ok, false);
+  assert.equal(result.timedOut, true);
+  assert.equal(result.closeTimedOut, true);
+  assert.equal(result.terminationFailure, "close_timeout");
+  assert.equal(result.errorCode, "timeout");
+  assert.equal(result.terminationReason, "timeout");
+  assert.equal(result.status, null);
+  assert.equal(result.terminationErrors.length > 0, true);
+});
+
 test("runClaudePromptStreaming passes caller env through print mode", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
