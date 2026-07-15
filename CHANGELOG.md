@@ -6,12 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
-## 2026-07-15 — Codex — agent-native CLI control plane (unreleased)
+## 2026-07-15 — Codex — release: v0.6.30 candidate (agent-native CLI control plane)
 
 - Added one declarative command registry as the source for strict parsing, generated help, host-map validation, terminal metadata, typed errors/output schemas, and the offline `agent-context --json` discovery contract. Unknown option-looking tokens on registered commands now fail with bounded suggestions; pass `--` before prompt text that intentionally begins with an option-like token.
 - Split host, provider, invocation, and attempt identities in state and ledger records; made foreground/background/health terminal pairs recoverable and attempt-correct; decoder overflow now terminates the provider process tree before settling once.
 - Added opt-in `--json-v2`, explicit `--job id:...|prefix:...|latest*` selectors with typed waits, and the redacted cursor-based `debug tail` surface. Existing `--json` payloads and compatible positional job references remain unchanged.
-- Prepared the next publishable manifests as host/OpenCode/terminal `0.6.30` and `@bbingz/polycli-utils` `1.0.4`; no package was published by this implementation task.
+- Prepared host/OpenCode/terminal `0.6.30` and `@bbingz/polycli-utils` `1.0.4`; publication evidence is recorded in the subsequent release closeout.
 
 ## 2026-07-15 — Codex — release: v0.6.29 published
 
