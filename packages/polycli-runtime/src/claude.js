@@ -828,6 +828,10 @@ export function runClaudePromptStreaming({
       error: completed
         ? (resultError || (hasVisibleText ? null : "claude produced no visible text"))
         : result.error,
+      errorCode: completed && !resultError
+        ? (hasVisibleText ? null : "no_visible_text")
+        : result.errorCode,
+      terminationReason: completed ? null : result.terminationReason,
     };
   });
 }
