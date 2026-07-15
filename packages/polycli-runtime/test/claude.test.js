@@ -352,6 +352,9 @@ test("runClaudePromptStreaming treats a successful final result before timeout a
   assert.equal(result.timedOut, false);
   assert.equal(result.response, "review complete");
   assert.equal(result.error, null);
+  assert.equal(result.errorCode, null);
+  assert.equal(result.terminationReason, null);
+  assert.equal(result.status, 143);
   assert.equal(result.sessionId, "claude-stream-timeout");
 });
 
@@ -656,6 +659,33 @@ test("runClaudePromptStreaming still fails timeout recovery when no visible text
   assert.equal(result.timedOut, false);
   assert.equal(result.response, "");
   assert.equal(result.error, "claude produced no visible text");
+  assert.equal(result.errorCode, "no_visible_text");
+  assert.equal(result.terminationReason, null);
+  assert.equal(result.status, 143);
+});
+
+test("runClaudePromptStreaming preserves timeout diagnostics without a terminal result", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.kill = () => {
+    queueMicrotask(() => child.emit("close", 143, null));
+  };
+
+  const result = await runClaudePromptStreaming({
+    prompt: "ping",
+    timeout: 5,
+    spawnImpl() {
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.timedOut, true);
+  assert.equal(result.errorCode, "timeout");
+  assert.equal(result.terminationReason, "timeout");
+  assert.equal(result.status, 143);
 });
 
 test("parseClaudeStreamText replays a captured real cli fixture", () => {
