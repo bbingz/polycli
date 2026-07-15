@@ -14,7 +14,9 @@ import {
   resolveJobConfigFile,
   resolveJobFile,
   resolveJobLogFile,
+  resolveJobStartFailureFile,
   resolveStateDir,
+  resolveStateFile,
   upsertJob,
 } from "../lib/state.mjs";
 
@@ -234,6 +236,56 @@ test("config failure remains recoverable when terminal ledger persistence is tra
     fs.rmSync(ledgerFile, { recursive: true, force: true });
     const recovered = refreshJob(fixture.workspaceRoot, getJob(fixture.workspaceRoot, fixture.jobId));
     assert.equal(recovered.status, "failed");
+    const terminal = (await readRunLedgerEvents(fixture.workspaceRoot)).filter((event) =>
+      ["attempt_result", "provider_decision"].includes(event.phase)
+    );
+    assert.deepEqual(terminal.map((event) => event.phase), ["attempt_result", "provider_decision"]);
+  });
+});
+
+test("pre-envelope state-lock failure leaves a private safe sidecar that refresh finalizes exactly once", async () => {
+  await withBackgroundJob("state-lock-retry", async (fixture) => {
+    const injected = new Error("original spawn failure at /private/owned/runtime");
+    const stateLock = `${resolveStateFile(fixture.workspaceRoot)}.lock`;
+    fs.writeFileSync(stateLock, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), { mode: 0o600 });
+
+    await assert.rejects(
+      () => startBackgroundWorker({
+        workspaceRoot: fixture.workspaceRoot,
+        job: fixture.job,
+        execution: fixture.execution,
+        runContext: fixture.runContext,
+        config: fixture.config,
+        companionPath: "/tmp/polycli-companion.mjs",
+        env: {},
+        failureFinalizationOptions: { lockOptions: { timeoutMs: 25, pollMs: 1 } },
+      }, {
+        spawnWorker() {
+          throw injected;
+        },
+      }),
+      (error) => error === injected,
+    );
+
+    const sidecarFile = resolveJobStartFailureFile(fixture.workspaceRoot, fixture.jobId);
+    const sidecarText = fs.readFileSync(sidecarFile, "utf8");
+    const sidecar = JSON.parse(sidecarText);
+    assert.equal(fs.statSync(sidecarFile).mode & 0o777, 0o600);
+    assert.equal(sidecar.error, "original spawn failure at <path:redacted>");
+    assert.equal(sidecar.jobId, fixture.jobId);
+    assert.equal(sidecar.terminalDescriptor.jobId, fixture.jobId);
+    assert.doesNotMatch(sidecarText, /prompt:redacted|\"argv\"|\"env\"/);
+    assert.equal(getJob(fixture.workspaceRoot, fixture.jobId)?.status, "queued");
+    assert.equal(readJobFile(resolveJobFile(fixture.workspaceRoot, fixture.jobId)), null);
+    assert.equal((await readRunLedgerEvents(fixture.workspaceRoot)).length, 0);
+
+    fs.rmSync(stateLock, { force: true });
+    const recovered = refreshJob(fixture.workspaceRoot, getJob(fixture.workspaceRoot, fixture.jobId));
+    assert.equal(recovered.status, "failed");
+    assert.equal(fs.existsSync(sidecarFile), false);
+    assert.equal(fs.existsSync(resolveJobConfigFile(fixture.workspaceRoot, fixture.jobId)), false);
+    assert.equal(fs.existsSync(fixture.cleanupPath), false);
+    refreshJob(fixture.workspaceRoot, recovered);
     const terminal = (await readRunLedgerEvents(fixture.workspaceRoot)).filter((event) =>
       ["attempt_result", "provider_decision"].includes(event.phase)
     );

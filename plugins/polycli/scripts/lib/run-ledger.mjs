@@ -273,7 +273,7 @@ export function appendRunLedgerEvent(workspaceRoot, event) {
   return full;
 }
 
-export function appendRunLedgerEvents(workspaceRoot, events) {
+export function appendRunLedgerEvents(workspaceRoot, events, lockOptions = {}) {
   if (!Array.isArray(events)) {
     throw new TypeError('events must be an array');
   }
@@ -290,6 +290,7 @@ export function appendRunLedgerEvents(workspaceRoot, events) {
     workspaceSlug: event.workspaceSlug ?? workspaceSlug,
   }));
   appendNdjsonBatch(file, full, {
+    ...lockOptions,
     maxBytes: MAX_LEDGER_BYTES,
     keepRatio: KEEP_RATIO,
     retentionGroupKey: terminalLedgerRetentionGroupKey,
@@ -515,7 +516,7 @@ function buildExpectedTerminalPair(events) {
   };
 }
 
-export function ensureRunLedgerTerminalPair(workspaceRoot, events) {
+export function ensureRunLedgerTerminalPair(workspaceRoot, events, { lockOptions = {} } = {}) {
   if (!Array.isArray(events) || events.length !== 2) {
     throw new TypeError('terminal ledger pair must contain exactly two events');
   }
@@ -540,7 +541,7 @@ export function ensureRunLedgerTerminalPair(workspaceRoot, events) {
     if (ambiguousLegacy.length > 0) {
       throw new Error(`Incomplete or conflicting terminal ledger pair for ${identityLabel}`);
     }
-    return appendRunLedgerEvents(workspaceRoot, expected);
+    return appendRunLedgerEvents(workspaceRoot, expected, lockOptions);
   }
   if (existing.length === 1) {
     const [partial] = existing;
@@ -566,7 +567,7 @@ export function ensureRunLedgerTerminalPair(workspaceRoot, events) {
       ...missing,
       terminalDescriptor: repairDescriptor,
     };
-    return [...existing, ...appendRunLedgerEvents(workspaceRoot, [repair])];
+    return [...existing, ...appendRunLedgerEvents(workspaceRoot, [repair], lockOptions)];
   }
   if (!terminalPairMatches(existing, expected)) {
     throw new Error(`Incomplete or conflicting terminal ledger pair for ${identityLabel}`);

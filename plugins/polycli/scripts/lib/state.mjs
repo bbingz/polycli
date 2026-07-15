@@ -200,6 +200,10 @@ export function resolveJobConfigFile(workspaceRoot, jobId) {
   return path.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
 }
 
+export function resolveJobStartFailureFile(workspaceRoot, jobId) {
+  return path.join(resolveJobsDir(workspaceRoot), `${jobId}.start-failure.json`);
+}
+
 function chmodPrivateDir(dir) {
   try {
     fs.chmodSync(dir, PRIVATE_DIR_MODE);
@@ -281,6 +285,7 @@ export function saveState(workspaceRoot, state, { preserveJobIds = [] } = {}) {
     if (job && job.jobId && !keptIds.has(job.jobId)) {
       removeJobFile(workspaceRoot, job.jobId);
       removeJobConfigFile(workspaceRoot, job.jobId);
+      removeJobStartFailureFile(workspaceRoot, job.jobId);
       removeJobLogFile(workspaceRoot, job.jobId);
     }
   }
@@ -297,7 +302,7 @@ export function updateState(workspaceRoot, mutate) {
   });
 }
 
-export function updateJobAtomically(workspaceRoot, jobId, buildNext) {
+export function updateJobAtomically(workspaceRoot, jobId, buildNext, { lockOptions = {} } = {}) {
   ensureStateDir(workspaceRoot);
   const lockPath = `${resolveStateFile(workspaceRoot)}.lock`;
   return withLockfile(lockPath, () => {
@@ -343,7 +348,7 @@ export function updateJobAtomically(workspaceRoot, jobId, buildNext) {
     }
     saveState(workspaceRoot, state, { preserveJobIds: [jobId] });
     return { written: true, job, envelope };
-  });
+  }, lockOptions);
 }
 
 export function upsertJob(workspaceRoot, jobPatch) {
@@ -446,6 +451,28 @@ export function readJobConfigFile(configFile) {
 export function removeJobConfigFile(workspaceRoot, jobId) {
   try {
     fs.unlinkSync(resolveJobConfigFile(workspaceRoot, jobId));
+  } catch {
+    // ignore
+  }
+}
+
+export function writeJobStartFailureFile(workspaceRoot, jobId, payload) {
+  ensureStateDir(workspaceRoot);
+  writeJsonAtomic(resolveJobStartFailureFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
+  return resolveJobStartFailureFile(workspaceRoot, jobId);
+}
+
+export function readJobStartFailureFile(workspaceRoot, jobId) {
+  try {
+    return JSON.parse(fs.readFileSync(resolveJobStartFailureFile(workspaceRoot, jobId), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function removeJobStartFailureFile(workspaceRoot, jobId) {
+  try {
+    fs.unlinkSync(resolveJobStartFailureFile(workspaceRoot, jobId));
   } catch {
     // ignore
   }

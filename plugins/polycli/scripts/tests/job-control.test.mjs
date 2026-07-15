@@ -21,9 +21,11 @@ import {
   resolveJobConfigFile,
   resolveJobFile,
   resolveJobLogFile,
+  resolveJobStartFailureFile,
   upsertJob,
   writeJobConfigFile,
   writeJobFile,
+  writeJobStartFailureFile,
 } from "../lib/state.mjs";
 import {
   appendRunLedgerEvent,
@@ -137,6 +139,11 @@ test("refreshJob records terminal ledger events when a worker exits before writi
       jobId: "job-missing-result",
       hostSurface: "terminal",
       logFile,
+    });
+    writeJobStartFailureFile(workspaceRoot, "job-cancel", {
+      version: 1,
+      jobId: "job-cancel",
+      error: "safe start failure",
     });
 
     const refreshed = refreshJob(workspaceRoot, listJobs(workspaceRoot)[0]);
@@ -1047,6 +1054,7 @@ test("cancelJob records cancelled ledger events, removes config, and cleans runt
 
     assert.equal(report.cancelled, true);
     assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "job-cancel")), false);
+    assert.equal(fs.existsSync(resolveJobStartFailureFile(workspaceRoot, "job-cancel")), false);
     assert.equal(fs.existsSync(cleanupDir), false);
 
     const events = (await readRunLedgerEvents(workspaceRoot)).filter((event) => event.runId === "run-cancel");
