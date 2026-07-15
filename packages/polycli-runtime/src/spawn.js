@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 
+import { preflightArgv } from "@bbingz/polycli-utils/process";
 import { createLineDecoder } from "@bbingz/polycli-utils/stream";
 
 import { classifyProviderFailure } from "./errors.js";
@@ -65,6 +66,8 @@ export function spawnStreamingCommand({
   signal = null,
   maxBufferBytes = 1_048_576,
   maxCaptureBytes = DEFAULT_CAPTURE_LIMIT_BYTES,
+  argvBudgetBytes = null,
+  argvBudgetHint = null,
   stdio = ["pipe", "pipe", "pipe"],
   detached = process.platform !== "win32",
   unref = false,
@@ -73,6 +76,14 @@ export function spawnStreamingCommand({
   onStderrChunk = () => {},
 } = {}) {
   const captureLimitBytes = normalizeCaptureLimit(maxCaptureBytes);
+  const preflight = preflightArgv(bin, args, {
+    env: env ?? process.env,
+    argvBudgetBytes,
+    argvBudgetHint,
+  });
+  if (!preflight.ok) {
+    return Promise.resolve(spawnFailureResult(preflight.error, captureLimitBytes));
+  }
 
   return new Promise((resolve) => {
     let child;

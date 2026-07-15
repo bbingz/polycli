@@ -1,5 +1,5 @@
-import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
-import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
+import { binaryAvailable, getSafeArgvBudgetBytes, runCommand } from "@bbingz/polycli-utils/process";
+import { matchResumeSessionIdLine } from "@bbingz/polycli-utils/session-id";
 
 import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
@@ -8,6 +8,8 @@ const OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const SESSION_EXPORT_TIMEOUT_MS = 30_000;
+const SAFE_PROMPT_ARGV_BUDGET_BYTES = getSafeArgvBudgetBytes();
+const SAFE_PROMPT_ARGV_BUDGET_HINT = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 const OPENCODE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
@@ -223,11 +225,6 @@ export function parseOpenCodeStreamText(text) {
 
 export function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
   const parsed = parseOpenCodeStreamText(stdout);
-  const resolvedSession = resolveSessionId({
-    stdout,
-    stderr,
-    priority: ["stdout", "stderr", "file"],
-  });
   const resultError = getOpenCodeResultError(parsed.resultEvent);
   const sessionErrorMessage = getOpenCodeSessionErrorDataMessage(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
@@ -239,7 +236,7 @@ export function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel =
     ok: status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+    sessionId: parsed.sessionId ?? matchResumeSessionIdLine(stderr),
     model: parsed.model ?? defaultModel,
     status,
     error,
@@ -293,6 +290,8 @@ export function runOpenCodePrompt({
   skipPermissions = true,
   defaultModel = null,
   bin = OPENCODE_BIN,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildOpenCodeInvocation({
     prompt,
@@ -307,7 +306,14 @@ export function runOpenCodePrompt({
     bin,
   });
 
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
+  });
   if (result.error) {
     const error = result.error.code === "ETIMEDOUT"
       ? `opencode timed out after ${Math.round(timeout / 1000)}s`
@@ -315,7 +321,8 @@ export function runOpenCodePrompt({
     return {
       ok: false,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "opencode" }),
+      errorCode: classifyProviderFailure(result.error, { provider: "opencode" }),
+      spawnErrorCode: result.spawnErrorCode ?? null,
     };
   }
 
@@ -345,6 +352,7 @@ export function runOpenCodePromptStreaming({
   onEvent = () => {},
   bin = OPENCODE_BIN,
   spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildOpenCodeInvocation({
     prompt,
@@ -366,6 +374,8 @@ export function runOpenCodePromptStreaming({
     env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
     onStdoutLine(line) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("{")) return;
@@ -375,18 +385,14 @@ export function runOpenCodePromptStreaming({
     },
   }).then((result) => {
     const parsed = parseOpenCodeStreamText(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"],
-    });
+    const fallbackSessionId = matchResumeSessionIdLine(result.stderr);
     const resultError = getOpenCodeResultError(parsed.resultEvent);
     const sessionErrorMessage = getOpenCodeSessionErrorDataMessage(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
     let resolvedModel = parsed.model ?? model ?? defaultModel;
     const ok = result.ok && !resultError && hasVisibleText;
     if (ok && !resolvedModel) {
-      resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? resolvedSession.sessionId, { cwd, env, bin });
+      resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? fallbackSessionId, { cwd, env, bin });
     }
     const error = (!result.ok && result.errorCode ? result.error : null)
       || sessionErrorMessage
@@ -396,7 +402,7 @@ export function runOpenCodePromptStreaming({
     return {
       ...result,
       ...parsed,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      sessionId: parsed.sessionId ?? fallbackSessionId,
       model: resolvedModel,
       ok,
       error,

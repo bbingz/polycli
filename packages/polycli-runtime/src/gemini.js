@@ -1,14 +1,21 @@
 import { parseStreamJsonLine } from "@bbingz/polycli-utils/parse-stream-json";
-import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import {
+  binaryAvailable,
+  getSafeArgvBudgetBytes,
+  preflightArgv,
+  runCommand,
+} from "@bbingz/polycli-utils/process";
 import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
 
-import { formatProviderExitError } from "./errors.js";
+import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const GEMINI_BIN = process.env.GEMINI_CLI_BIN || "gemini";
 const DEFAULT_TIMEOUT_MS = 300_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const PROMPT_STDIN_THRESHOLD = 100_000;
+const SAFE_PROMPT_ARGV_BUDGET_BYTES = getSafeArgvBudgetBytes();
+const SAFE_PROMPT_ARGV_BUDGET_HINT = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 const GEMINI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 const VALID_GEMINI_EFFORTS = new Set(["low", "medium", "high"]);
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
@@ -45,16 +52,23 @@ export function buildGeminiInvocation({
   resumeSessionId = null,
   extraArgs = [],
   bin = GEMINI_BIN,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const promptText = applyGeminiEffort(prompt, effort);
-  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD;
-  const args = ["-p", useStdin ? "" : promptText, "-o", outputFormat];
   const resolvedApprovalMode = write ? "auto_edit" : approvalMode;
-
-  if (model) args.push("-m", model);
-  args.push("--approval-mode", resolvedApprovalMode);
-  if (resumeSessionId) args.push("--resume", resumeSessionId);
-  if (extraArgs.length > 0) args.push(...extraArgs);
+  const buildArgs = (inlinePrompt) => {
+    const nextArgs = ["-p", inlinePrompt ? promptText : "", "-o", outputFormat];
+    if (model) nextArgs.push("-m", model);
+    nextArgs.push("--approval-mode", resolvedApprovalMode);
+    if (resumeSessionId) nextArgs.push("--resume", resumeSessionId);
+    if (extraArgs.length > 0) nextArgs.push(...extraArgs);
+    return nextArgs;
+  };
+  const inlineArgs = buildArgs(true);
+  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD
+    || !preflightArgv(bin, inlineArgs, { env, argvBudgetBytes }).ok;
+  const args = useStdin ? buildArgs(false) : inlineArgs;
 
   return {
     bin,
@@ -202,7 +216,11 @@ export function runGeminiPrompt({
   resumeSessionId = null,
   defaultModel = null,
   bin = GEMINI_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
+  const childEnv = buildGeminiEnv(env);
   const invocation = buildGeminiInvocation({
     prompt,
     model,
@@ -213,13 +231,18 @@ export function runGeminiPrompt({
     resumeSessionId,
     extraArgs,
     bin,
+    env: childEnv,
+    argvBudgetBytes,
   });
 
   const result = runCommand(invocation.bin, invocation.args, {
     cwd,
     timeout,
     input: invocation.input,
-    env: buildGeminiEnv(),
+    env: childEnv,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
   });
 
   if (result.error) {
@@ -228,6 +251,8 @@ export function runGeminiPrompt({
       error: result.error.code === "ETIMEDOUT"
         ? `gemini timed out after ${Math.round(timeout / 1000)}s`
         : result.error.message,
+      errorCode: classifyProviderFailure(result.error),
+      spawnErrorCode: result.spawnErrorCode ?? null,
     };
   }
 
@@ -250,7 +275,10 @@ export function runGeminiPromptStreaming({
   onEvent = () => {},
   bin = GEMINI_BIN,
   spawnImpl,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
+  const childEnv = buildGeminiEnv(env);
   const invocation = buildGeminiInvocation({
     prompt,
     model,
@@ -261,16 +289,20 @@ export function runGeminiPromptStreaming({
     resumeSessionId,
     extraArgs,
     bin,
+    env: childEnv,
+    argvBudgetBytes,
   });
 
   return spawnStreamingCommand({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: buildGeminiEnv(),
+    env: childEnv,
     input: invocation.input,
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
     onStdoutLine(line) {
       const parsed = parseStreamJsonLine(line, { allowPrefix: true });
       if (parsed.ok) {

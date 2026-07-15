@@ -1,9 +1,14 @@
 import { parseStreamJsonLine } from "@bbingz/polycli-utils/parse-stream-json";
-import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
-import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
+import {
+  binaryAvailable,
+  getSafeArgvBudgetBytes,
+  preflightArgv,
+  runCommand,
+} from "@bbingz/polycli-utils/process";
+import { matchResumeSessionIdLine } from "@bbingz/polycli-utils/session-id";
 import { randomUUID } from "node:crypto";
 
-import { formatProviderExitError } from "./errors.js";
+import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const CLAUDE_BIN = process.env.CLAUDE_CLI_BIN || "claude";
@@ -12,6 +17,8 @@ const DEFAULT_TIMEOUT_MS = 900_000;
 const TMUX_START_TIMEOUT_MS = 30_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
 const PROMPT_STDIN_THRESHOLD = 100_000;
+const SAFE_PROMPT_ARGV_BUDGET_BYTES = getSafeArgvBudgetBytes();
+const SAFE_PROMPT_ARGV_BUDGET_HINT = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 const CLAUDE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 const CLAUDE_TMUX_ENV_EXACT = new Set([
   "ALL_PROXY",
@@ -143,34 +150,26 @@ export function buildClaudeInvocation({
   resumeSessionId = null,
   extraArgs = [],
   bin = CLAUDE_BIN,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const promptText = String(prompt ?? "");
-  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD;
-  const args = ["-p"];
-
-  if (!useStdin) {
-    args.push(promptText);
-  }
-
-  args.push("--output-format", outputFormat);
-  if (outputFormat === "stream-json") {
-    args.push("--verbose");
-  }
-  if (permissionMode) {
-    args.push("--permission-mode", permissionMode);
-  }
-  if (Number.isFinite(maxTurns) && maxTurns > 0) {
-    args.push("--max-turns", String(maxTurns));
-  }
-  if (model) {
-    args.push("--model", model);
-  }
-  if (resumeSessionId) {
-    args.push("--resume", resumeSessionId);
-  }
-  if (extraArgs.length > 0) {
-    args.push(...extraArgs);
-  }
+  const buildArgs = (includePrompt) => {
+    const nextArgs = ["-p"];
+    if (includePrompt) nextArgs.push(promptText);
+    nextArgs.push("--output-format", outputFormat);
+    if (outputFormat === "stream-json") nextArgs.push("--verbose");
+    if (permissionMode) nextArgs.push("--permission-mode", permissionMode);
+    if (Number.isFinite(maxTurns) && maxTurns > 0) nextArgs.push("--max-turns", String(maxTurns));
+    if (model) nextArgs.push("--model", model);
+    if (resumeSessionId) nextArgs.push("--resume", resumeSessionId);
+    if (extraArgs.length > 0) nextArgs.push(...extraArgs);
+    return nextArgs;
+  };
+  const inlineArgs = buildArgs(true);
+  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD
+    || !preflightArgv(bin, inlineArgs, { env, argvBudgetBytes }).ok;
+  const args = useStdin ? buildArgs(false) : inlineArgs;
 
   return {
     bin,
@@ -603,13 +602,8 @@ export function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = n
 
   try {
     const parsed = JSON.parse(text.slice(jsonStart));
-    const resolvedSession = resolveSessionId({
-      stdout,
-      stderr,
-      priority: ["stdout", "stderr", "file"],
-    });
     const response = typeof parsed.result === "string" ? parsed.result : "";
-    const sessionId = parsed.session_id ?? parsed.sessionId ?? resolvedSession.sessionId ?? null;
+    const sessionId = parsed.session_id ?? parsed.sessionId ?? matchResumeSessionIdLine(stderr) ?? null;
     const errorText = isClaudeErrorResultEvent(parsed) ? getClaudeErrorText(parsed) : null;
     const processError = status === 0
       ? null
@@ -706,6 +700,9 @@ export function runClaudePrompt({
   resumeSessionId = null,
   defaultModel = null,
   bin = CLAUDE_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildClaudeInvocation({
     prompt,
@@ -716,12 +713,18 @@ export function runClaudePrompt({
     resumeSessionId,
     extraArgs,
     bin,
+    env,
+    argvBudgetBytes,
   });
 
   const result = runCommand(invocation.bin, invocation.args, {
     cwd,
     timeout,
     input: invocation.input,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
   });
 
   if (result.error) {
@@ -730,6 +733,8 @@ export function runClaudePrompt({
       error: result.error.code === "ETIMEDOUT"
         ? `claude timed out after ${Math.round(timeout / 1000)}s`
         : result.error.message,
+      errorCode: classifyProviderFailure(result.error),
+      spawnErrorCode: result.spawnErrorCode ?? null,
     };
   }
 
@@ -757,6 +762,7 @@ export function runClaudePromptStreaming({
   env = process.env,
   signalEmitter = process,
   spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   if (executionMode === "tmux-tui") {
     return Promise.resolve(runClaudeTuiPrompt({
@@ -785,6 +791,8 @@ export function runClaudePromptStreaming({
     resumeSessionId,
     extraArgs,
     bin,
+    env,
+    argvBudgetBytes,
   });
 
   return spawnStreamingCommand({
@@ -796,6 +804,8 @@ export function runClaudePromptStreaming({
     timeout,
     killGraceMs,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
     onStdoutLine(line) {
       const parsed = parseStreamJsonLine(line, { allowPrefix: true });
       if (parsed.ok) {
@@ -804,11 +814,6 @@ export function runClaudePromptStreaming({
     },
   }).then((result) => {
     const parsed = parseClaudeStreamText(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"],
-    });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultError = isClaudeErrorResultEvent(parsed.resultEvent)
       ? getClaudeErrorText(parsed.resultEvent)
@@ -828,7 +833,7 @@ export function runClaudePromptStreaming({
       ...result,
       ...parsed,
       timedOut: completed ? false : result.timedOut,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      sessionId: parsed.sessionId ?? matchResumeSessionIdLine(result.stderr),
       model: parsed.model ?? model ?? defaultModel,
       ok: completed && !resultError && hasVisibleText,
       error: completed

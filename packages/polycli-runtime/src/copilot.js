@@ -1,12 +1,14 @@
-import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
-import { resolveSessionId } from "@bbingz/polycli-utils/session-id";
+import { binaryAvailable, getSafeArgvBudgetBytes, runCommand } from "@bbingz/polycli-utils/process";
+import { matchResumeSessionIdLine } from "@bbingz/polycli-utils/session-id";
 
-import { formatProviderExitError } from "./errors.js";
+import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
 
 const COPILOT_BIN = process.env.COPILOT_CLI_BIN || "copilot";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const SAFE_PROMPT_ARGV_BUDGET_BYTES = getSafeArgvBudgetBytes();
+const SAFE_PROMPT_ARGV_BUDGET_HINT = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 const COPILOT_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
@@ -236,6 +238,9 @@ export function runCopilotPrompt({
   allowAllUrls = true,
   noAskUser = true,
   bin = COPILOT_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildCopilotInvocation({
     prompt,
@@ -252,7 +257,14 @@ export function runCopilotPrompt({
     bin,
   });
 
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
+  });
   if (result.error) {
     return {
       ok: false,
@@ -260,18 +272,15 @@ export function runCopilotPrompt({
       error: result.error.code === "ETIMEDOUT"
         ? `copilot timed out after ${Math.round(timeout / 1000)}s`
         : result.error.message,
+      errorCode: classifyProviderFailure(result.error, { provider: "copilot" }),
+      spawnErrorCode: result.spawnErrorCode ?? null,
     };
   }
 
   const parsed = parseCopilotStreamText(result.stdout);
-  const resolvedSession = resolveSessionId({
-    stdout: result.stdout,
-    stderr: result.stderr,
-    priority: ["stdout", "stderr", "file"],
-  });
   const resultError = getCopilotResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
-  const sessionId = parsed.sessionId ?? resolvedSession.sessionId;
+  const sessionId = parsed.sessionId ?? matchResumeSessionIdLine(result.stderr);
 
   return {
     ok: result.status === 0 && !resultError && hasVisibleText,
@@ -302,6 +311,8 @@ export function runCopilotPromptStreaming({
   onEvent = () => {},
   bin = COPILOT_BIN,
   spawnImpl,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildCopilotInvocation({
     prompt,
@@ -322,9 +333,11 @@ export function runCopilotPromptStreaming({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
     onStdoutLine(line) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("{")) return;
@@ -334,14 +347,9 @@ export function runCopilotPromptStreaming({
     },
   }).then((result) => {
     const parsed = parseCopilotStreamText(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"],
-    });
     const resultError = getCopilotResultError(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
-    const sessionId = parsed.sessionId ?? resolvedSession.sessionId;
+    const sessionId = parsed.sessionId ?? matchResumeSessionIdLine(result.stderr);
     return {
       ...result,
       ...parsed,

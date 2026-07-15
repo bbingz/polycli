@@ -1,4 +1,4 @@
-import { binaryAvailable, runCommand } from "@bbingz/polycli-utils/process";
+import { binaryAvailable, getSafeArgvBudgetBytes, runCommand } from "@bbingz/polycli-utils/process";
 
 import { classifyProviderFailure, formatProviderExitError } from "./errors.js";
 import { spawnStreamingCommand } from "./spawn.js";
@@ -7,6 +7,8 @@ const CMD_BIN = process.env.CMD_CLI_BIN || "cmd";
 const DEFAULT_CMD_MODEL = "deepseek";
 const DEFAULT_TIMEOUT_MS = 900_000;
 const AUTH_CHECK_TIMEOUT_MS = 30_000;
+const SAFE_PROMPT_ARGV_BUDGET_BYTES = getSafeArgvBudgetBytes();
+const SAFE_PROMPT_ARGV_BUDGET_HINT = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 const CMD_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 export const TRANSIENT_PROBE_ERROR_PATTERNS = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i,
@@ -102,6 +104,8 @@ export function runCmdPrompt({
   yolo = true,
   defaultModel = null,
   bin = CMD_BIN,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
@@ -110,7 +114,14 @@ export function runCmdPrompt({
     bin,
   });
 
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
+  });
   if (result.error) {
     const error = result.error.code === "ETIMEDOUT"
       ? `cmd timed out after ${Math.round(timeout / 1000)}s`
@@ -118,7 +129,8 @@ export function runCmdPrompt({
     return {
       ok: false,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "cmd" }),
+      errorCode: classifyProviderFailure(result.error, { provider: "cmd" }),
+      spawnErrorCode: result.spawnErrorCode ?? null,
     };
   }
 
@@ -154,6 +166,7 @@ export function runCmdPromptStreaming({
   onEvent = () => {},
   bin = CMD_BIN,
   spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES,
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
@@ -169,6 +182,8 @@ export function runCmdPromptStreaming({
     env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
     onStdoutLine(line) {
       const trimmed = line.trimEnd();
       if (!trimmed.trim()) return;

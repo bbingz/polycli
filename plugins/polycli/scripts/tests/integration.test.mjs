@@ -24,6 +24,7 @@ import { resolveTimingHistoryFile } from "../lib/timing.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const companionPath = path.resolve(__dirname, "..", "polycli-companion.bundle.mjs");
+const sourceCompanionPath = path.resolve(__dirname, "..", "polycli-companion.mjs");
 
 function createFakeQwenBin() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-fake-qwen-"));
@@ -81,7 +82,9 @@ async function waitForResultGate() {
 }
 (async () => {
   logEvent("start");
-  process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "11111111-1111-1111-1111-111111111111", model: "qwen-test" }) + "\\n");
+  if (process.env.QWEN_OMIT_SESSION_ID !== "1") {
+    process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "11111111-1111-1111-1111-111111111111", model: "qwen-test" }) + "\\n");
+  }
   if (delay > 0) await sleep(delay);
   if (useTool) {
     process.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "tool-1", name: "shell", input: { cmd: "pwd" } }] } }) + "\\n");
@@ -520,9 +523,9 @@ function cleanEnv(extra = {}) {
   return { ...env, ...extra };
 }
 
-function runCompanion(args, { cwd, env, timeout = 30_000 } = {}) {
+function runCompanion(args, { cwd, env, timeout = 30_000, companion = companionPath } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn("node", [companionPath, ...args], {
+    const child = spawn("node", [companion, ...args], {
       cwd,
       env,
     });
@@ -584,6 +587,18 @@ function createReviewWorkspace() {
       fs.rmSync(cwd, { recursive: true, force: true });
     },
   };
+}
+
+function createLargeReviewWorkspace() {
+  const workspace = createReviewWorkspace();
+  fs.writeFileSync(
+    path.join(workspace.cwd, "large-review.txt"),
+    `LARGE_REVIEW_DIFF_MARKER_${"x".repeat(220_000)}\n`,
+    "utf8"
+  );
+  gitSync(workspace.cwd, ["add", "large-review.txt"]);
+  gitSync(workspace.cwd, ["commit", "--amend", "--no-edit"]);
+  return workspace;
 }
 
 async function waitForTerminalJob(jobId, context) {
@@ -1580,6 +1595,90 @@ test("integration: review --background preserves kimi runtime options and stored
       `kimi review must not pass legacy python kimi-cli flags as arguments; argv: ${logged.argv.join(" ")}`
     );
   } finally {
+    fake.cleanup();
+    reviewWorkspace.cleanup();
+    fs.rmSync(pluginData, { recursive: true, force: true });
+  }
+});
+
+test("integration: source review keeps unlimited context but preflights argv-only providers", async () => {
+  const pluginData = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-plugin-data-"));
+  const reviewWorkspace = createLargeReviewWorkspace();
+  const argLog = path.join(pluginData, "qwen-large-review-argv.jsonl");
+  const fake = createFakeQwenBin();
+  const proseUuid = "423e4567-e89b-42d3-a456-426614174000";
+  const previousPluginData = process.env.CLAUDE_PLUGIN_DATA;
+  try {
+    process.env.CLAUDE_PLUGIN_DATA = pluginData;
+    const baseEnv = cleanEnv({
+      CLAUDE_PLUGIN_DATA: pluginData,
+      QWEN_CLI_BIN: fake.bin,
+      QWEN_ARGV_LOG: argLog,
+      QWEN_FIXED_REPLY: `answer mentions ${proseUuid}`,
+      QWEN_OMIT_SESSION_ID: "1",
+    });
+    const defaultRunId = "qwen_large_review_default";
+    const defaultReview = await runCompanion(
+      ["review", "--provider", "qwen", "--base", "HEAD~1", "--scope", "branch", "--json", "regressions only"],
+      {
+        cwd: reviewWorkspace.cwd,
+        env: { ...baseEnv, POLYCLI_RUN_ID: defaultRunId },
+        companion: sourceCompanionPath,
+      }
+    );
+    assert.equal(defaultReview.code, 0, defaultReview.stderr);
+    const rejected = JSON.parse(defaultReview.stdout);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.meta.truncated, false);
+    assert.equal(rejected.spawnErrorCode, "E2BIG");
+    assert.equal(rejected.errorCode, "argument_list_too_long");
+    assert.match(rejected.error, /--max-diff-bytes/);
+    assert.equal(fs.existsSync(argLog), false, "oversized default review must be rejected before provider spawn");
+
+    const rejectedTerminal = (await readRunLedgerEvents(reviewWorkspace.cwd))
+      .find((event) => event.runId === defaultRunId && event.phase === "attempt_result");
+    assert.equal(rejectedTerminal?.status, "failed");
+    assert.equal(rejectedTerminal?.errorCode, "argument_list_too_long");
+    assert.equal(rejectedTerminal?.failureClass, "argument_list_too_long");
+
+    const cappedRunId = "qwen_large_review_capped";
+    const cappedReview = await runCompanion(
+      [
+        "review",
+        "--provider",
+        "qwen",
+        "--base",
+        "HEAD~1",
+        "--scope",
+        "branch",
+        "--max-diff-bytes",
+        "1024",
+        "--json",
+        "regressions only",
+      ],
+      {
+        cwd: reviewWorkspace.cwd,
+        env: { ...baseEnv, POLYCLI_RUN_ID: cappedRunId },
+        companion: sourceCompanionPath,
+      }
+    );
+    assert.equal(cappedReview.code, 0, cappedReview.stderr);
+    const capped = JSON.parse(cappedReview.stdout);
+    assert.equal(capped.ok, true);
+    assert.equal(capped.meta.truncated, true);
+    assert.match(capped.meta.truncationNotice, /1024 bytes/);
+    assert.equal(capped.response, `answer mentions ${proseUuid}`);
+    assert.equal(capped.sessionId, null);
+
+    const logged = readJsonLine(argLog);
+    assert.equal(logged.argv.some((arg) => arg.includes("LARGE_REVIEW_DIFF_MARKER_")), true);
+    const cappedTerminal = (await readRunLedgerEvents(reviewWorkspace.cwd))
+      .find((event) => event.runId === cappedRunId && event.phase === "attempt_result");
+    assert.equal(cappedTerminal?.status, "completed");
+    assert.equal(cappedTerminal?.providerSessionId, null);
+  } finally {
+    if (previousPluginData == null) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = previousPluginData;
     fake.cleanup();
     reviewWorkspace.cleanup();
     fs.rmSync(pluginData, { recursive: true, force: true });
