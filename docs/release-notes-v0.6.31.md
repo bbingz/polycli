@@ -13,7 +13,7 @@ Review-remediation patch on top of `v0.6.30`. This release closes every confirme
 
 ### Bounded provider execution and safe prompt transport
 
-- Timeout, abort, decoder overflow, termination failure, and missing-close paths now terminate or escalate the provider process tree and settle exactly once with a canonical typed error.
+- On POSIX, timeout, abort, decoder overflow, termination failure, and missing-close paths now terminate or escalate the provider process group and settle exactly once with a canonical typed error. Windows streaming paths retain a direct-child termination fallback.
 - Aggregate stdout and stderr capture are independently bounded while total byte counts remain available for diagnostics.
 - Claude and Gemini move oversized prompts to verified stdin transport. Argv-only providers reject unsafe command lines before spawn with typed `argument_list_too_long` guidance; review input is still unlimited unless the caller explicitly chooses `--max-diff-bytes`.
 - Claude, Copilot, OpenCode, and Qwen no longer promote arbitrary UUIDs from answer prose into provider session identity.
@@ -43,6 +43,7 @@ Review-remediation patch on top of `v0.6.30`. This release closes every confirme
 - Five scoped implementation groups each passed independent spec-compliance and code-quality review.
 - The local full suite passed: 906 tests, 906 passed, 0 failed.
 - `npm run release:check` passed source-derived bundle freshness, strict fixture freshness, manifests, host maps, Codex guidance, installed-CLI review flag drift, both Claude plugin validations, and all npm package dry-runs.
+- Native Windows execution was not available. Windows argv budgeting and `taskkill`/deadline branches were covered by deterministic simulation; only POSIX process-group and live process-tree behavior received native execution coverage.
 - PR CI and publication evidence are recorded before the GitHub release is created.
 
 ## Release artifacts

@@ -9,7 +9,7 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 ## 2026-07-15 — Codex — release: v0.6.31 candidate (review remediation)
 
 - Closed all 14 confirmed findings from the v0.6.30 comprehensive review: truthful no-diff/background JSON v2 results, strict provider target disambiguation, accurate TUI effects, active-job visibility, ledger preview redaction, safe prompt transport, structured session identity, and canonical typed failures.
-- Hardened provider process lifecycle with bounded stdout/stderr capture, process-tree termination and escalation, deadline-aware Windows/POSIX probes, and exactly-once settlement even when `close` is missing or termination fails.
+- Hardened provider process lifecycle with bounded stdout/stderr capture, POSIX process-group termination and escalation, simulated deadline-aware Windows `taskkill` coverage, and exactly-once settlement even when `close` is missing or termination fails. Native Windows execution was not available; streaming paths retain a direct-child fallback there.
 - Made background cancellation and SessionEnd recoverable: cancellation intent remains active until a verified stop, start failures use a private recovery sidecar, terminal ledger/state publication is ordered, and worker/cancel races cannot publish late provider material.
 - Added a source-derived, read-only generated-artifact freshness gate that runs before any in-place bundle rebuild in CI and `release:check`; rebuilt all five companion bundles from current source.
 - Prepared host/OpenCode/terminal `0.6.31` and `@bbingz/polycli-utils` `1.0.5`; `@bbingz/polycli-timing` remains `1.0.2` and `@bbingz/polycli-runtime` remains private.
