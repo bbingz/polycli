@@ -1,6 +1,6 @@
 ---
 description: Cancel an active polycli background job in this repository
-argument-hint: '[job-id]'
+argument-hint: '[job-selector] [--job <selector>] [--json|--json-v2]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---

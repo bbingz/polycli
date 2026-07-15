@@ -37,6 +37,56 @@ test("tui view model renders unknown when provider has no terminal evidence", ()
   assert.equal(states.minimax.status, "unknown");
 });
 
+test("tui view model projects the newest attempt without inheriting an older terminal state", () => {
+  const states = classifyProviderStates([
+    { runId: "run-a", provider: "qwen", phase: "attempt_started", status: "started", attemptId: "att-old", jobId: "job-shared" },
+    { runId: "run-a", provider: "qwen", phase: "provider_decision", status: "failed", reason: "old_failure", attemptId: "att-old", jobId: "job-shared" },
+    { runId: "run-a", provider: "qwen", phase: "attempt_started", status: "started", attemptId: "att-new", jobId: "job-shared", logFile: "/tmp/att-new.log" },
+    // A delayed old terminal event must not terminate the newer attempt.
+    { runId: "run-a", provider: "qwen", phase: "attempt_result", status: "failed", reason: "late_old_failure", attemptId: "att-old", jobId: "job-shared" },
+  ]);
+
+  assert.equal(states.qwen.status, "unfinished");
+  assert.equal(states.qwen.reason, null);
+  assert.equal(states.qwen.jobId, "job-shared");
+  assert.equal(states.qwen.logFile, "/tmp/att-new.log");
+});
+
+test("tui view model falls back to background job identity before legacy epochs", () => {
+  const states = classifyProviderStates([
+    { runId: "run-a", provider: "kimi", phase: "attempt_started", status: "started", jobId: "job-old" },
+    { runId: "run-a", provider: "kimi", phase: "attempt_result", status: "failed", reason: "old_failure", jobId: "job-old" },
+    { runId: "run-a", provider: "kimi", phase: "attempt_started", status: "started", jobId: "job-new" },
+  ]);
+
+  assert.equal(states.kimi.status, "unfinished");
+  assert.equal(states.kimi.reason, null);
+  assert.equal(states.kimi.jobId, "job-new");
+});
+
+test("tui view model opens a new conservative legacy epoch after terminal evidence", () => {
+  const states = classifyProviderStates([
+    { runId: "run-a", provider: "grok", phase: "attempt_started", status: "started" },
+    { runId: "run-a", provider: "grok", phase: "attempt_result", status: "failed", reason: "old_failure" },
+    { runId: "run-a", provider: "grok", phase: "attempt_started", status: "started" },
+  ]);
+
+  assert.equal(states.grok.status, "unfinished");
+  assert.equal(states.grok.reason, null);
+});
+
+test("tui view model opens a new epoch when one legacy job id starts again after terminal evidence", () => {
+  const states = classifyProviderStates([
+    { runId: "run-a", provider: "qwen", jobId: "job-reused", phase: "attempt_started", status: "started" },
+    { runId: "run-a", provider: "qwen", jobId: "job-reused", phase: "attempt_result", status: "failed", reason: "old_failure" },
+    { runId: "run-a", provider: "qwen", jobId: "job-reused", phase: "provider_decision", status: "failed", reason: "old_failure" },
+    { runId: "run-a", provider: "qwen", jobId: "job-reused", phase: "attempt_started", status: "started" },
+  ]);
+
+  assert.equal(states.qwen.status, "unfinished");
+  assert.equal(states.qwen.reason, null);
+});
+
 test("formatReproductionCommand uses sanitized argv and quotes shell-sensitive tokens", () => {
   assert.equal(
     formatReproductionCommand(["ask", "--provider", "qwen", "<prompt:redacted>", "--run-id", "run a"]),

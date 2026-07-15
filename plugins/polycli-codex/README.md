@@ -43,6 +43,7 @@ The skill runs `scripts/polycli-companion.bundle.mjs`, so the plugin remains sel
 
 ## Supported Subcommands
 
+- `agent-context`
 - `setup`
 - `health`
 - `ask`
@@ -60,6 +61,7 @@ The skill runs `scripts/polycli-companion.bundle.mjs`, so the plugin remains sel
 
 ```text
 Choose Polycli with @, then ask it to run: setup --provider gemini
+Choose Polycli with @, then ask it to run: agent-context --json
 Choose Polycli with @, then ask it to run: health
 Choose Polycli with @, then ask it to run: ask --provider kimi "Summarize this stack trace"
 Choose Polycli with @, then ask it to run: rescue --provider gemini --background "audit flaky tests"
@@ -68,8 +70,11 @@ Choose Polycli with @, then ask it to run: status --wait
 Choose Polycli with @, then ask it to run: result pr-1234abcd
 Choose Polycli with @, then ask it to run: timing --provider qwen --json
 Choose Polycli with @, then ask it to run: debug runs
+Choose Polycli with @, then ask it to run: debug tail --after evt_abc --limit 100 --wait --json-v2
 Choose Polycli with @, then ask it to run: sessions list --json
 ```
+
+Operational commands retain legacy `--json` as the host default and offer opt-in `--json-v2` envelopes. Job commands also accept explicit `--job id:<id>|prefix:<prefix>|latest|latest-active|latest-terminal` selectors; `status --wait --for <state>` reports typed satisfaction, timeout, or terminal mismatch.
 
 ## Operator Notes
 

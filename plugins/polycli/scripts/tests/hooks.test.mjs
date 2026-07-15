@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { ensureStateDir, resolveStateFile } from "../lib/state.mjs";
-import { handleLifecycleHook } from "../session-lifecycle-hook.mjs";
+import { cleanupSessionJobs, handleLifecycleHook } from "../session-lifecycle-hook.mjs";
 import {
   parseStopReviewOutput,
   resolveReviewProvider,
@@ -149,6 +149,42 @@ test("SessionEnd removes only running jobs from the ended session and preserves 
   });
 });
 
+test("SessionEnd matches explicit hostSessionId and never matches providerSessionId", () => {
+  withPluginData(() => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
+    try {
+      writeWorkspaceState(workspaceRoot, {
+        version: 2,
+        jobs: [
+          {
+            jobId: "host-match",
+            hostSessionId: "ended-host",
+            providerSessionId: "upstream-a",
+            sessionId: "upstream-a",
+            status: "running",
+            pid: null,
+          },
+          {
+            jobId: "provider-only-match",
+            hostSessionId: "other-host",
+            providerSessionId: "ended-host",
+            sessionId: "ended-host",
+            status: "running",
+            pid: null,
+          },
+        ],
+      });
+
+      handleLifecycleHook("SessionEnd", { cwd: workspaceRoot, session_id: "ended-host" });
+
+      const state = JSON.parse(fs.readFileSync(resolveStateFile(workspaceRoot), "utf8"));
+      assert.deepEqual(state.jobs.map((job) => job.jobId), ["provider-only-match"]);
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 test("SessionEnd does not try to terminate unsafe pid values", (t) => {
   withPluginData(() => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
@@ -169,6 +205,40 @@ test("SessionEnd does not try to terminate unsafe pid values", (t) => {
       handleLifecycleHook("SessionEnd", { cwd: workspaceRoot, session_id: "cc-session-1" });
 
       assert.equal(kill.mock.callCount(), 0);
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test("SessionEnd signals only a worker whose command line matches its retained config", (t) => {
+  withPluginData(() => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
+    const terminated = [];
+    try {
+      writeWorkspaceState(workspaceRoot, {
+        version: 2,
+        jobs: [
+          { jobId: "mismatched-worker", hostSessionId: "ended", status: "running", pid: 4242 },
+          { jobId: "verified-worker", hostSessionId: "ended", status: "running", pid: 4343 },
+        ],
+      });
+      const jobsDir = path.join(path.dirname(resolveStateFile(workspaceRoot)), "jobs");
+      fs.mkdirSync(jobsDir, { recursive: true });
+      fs.writeFileSync(path.join(jobsDir, "verified-worker.config.json"), "{}\n", "utf8");
+
+      cleanupSessionJobs(workspaceRoot, "ended", {
+        isExpectedWorkerProcess(pid) {
+          return pid === 4343;
+        },
+        terminateProcess(pid) {
+          terminated.push(pid);
+        },
+      });
+
+      assert.deepEqual(terminated, [4343]);
+      const state = JSON.parse(fs.readFileSync(resolveStateFile(workspaceRoot), "utf8"));
+      assert.deepEqual(state.jobs, []);
     } finally {
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

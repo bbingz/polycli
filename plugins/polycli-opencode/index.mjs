@@ -44,7 +44,7 @@ export function runCompanion(argv, { spawn = spawnSync } = {}) {
 export const PolycliPlugin = async () => ({
   tool: {
     polycli_run: tool({
-      description: "Run a polycli companion subcommand such as setup, health, ask, rescue, review, adversarial-review, status, result, cancel, timing, debug, or sessions.",
+      description: "Run a polycli companion subcommand such as agent-context, setup, health, ask, rescue, review, adversarial-review, status, result, cancel, timing, debug, or sessions. Use agent-context --json for offline discovery without provider or authentication probes.",
       args: {
         argv: tool.schema.array(tool.schema.string()),
       },

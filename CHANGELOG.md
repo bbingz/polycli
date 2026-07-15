@@ -6,6 +6,13 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-07-15 — Codex — agent-native CLI control plane (unreleased)
+
+- Added one declarative command registry as the source for strict parsing, generated help, host-map validation, terminal metadata, typed errors/output schemas, and the offline `agent-context --json` discovery contract. Unknown option-looking tokens on registered commands now fail with bounded suggestions; pass `--` before prompt text that intentionally begins with an option-like token.
+- Split host, provider, invocation, and attempt identities in state and ledger records; made foreground/background/health terminal pairs recoverable and attempt-correct; decoder overflow now terminates the provider process tree before settling once.
+- Added opt-in `--json-v2`, explicit `--job id:...|prefix:...|latest*` selectors with typed waits, and the redacted cursor-based `debug tail` surface. Existing `--json` payloads and compatible positional job references remain unchanged.
+- Prepared the next publishable manifests as host/OpenCode/terminal `0.6.30` and `@bbingz/polycli-utils` `1.0.4`; no package was published by this implementation task.
+
 ## 2026-07-15 — Codex — release: v0.6.29 published
 
 - Published and registry-verified all four public packages as `latest`: `@bbingz/polycli@0.6.29` (registry time `2026-07-15T02:09:46.979Z`, shasum `c63a5135d77417da46e0b16ef9592d4e74ca5e5b`), `@bbingz/polycli-utils@1.0.3` (`2026-07-15T02:10:38.964Z`, `94791ca68cb00f1740f5af540da0f8e29541cb5c`), `@bbingz/polycli-timing@1.0.2` (`2026-07-15T02:10:59.440Z`, `bd305c872ecd50e0abef6b6bd4abefcc1240e15a`), and `@bbingz/polycli-opencode@0.6.29` (`2026-07-15T02:11:18.658Z`, `cdf927ecc557602800e18b5feb5f0d3d2e88c0bb`).

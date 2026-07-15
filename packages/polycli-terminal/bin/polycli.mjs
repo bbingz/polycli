@@ -3,14 +3,18 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import { getTerminalCommandDefinition } from '../lib/command-surface.generated.mjs';
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const companion = path.join(here, 'polycli-companion.bundle.mjs');
 const tui = path.join(here, 'polycli-tui.mjs');
 
 const args = process.argv.slice(2);
 const command = args[0];
-const target = command === 'tui' ? tui : companion;
-const forwardedArgs = command === 'tui' ? args.slice(1) : args;
+const definition = getTerminalCommandDefinition([command]);
+const delegated = definition?.dispatchTarget === 'terminal-wrapper';
+const target = delegated ? tui : companion;
+const forwardedArgs = delegated ? args.slice(1) : args;
 
 const child = spawn(process.execPath, [target, ...forwardedArgs], {
   stdio: 'inherit',

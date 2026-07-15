@@ -156,3 +156,62 @@ test("spawnStreamingCommand ignores stdout emitted after settle", async () => {
   assert.deepEqual(seen, ["first"]);
   assert.equal(result.stdout, "first\n");
 });
+
+test("spawnStreamingCommand terminates detached decoder overflows before settling once", async () => {
+  const child = createFakeChild();
+  const seen = [];
+  const calls = [];
+  let resolutions = 0;
+  child.pid = 43211;
+
+  const originalKill = process.kill;
+  process.kill = (pid, signal) => {
+    calls.push({ pid, signal });
+    if (signal === "SIGTERM") {
+      child.emit("error", new Error("termination pending"));
+    }
+    if (signal === "SIGKILL") {
+      child.stdout.emit("data", Buffer.from("late\n"));
+      child.emit("close", 137, "SIGKILL");
+    }
+    return true;
+  };
+
+  try {
+    const resultPromise = spawnStreamingCommand({
+      bin: "overflowing-bin",
+      args: [],
+      detached: true,
+      killGraceMs: 5,
+      maxBufferBytes: 4,
+      spawnImpl() {
+        queueMicrotask(() => child.stdout.emit("data", Buffer.from("hello")));
+        return child;
+      },
+      onStdoutLine(line) {
+        seen.push(line);
+      },
+    });
+    resultPromise.then(() => {
+      resolutions += 1;
+    });
+
+    const result = await resultPromise;
+    child.emit("close", 137, "SIGKILL");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 137);
+    assert.equal(result.signal, "SIGKILL");
+    assert.match(result.error, /Line buffer exceeded maxBufferBytes/);
+    assert.deepEqual(calls, [
+      { pid: -43211, signal: "SIGTERM" },
+      { pid: -43211, signal: "SIGKILL" },
+    ]);
+    assert.deepEqual(seen, []);
+    assert.equal(result.stdout, "");
+    assert.equal(resolutions, 1);
+  } finally {
+    process.kill = originalKill;
+  }
+});

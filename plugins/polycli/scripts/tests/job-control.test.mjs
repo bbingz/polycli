@@ -9,8 +9,10 @@ import {
   cancelJob,
   refreshJobsForLedgerRecovery,
   refreshJob,
+  resolveJobSelector,
   resolveLatestActiveJob,
   resolveLatestTerminalJob,
+  waitForJob,
 } from "../lib/job-control.mjs";
 import {
   ensureStateDir,
@@ -479,6 +481,131 @@ test("refreshJob records sessionArtifactPath on recovery when the claude artifac
   }
 });
 
+test("refreshJob recovery preserves host/provider identities and publishes one attempt-keyed terminal pair", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const jobId = "job-v2-identities";
+    const logFile = resolveJobLogFile(workspaceRoot, jobId);
+    fs.writeFileSync(logFile, "progress\n");
+    upsertJob(workspaceRoot, {
+      jobId,
+      provider: "qwen",
+      kind: "ask",
+      status: "running",
+      pid: 999999,
+      logFile,
+      hostSessionId: "host-session",
+      providerSessionId: null,
+      invocationId: "inv_11111111111111111111",
+      attemptId: "att_22222222222222222222",
+    });
+    writeJobConfigFile(workspaceRoot, jobId, {
+      workspaceRoot,
+      jobId,
+      execution: { provider: "qwen", kind: "ask", cwd: workspaceRoot },
+      runContext: {
+        runId: "run-v2-identities",
+        invocationId: "inv_11111111111111111111",
+        attemptId: "att_22222222222222222222",
+        command: "ask",
+        hostSurface: "terminal",
+        jobId,
+        provider: "qwen",
+        kind: "ask",
+        logFile,
+      },
+    });
+    writeJobFile(workspaceRoot, jobId, {
+      job: {
+        jobId,
+        provider: "qwen",
+        kind: "ask",
+        status: "completed",
+        hostSessionId: "host-session",
+        providerSessionId: "provider-session",
+      },
+      result: { ok: true, providerSessionId: "provider-session", response: "PONG" },
+    });
+
+    const refreshed = refreshJob(workspaceRoot, listJobs(workspaceRoot)[0]);
+    assert.equal(refreshed.hostSessionId, "host-session");
+    assert.equal(refreshed.providerSessionId, "provider-session");
+    assert.equal(refreshed.sessionId, "provider-session");
+    const terminal = (await readRunLedgerEvents(workspaceRoot))
+      .filter((event) => ["attempt_result", "provider_decision"].includes(event.phase));
+    assert.equal(terminal.length, 2);
+    assert.equal(terminal.every((event) => event.invocationId === "inv_11111111111111111111"), true);
+    assert.equal(terminal.every((event) => event.attemptId === "att_22222222222222222222"), true);
+    assert.equal(terminal.every((event) => event.providerSessionId === "provider-session"), true);
+    assert.equal(terminal.every((event) => Object.hasOwn(event, "hostSessionId") === false), true);
+  });
+});
+
+test("refreshJob keeps a legacy active host identity when a legacy terminal envelope adds provider identity", () => {
+  withWorkspace((workspaceRoot) => {
+    const jobId = "job-legacy-two-sessions";
+    upsertJob(workspaceRoot, {
+      jobId,
+      provider: "qwen",
+      kind: "ask",
+      status: "running",
+      pid: 999999,
+      sessionId: "legacy-host-session",
+    });
+    writeJobConfigFile(workspaceRoot, jobId, {
+      workspaceRoot,
+      jobId,
+      execution: { provider: "qwen", kind: "ask" },
+      runContext: { runId: "run-legacy-two-sessions", command: "ask", jobId, provider: "qwen", kind: "ask" },
+    });
+    writeJobFile(workspaceRoot, jobId, {
+      job: { jobId, provider: "qwen", kind: "ask", status: "completed", sessionId: "legacy-provider-session" },
+      result: { ok: true, response: "PONG", sessionId: "legacy-provider-session" },
+    });
+
+    const refreshed = refreshJob(workspaceRoot, listJobs(workspaceRoot)[0]);
+    assert.equal(refreshed.hostSessionId, "legacy-host-session");
+    assert.equal(refreshed.providerSessionId, "legacy-provider-session");
+    assert.equal(refreshed.sessionId, "legacy-provider-session");
+  });
+});
+
+test("refreshJob never treats an active host session id as an upstream provider session", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const jobId = "job-host-only";
+    upsertJob(workspaceRoot, {
+      jobId,
+      provider: "qwen",
+      kind: "ask",
+      status: "running",
+      pid: 999999,
+      hostSessionId: "host-only",
+      providerSessionId: null,
+    });
+    writeJobConfigFile(workspaceRoot, jobId, {
+      workspaceRoot,
+      jobId,
+      execution: { provider: "qwen", kind: "ask" },
+      runContext: {
+        runId: "run-host-only",
+        invocationId: "inv_11111111111111111111",
+        attemptId: "att_22222222222222222222",
+        command: "ask",
+        hostSurface: "terminal",
+        jobId,
+        provider: "qwen",
+        kind: "ask",
+      },
+    });
+
+    refreshJob(workspaceRoot, listJobs(workspaceRoot)[0]);
+    const terminal = (await readRunLedgerEvents(workspaceRoot))
+      .filter((event) => ["attempt_result", "provider_decision"].includes(event.phase));
+    assert.equal(terminal.length, 2);
+    assert.equal(terminal.every((event) => event.providerSessionId === null), true);
+    assert.equal(terminal.every((event) => event.sessionId === null), true);
+  });
+});
+
 test("refreshJobsForLedgerRecovery is idempotent across multiple jobs", async () => {
   await withWorkspace(async (workspaceRoot) => {
     for (const jobId of ["job-one", "job-two"]) {
@@ -580,6 +707,246 @@ test("resolveLatestActiveJob and resolveLatestTerminalJob prefer newest matching
 
     assert.equal(resolveLatestActiveJob(workspaceRoot).jobId, "job-a");
     assert.equal(resolveLatestTerminalJob(workspaceRoot).jobId, "job-b");
+  });
+});
+
+test("resolveJobSelector supports exact, unique-prefix, latest, active, terminal, and legacy selectors", () => {
+  withWorkspace((workspaceRoot) => {
+    for (const job of [
+      {
+        jobId: "job-exact",
+        provider: "qwen",
+        status: "completed",
+        updatedAt: "2026-07-15T00:00:01.000Z",
+      },
+      {
+        jobId: "job-active-old",
+        provider: "qwen",
+        status: "queued",
+        updatedAt: "2026-07-15T00:00:02.000Z",
+      },
+      {
+        jobId: "job-active-new",
+        provider: "claude",
+        status: "running",
+        updatedAt: "2026-07-15T00:00:04.000Z",
+      },
+      {
+        jobId: "job-terminal-new",
+        provider: "qwen",
+        status: "failed",
+        updatedAt: "2026-07-15T00:00:03.000Z",
+      },
+    ]) {
+      upsertJob(workspaceRoot, { kind: "ask", ...job });
+    }
+
+    assert.equal(resolveJobSelector(workspaceRoot, "id:job-exact").jobId, "job-exact");
+    assert.equal(resolveJobSelector(workspaceRoot, "prefix:job-terminal").jobId, "job-terminal-new");
+    assert.equal(resolveJobSelector(workspaceRoot, "latest").jobId, "job-active-new");
+    assert.equal(resolveJobSelector(workspaceRoot, "latest-active").jobId, "job-active-new");
+    assert.equal(resolveJobSelector(workspaceRoot, "latest-terminal").jobId, "job-terminal-new");
+    assert.equal(resolveJobSelector(workspaceRoot, "job-active-o").jobId, "job-active-old");
+
+    const exactBeatsPrefix = resolveJobSelector(workspaceRoot, "job-exact");
+    assert.equal(exactBeatsPrefix.jobId, "job-exact");
+    assert.equal(
+      resolveJobSelector(workspaceRoot, "latest", { predicate: (job) => job.provider === "qwen" }).jobId,
+      "job-terminal-new",
+    );
+  });
+});
+
+test("resolveJobSelector reports bounded ambiguity and distinguishes missing selector classes", () => {
+  withWorkspace((workspaceRoot) => {
+    for (let index = 0; index < 12; index += 1) {
+      upsertJob(workspaceRoot, {
+        jobId: `shared-prefix-${String(index).padStart(2, "0")}`,
+        provider: "qwen",
+        kind: "ask",
+        status: "running",
+        updatedAt: new Date(Date.UTC(2026, 6, 15, 0, 0, index)).toISOString(),
+      });
+    }
+
+    assert.throws(
+      () => resolveJobSelector(workspaceRoot, "prefix:shared-prefix-"),
+      (error) => {
+        assert.equal(error.code, "ambiguous_selector");
+        assert.equal(error.data.selector, "prefix:shared-prefix-");
+        assert.equal(error.data.candidateIds.length, 8);
+        assert.deepEqual(error.data.candidateIds.slice(0, 2), ["shared-prefix-11", "shared-prefix-10"]);
+        return true;
+      },
+    );
+    assert.throws(
+      () => resolveJobSelector(workspaceRoot, "shared-prefix-"),
+      (error) => error.code === "ambiguous_selector" && error.data.candidateIds.length === 8,
+    );
+    assert.throws(
+      () => resolveJobSelector(workspaceRoot, "id:shared-prefix"),
+      (error) => error.code === "job_not_found",
+    );
+    assert.throws(
+      () => resolveJobSelector(workspaceRoot, "prefix:no-match"),
+      (error) => error.code === "job_not_found",
+    );
+  });
+
+  withWorkspace((workspaceRoot) => {
+    assert.throws(
+      () => resolveJobSelector(workspaceRoot, "latest-active"),
+      (error) => error.code === "no_active_job",
+    );
+    assert.throws(
+      () => resolveJobSelector(workspaceRoot, "latest-terminal"),
+      (error) => error.code === "no_completed_job",
+    );
+    assert.throws(
+      () => resolveJobSelector(workspaceRoot, "latest"),
+      (error) => error.code === "job_not_found",
+    );
+  });
+});
+
+test("resolveJobSelector explicit grammar rejects bare job references without weakening typed selectors", () => {
+  withWorkspace((workspaceRoot) => {
+    for (const job of [
+      { jobId: "job-exact", status: "completed", updatedAt: "2026-07-15T00:00:01.000Z" },
+      { jobId: "job-active", status: "running", updatedAt: "2026-07-15T00:00:03.000Z" },
+      { jobId: "job-terminal", status: "failed", updatedAt: "2026-07-15T00:00:02.000Z" },
+    ]) {
+      upsertJob(workspaceRoot, { provider: "qwen", kind: "ask", ...job });
+    }
+
+    const explicit = { grammar: "explicit" };
+    assert.equal(resolveJobSelector(workspaceRoot, "id:job-exact", explicit).jobId, "job-exact");
+    assert.equal(resolveJobSelector(workspaceRoot, "prefix:job-act", explicit).jobId, "job-active");
+    assert.equal(resolveJobSelector(workspaceRoot, "latest", explicit).jobId, "job-active");
+    assert.equal(resolveJobSelector(workspaceRoot, "latest-active", explicit).jobId, "job-active");
+    assert.equal(resolveJobSelector(workspaceRoot, "latest-terminal", explicit).jobId, "job-terminal");
+    assert.throws(
+      () => resolveJobSelector(workspaceRoot, "job-exact", explicit),
+      (error) => (
+        error.code === "invalid_argument"
+        && error.data.selector === "job-exact"
+        && error.data.grammar === "explicit"
+      ),
+    );
+
+    // The default remains the legacy positional grammar for existing callers.
+    assert.equal(resolveJobSelector(workspaceRoot, "job-exact").jobId, "job-exact");
+    assert.equal(resolveJobSelector(workspaceRoot, "job-act").jobId, "job-active");
+  });
+});
+
+test("resolveJobSelector reads only the selected workspace state", () => {
+  withWorkspace((firstWorkspace) => {
+    upsertJob(firstWorkspace, {
+      jobId: "workspace-local-job",
+      provider: "qwen",
+      kind: "ask",
+      status: "completed",
+    });
+
+    const secondWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-other-workspace-"));
+    try {
+      ensureStateDir(secondWorkspace);
+      assert.throws(
+        () => resolveJobSelector(secondWorkspace, "id:workspace-local-job"),
+        (error) => error.code === "job_not_found",
+      );
+    } finally {
+      fs.rmSync(secondWorkspace, { recursive: true, force: true });
+    }
+  });
+});
+
+test("waitForJob returns typed satisfied and terminal mismatch results", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    upsertJob(workspaceRoot, {
+      jobId: "job-completed",
+      provider: "qwen",
+      kind: "ask",
+      status: "completed",
+    });
+    upsertJob(workspaceRoot, {
+      jobId: "job-failed",
+      provider: "qwen",
+      kind: "ask",
+      status: "failed",
+    });
+
+    const completed = await waitForJob(workspaceRoot, "job-completed", { for: "completed" });
+    assert.equal(completed.job.status, "completed");
+    assert.equal(completed.waitTimedOut, false);
+    assert.deepEqual(completed.wait, {
+      for: "completed",
+      satisfied: true,
+      timedOut: false,
+      terminalMismatch: false,
+    });
+
+    const defaultTerminal = await waitForJob(workspaceRoot, "job-failed");
+    assert.equal(defaultTerminal.wait.satisfied, true);
+    assert.equal(defaultTerminal.wait.for, "terminal");
+
+    const mismatch = await waitForJob(workspaceRoot, "job-failed", { for: "completed" });
+    assert.equal(mismatch.job.status, "failed");
+    assert.deepEqual(mismatch.wait, {
+      for: "completed",
+      satisfied: false,
+      timedOut: false,
+      terminalMismatch: true,
+    });
+  });
+});
+
+test("waitForJob timeout preserves the latest authoritative job and legacy fields", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    upsertJob(workspaceRoot, {
+      jobId: "job-still-running",
+      provider: "qwen",
+      kind: "ask",
+      status: "running",
+      pid: null,
+      promptPreview: "authoritative state",
+    });
+
+    const timedOut = await waitForJob(workspaceRoot, "job-still-running", {
+      for: "completed",
+      timeoutMs: 0,
+      pollIntervalMs: 1,
+    });
+    assert.equal(timedOut.job.status, "running");
+    assert.equal(timedOut.job.promptPreview, "authoritative state");
+    assert.equal(timedOut.waitTimedOut, true);
+    assert.deepEqual(timedOut.wait, {
+      for: "completed",
+      satisfied: false,
+      timedOut: true,
+      terminalMismatch: false,
+    });
+  });
+});
+
+test("waitForJob validates the target and reports a missing job compatibly", async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    await assert.rejects(
+      () => waitForJob(workspaceRoot, "missing-job", { for: "tui-idle" }),
+      (error) => error.code === "invalid_argument",
+    );
+
+    const missing = await waitForJob(workspaceRoot, "missing-job", { for: "terminal" });
+    assert.equal(missing.error, "job_not_found");
+    assert.equal(missing.job, null);
+    assert.equal(missing.waitTimedOut, false);
+    assert.deepEqual(missing.wait, {
+      for: "terminal",
+      satisfied: false,
+      timedOut: false,
+      terminalMismatch: false,
+    });
   });
 });
 

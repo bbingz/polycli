@@ -2,9 +2,37 @@ export function parseArgs(argv, config = {}) {
   const valueOptions = new Set(config.valueOptions ?? []);
   const booleanOptions = new Set(config.booleanOptions ?? []);
   const aliasMap = config.aliasMap ?? {};
+  const strict = config.unknownOptionMode === "error" || config.rejectDuplicateOptions === true;
+  const seenOptions = new Set();
   const options = {};
   const positionals = [];
   let passthrough = false;
+
+  function argumentError(argument, message) {
+    const error = new Error(message);
+    error.code = "invalid_argument";
+    error.data = { argument };
+    return error;
+  }
+
+  function isRegisteredOption(token) {
+    if (token === "--" || !token.startsWith("-") || token === "-") {
+      return false;
+    }
+
+    const rawKey = token.startsWith("--")
+      ? token.slice(2).split("=", 1)[0]
+      : token[1];
+    const key = token.startsWith("--") && strict ? rawKey : (aliasMap[rawKey] ?? rawKey);
+    return booleanOptions.has(key) || valueOptions.has(key);
+  }
+
+  function rejectDuplicateOption(key, argument) {
+    if (config.rejectDuplicateOptions === true && seenOptions.has(key)) {
+      throw argumentError(argument, `Duplicate option ${argument}`);
+    }
+    seenOptions.add(key);
+  }
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -28,19 +56,33 @@ export function parseArgs(argv, config = {}) {
       const eqIdx = token.indexOf("=", 2);
       const rawKey = eqIdx >= 0 ? token.slice(2, eqIdx) : token.slice(2);
       const inlineValue = eqIdx >= 0 ? token.slice(eqIdx + 1) : undefined;
-      const key = aliasMap[rawKey] ?? rawKey;
+      const key = strict ? rawKey : (aliasMap[rawKey] ?? rawKey);
 
       if (booleanOptions.has(key)) {
+        rejectDuplicateOption(key, token);
         if (inlineValue === "") {
+          if (strict) {
+            throw argumentError(token, `Invalid boolean value for --${rawKey}`);
+          }
           throw new Error(`Invalid boolean value for --${rawKey}`);
+        }
+        if (strict && inlineValue !== undefined && inlineValue !== "true" && inlineValue !== "false") {
+          throw argumentError(token, `Invalid boolean value for --${rawKey}`);
         }
         options[key] = inlineValue === undefined ? true : inlineValue !== "false";
         continue;
       }
 
       if (valueOptions.has(key)) {
+        rejectDuplicateOption(key, token);
         const nextValue = inlineValue ?? argv[index + 1];
-        if (nextValue === undefined) {
+        if (
+          nextValue === undefined
+          || (strict && inlineValue === undefined && (nextValue === "--" || isRegisteredOption(nextValue)))
+        ) {
+          if (strict) {
+            throw argumentError(token, `Missing value for --${rawKey}`);
+          }
           throw new Error(`Missing value for --${rawKey}`);
         }
         options[key] = nextValue;
@@ -50,6 +92,9 @@ export function parseArgs(argv, config = {}) {
         continue;
       }
 
+      if (config.unknownOptionMode === "error") {
+        throw argumentError(token, `Unknown option ${token}`);
+      }
       positionals.push(token);
       continue;
     }
@@ -60,7 +105,15 @@ export function parseArgs(argv, config = {}) {
     const key = aliasMap[shortKey] ?? shortKey;
 
     if (booleanOptions.has(key)) {
+      rejectDuplicateOption(key, token);
       if (inlineShortValue !== undefined) {
+        if (strict && (inlineShortValue === "=true" || inlineShortValue === "=false")) {
+          options[key] = inlineShortValue === "=true";
+          continue;
+        }
+        if (strict) {
+          throw argumentError(token, `Invalid boolean value for -${shortKey}`);
+        }
         positionals.push(token);
         continue;
       }
@@ -69,8 +122,15 @@ export function parseArgs(argv, config = {}) {
     }
 
     if (valueOptions.has(key)) {
+      rejectDuplicateOption(key, token);
       const nextValue = inlineShortValue ?? argv[index + 1];
-      if (nextValue === undefined) {
+      if (
+        nextValue === undefined
+        || (strict && inlineShortValue === undefined && (nextValue === "--" || isRegisteredOption(nextValue)))
+      ) {
+        if (strict) {
+          throw argumentError(token, `Missing value for -${shortKey}`);
+        }
         throw new Error(`Missing value for -${shortKey}`);
       }
       options[key] = nextValue;
@@ -80,6 +140,9 @@ export function parseArgs(argv, config = {}) {
       continue;
     }
 
+    if (config.unknownOptionMode === "error") {
+      throw argumentError(token, `Unknown option ${token}`);
+    }
     positionals.push(token);
   }
 

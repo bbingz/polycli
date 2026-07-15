@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { renderTerminalCommandSurface } from "./build-plugin-bundles.mjs";
+
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const DEFAULT_TARGETS = [
   "plugins/polycli/scripts/polycli-companion.bundle.mjs",
@@ -13,6 +15,7 @@ const DEFAULT_TARGETS = [
   "plugins/polycli-opencode/scripts/polycli-companion.bundle.mjs",
   "packages/polycli-terminal/bin/polycli-companion.bundle.mjs",
 ];
+const GENERATED_SURFACE = "packages/polycli-terminal/lib/command-surface.generated.mjs";
 
 function readTarget(root, relativePath) {
   const filePath = path.join(root, relativePath);
@@ -20,7 +23,13 @@ function readTarget(root, relativePath) {
   return fs.readFileSync(filePath);
 }
 
-export function validatePluginBundles({ root = REPO_ROOT, targets = DEFAULT_TARGETS } = {}) {
+export function validatePluginBundles({
+  root = REPO_ROOT,
+  targets = DEFAULT_TARGETS,
+  generatedSurface = root === REPO_ROOT
+    ? { relativePath: GENERATED_SURFACE, expected: renderTerminalCommandSurface() }
+    : null,
+} = {}) {
   assert.ok(Array.isArray(targets) && targets.length > 1, "at least two bundle targets are required");
 
   const [referenceTarget, ...otherTargets] = targets;
@@ -29,6 +38,13 @@ export function validatePluginBundles({ root = REPO_ROOT, targets = DEFAULT_TARG
     const bytes = readTarget(root, target);
     if (!bytes.equals(referenceBytes)) {
       throw new Error(`bundle drift detected: ${target} differs from ${referenceTarget}`);
+    }
+  }
+
+  if (generatedSurface) {
+    const actual = readTarget(root, generatedSurface.relativePath).toString("utf8");
+    if (actual !== generatedSurface.expected) {
+      throw new Error(`generated command surface drift detected: ${generatedSurface.relativePath}`);
     }
   }
 

@@ -52,6 +52,25 @@ test("validatePluginBundles rejects mismatched bundle targets", () => {
   );
 });
 
+test("validatePluginBundles rejects stale generated terminal command metadata", () => {
+  const root = makeTempRoot();
+  const targets = ["a/bundle.mjs", "b/bundle.mjs"];
+  for (const target of targets) writeFile(root, target, "same\n");
+  writeFile(root, "terminal/generated.mjs", "stale\n");
+
+  assert.throws(
+    () => validatePluginBundles({
+      root,
+      targets,
+      generatedSurface: {
+        relativePath: "terminal/generated.mjs",
+        expected: "fresh\n",
+      },
+    }),
+    /generated command surface drift detected: terminal\/generated\.mjs/,
+  );
+});
+
 test("validatePluginBundles validates the five real companion bundle targets", () => {
   for (const target of REAL_BUNDLE_TARGETS) {
     assert.ok(

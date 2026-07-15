@@ -179,10 +179,61 @@ test('collectRecordedArtifacts keeps distinct non-null sessionArtifactPath rows'
   assert.equal(recorded.length, 1);
   assert.deepEqual(recorded[0], {
     provider: 'claude',
+    providerSessionId: SID,
     sessionId: SID,
     sessionArtifactPath: claudePath,
     workspaceRoot: CWD,
   });
+});
+
+test('session collection uses explicit providerSessionId and only falls back for legacy events', () => {
+  const recorded = collectRecordedArtifacts([
+    {
+      version: 2,
+      provider: 'claude',
+      providerSessionId: 'provider-v2',
+      sessionId: 'ambiguous-legacy-alias',
+      sessionArtifactPath: '/tmp/provider-v2.jsonl',
+      workspaceRoot: CWD,
+    },
+    {
+      version: 2,
+      provider: 'claude',
+      providerSessionId: null,
+      sessionId: 'must-not-fallback',
+      sessionArtifactPath: '/tmp/must-not-fallback.jsonl',
+      workspaceRoot: CWD,
+    },
+    {
+      version: 1,
+      provider: 'claude',
+      sessionId: 'provider-v1',
+      sessionArtifactPath: '/tmp/provider-v1.jsonl',
+      workspaceRoot: CWD,
+    },
+  ]);
+
+  assert.deepEqual(recorded.map((entry) => entry.providerSessionId), ['provider-v2', 'provider-v1']);
+  assert.deepEqual(recorded.map((entry) => entry.sessionId), ['provider-v2', 'provider-v1']);
+});
+
+test('planPurge validates basename against providerSessionId instead of a conflicting legacy alias', () => {
+  const providerSessionId = 'provider-explicit';
+  const artifact = path.join(HOME, '.claude', 'projects', '-work-repo', `${providerSessionId}.jsonl`);
+  const plan = planPurge({
+    recorded: [{
+      provider: 'claude',
+      providerSessionId,
+      sessionId: 'host-or-stale-alias',
+      sessionArtifactPath: artifact,
+      workspaceRoot: CWD,
+    }],
+    homedir: HOME,
+    ...fsStubs({ files: { [artifact]: true } }),
+  });
+
+  assert.equal(plan.deletable.length, 1);
+  assert.equal(plan.deletable[0].providerSessionId, providerSessionId);
 });
 
 // ---- planPurge ----

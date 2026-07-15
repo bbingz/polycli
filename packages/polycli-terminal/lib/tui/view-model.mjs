@@ -49,47 +49,104 @@ function mergeEvent(state, event) {
 }
 
 export function classifyProviderStates(events = []) {
-  const states = {};
-  const hasTerminal = new Set();
-  const hasStarted = new Set();
+  const providers = new Map();
+  let index = 0;
+
+  function createAttempt(provider, index) {
+    return {
+      state: emptyState(provider),
+      createdIndex: index,
+      startIndex: null,
+      started: false,
+      terminal: false,
+    };
+  }
 
   for (const event of events) {
-    if (!event?.provider) continue;
+    if (!event?.provider) {
+      index += 1;
+      continue;
+    }
     const provider = event.provider;
-    states[provider] = mergeEvent(states[provider] || emptyState(provider), event);
+    const projection = providers.get(provider) || {
+      attempts: new Map(),
+      legacyJobAttempts: new Map(),
+      legacyAttempt: null,
+    };
+    providers.set(provider, projection);
 
-    if (event.phase === "provider_decision" && TERMINAL_DECISION_STATUSES.has(event.status)) {
-      hasTerminal.add(provider);
-      states[provider] = {
-        ...states[provider],
+    const isStarted = event.phase === "job_started" || event.phase === "attempt_started";
+    const decisionTerminal = event.phase === "provider_decision" && TERMINAL_DECISION_STATUSES.has(event.status);
+    const resultTerminal = event.phase === "attempt_result" && TERMINAL_ATTEMPT_STATUSES.has(event.status);
+    let key = event.attemptId ? `attempt:${event.attemptId}` : null;
+    let attempt;
+
+    if (event.attemptId) {
+      attempt = projection.attempts.get(key);
+      if (!attempt) {
+        attempt = createAttempt(provider, index);
+        projection.attempts.set(key, attempt);
+      }
+    } else if (event.jobId) {
+      attempt = projection.legacyJobAttempts.get(event.jobId);
+      if (isStarted && attempt?.terminal) attempt = null;
+      if (!attempt) {
+        key = `job:${event.jobId}:epoch:${index}`;
+        attempt = createAttempt(provider, index);
+        projection.attempts.set(key, attempt);
+        projection.legacyJobAttempts.set(event.jobId, attempt);
+      }
+    } else {
+      if (isStarted && projection.legacyAttempt?.terminal) {
+        projection.legacyAttempt = null;
+      }
+      attempt = projection.legacyAttempt;
+      if (!attempt) {
+        key = `legacy:${projection.attempts.size}`;
+        attempt = createAttempt(provider, index);
+        projection.attempts.set(key, attempt);
+        projection.legacyAttempt = attempt;
+      }
+    }
+
+    attempt.state = mergeEvent(attempt.state, event);
+    if (isStarted && !attempt.started) {
+      attempt.started = true;
+      attempt.startIndex = index;
+    }
+
+    if (decisionTerminal) {
+      attempt.terminal = true;
+      attempt.state = {
+        ...attempt.state,
         status: event.status,
         reason: event.reason ?? null,
       };
-      continue;
-    }
-
-    if (event.phase === "attempt_result" && TERMINAL_ATTEMPT_STATUSES.has(event.status)) {
-      hasTerminal.add(provider);
-      states[provider] = {
-        ...states[provider],
+    } else if (resultTerminal) {
+      attempt.terminal = true;
+      attempt.state = {
+        ...attempt.state,
         status: event.status === "completed" ? "completed" : event.status,
-        reason: event.reason ?? states[provider].reason,
+        reason: event.reason ?? attempt.state.reason,
       };
-      continue;
     }
-
-    if (event.phase === "job_started" || event.phase === "attempt_started") {
-      hasStarted.add(provider);
-    }
+    index += 1;
   }
 
-  for (const provider of hasStarted) {
-    if (!hasTerminal.has(provider)) {
-      states[provider] = {
-        ...(states[provider] || emptyState(provider)),
-        status: "unfinished",
-      };
-    }
+  const states = {};
+  for (const [provider, projection] of providers) {
+    const attempts = [...projection.attempts.values()];
+    const startedAttempts = attempts.filter((attempt) => attempt.started);
+    const newest = (startedAttempts.length > 0 ? startedAttempts : attempts)
+      .reduce((latest, attempt) => {
+        const latestIndex = latest.startIndex ?? latest.createdIndex;
+        const attemptIndex = attempt.startIndex ?? attempt.createdIndex;
+        return attemptIndex > latestIndex ? attempt : latest;
+      });
+
+    states[provider] = newest.started && !newest.terminal
+      ? { ...newest.state, status: "unfinished" }
+      : newest.state;
   }
 
   return states;

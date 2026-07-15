@@ -1,6 +1,6 @@
 ---
 description: Show active and recent polycli jobs for this repository
-argument-hint: '[job-id] [--all] [--wait] [--timeout-ms <ms>]'
+argument-hint: '[job-selector] [--job <selector>] [--all] [--wait] [--for <terminal|completed|failed|cancelled>] [--timeout-ms <ms>] [--json|--json-v2]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---

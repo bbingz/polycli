@@ -42,6 +42,7 @@ Then either:
 
 `polycli_run` accepts the same subcommands as the other hosts:
 
+- `agent-context`
 - `setup`
 - `health`
 - `ask`
@@ -54,6 +55,8 @@ Then either:
 - `timing`
 - `debug`
 - `sessions`
+
+Operational commands retain legacy `--json` as the host default and offer opt-in `--json-v2` envelopes. Job commands accept `--job id:<id>|prefix:<prefix>|latest|latest-active|latest-terminal`; `status --wait --for <state>` is typed. Incremental redacted observation uses `polycli_run({"argv":["debug","tail","--after","evt_abc","--limit","100","--wait","--json-v2"]})`.
 
 ## Operator Notes
 

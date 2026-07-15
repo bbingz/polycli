@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 // lockstep (so e.g. the no-pid stale-lock reclaim fix lands here too) instead of silently drifting.
 import { withLockfile, writeJsonAtomic } from "@bbingz/polycli-utils/atomic-save";
 
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
 const STATE_FILE_NAME = "state.json";
 const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 100;
@@ -18,6 +18,7 @@ const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
 const PRIVATE_DIR_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const FALLBACK_STATE_ROOT = path.join(os.homedir() || os.tmpdir(), ".polycli", "state");
 
 function runCommand(command, args = [], options = {}) {
@@ -51,6 +52,79 @@ function defaultState() {
     version: STATE_VERSION,
     config: {},
     jobs: [],
+  };
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function normalizeNullableIdentity(value) {
+  return value == null || value === "" ? null : value;
+}
+
+function normalizeJob(job) {
+  if (!job || typeof job !== "object" || Array.isArray(job)) return job;
+
+  const hasExplicitHost = hasOwn(job, "hostSessionId");
+  const hasExplicitProvider = hasOwn(job, "providerSessionId");
+  const legacySessionOnly = !hasExplicitHost && !hasExplicitProvider;
+  const active = ACTIVE_STATUSES.has(job.status);
+  const terminal = TERMINAL_STATUSES.has(job.status);
+  const legacySessionId = normalizeNullableIdentity(job.sessionId);
+  const hostSessionId = hasExplicitHost
+    ? normalizeNullableIdentity(job.hostSessionId)
+    : (legacySessionOnly && active ? legacySessionId : null);
+  const providerSessionId = hasExplicitProvider
+    ? normalizeNullableIdentity(job.providerSessionId)
+    : (legacySessionOnly && terminal ? legacySessionId : null);
+  const sessionId = active
+    ? hostSessionId
+    : (terminal ? providerSessionId : legacySessionId);
+
+  return {
+    ...job,
+    invocationId: normalizeNullableIdentity(job.invocationId),
+    attemptId: normalizeNullableIdentity(job.attemptId),
+    hostSessionId,
+    providerSessionId,
+    sessionId,
+  };
+}
+
+function normalizeProviderResult(result) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const providerSessionId = hasOwn(result, "providerSessionId")
+    ? normalizeNullableIdentity(result.providerSessionId)
+    : normalizeNullableIdentity(result.sessionId);
+  return {
+    ...result,
+    providerSessionId,
+    sessionId: providerSessionId,
+  };
+}
+
+function normalizeJobEnvelope(envelope) {
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) return envelope;
+  return {
+    ...envelope,
+    ...(hasOwn(envelope, "job") ? { job: normalizeJob(envelope.job) } : {}),
+    ...(hasOwn(envelope, "result") ? { result: normalizeProviderResult(envelope.result) } : {}),
+  };
+}
+
+function normalizeJobConfig(config) {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return config;
+  if (!config.runContext || typeof config.runContext !== "object" || Array.isArray(config.runContext)) {
+    return config;
+  }
+  return {
+    ...config,
+    runContext: {
+      ...config.runContext,
+      invocationId: normalizeNullableIdentity(config.runContext.invocationId),
+      attemptId: normalizeNullableIdentity(config.runContext.attemptId),
+    },
   };
 }
 
@@ -185,7 +259,7 @@ export function loadState(workspaceRoot) {
     return {
       version: parsed.version ?? STATE_VERSION,
       config: parsed.config && typeof parsed.config === "object" ? parsed.config : {},
-      jobs: parsed.jobs,
+      jobs: parsed.jobs.map((job) => normalizeJob(job)),
     };
   } catch {
     backupCorruptStateFile(stateFile);
@@ -195,14 +269,15 @@ export function loadState(workspaceRoot) {
 
 export function saveState(workspaceRoot, state, { preserveJobIds = [] } = {}) {
   ensureStateDir(workspaceRoot);
-  const jobs = pruneJobsForSave(state.jobs, { preserveJobIds });
+  const normalizedJobs = state.jobs.map((job) => normalizeJob(job));
+  const jobs = pruneJobsForSave(normalizedJobs, { preserveJobIds });
   const keptIds = new Set(jobs.map((job) => job.jobId));
   const config = state.config && typeof state.config === "object" ? state.config : {};
   writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs }, { mode: PRIVATE_FILE_MODE });
   // Publish the state snapshot before reclaiming pruned artifacts. A failed/interrupted state
   // write must leave its prior snapshot and every file it still references intact; an interrupted
   // cleanup only leaks old terminal artifacts and is safely retried by a later save.
-  for (const job of state.jobs) {
+  for (const job of normalizedJobs) {
     if (job && job.jobId && !keptIds.has(job.jobId)) {
       removeJobFile(workspaceRoot, job.jobId);
       removeJobConfigFile(workspaceRoot, job.jobId);
@@ -236,20 +311,28 @@ export function updateJobAtomically(workspaceRoot, jobId, buildNext) {
       return { written: false, job: current, envelope: null };
     }
 
-    const job = next.job ?? current;
+    const job = normalizeJob(next.job ?? current);
     if (!job) {
       return { written: false, job: null, envelope: next.envelope ?? null };
     }
 
-    if (Object.prototype.hasOwnProperty.call(next, "envelope")) {
-      writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), next.envelope, { mode: PRIVATE_FILE_MODE });
+    const hasEnvelope = Object.prototype.hasOwnProperty.call(next, "envelope");
+    const hookEnvelope = hasEnvelope ? next.envelope : null;
+    const envelope = hasEnvelope
+      ? normalizeJobEnvelope(hookEnvelope)
+      : null;
+
+    if (hasEnvelope) {
+      writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), envelope, { mode: PRIVATE_FILE_MODE });
     }
 
     if (typeof next.beforeStateCommit === "function") {
       next.beforeStateCommit({
         current,
         job,
-        envelope: next.envelope ?? null,
+        // Preserve the hook's input contract: it observes the caller's terminal
+        // intent, while persistence and readers use the normalized v2 envelope.
+        envelope: hookEnvelope,
       });
     }
 
@@ -259,7 +342,7 @@ export function updateJobAtomically(workspaceRoot, jobId, buildNext) {
       state.jobs.push(job);
     }
     saveState(workspaceRoot, state, { preserveJobIds: [jobId] });
-    return { written: true, job, envelope: next.envelope ?? null };
+    return { written: true, job, envelope };
   });
 }
 
@@ -272,20 +355,20 @@ export function upsertJob(workspaceRoot, jobPatch) {
     const index = state.jobs.findIndex((job) => job.jobId === jobPatch.jobId);
 
     if (index >= 0) {
-      state.jobs[index] = {
+      state.jobs[index] = normalizeJob({
         ...state.jobs[index],
         ...jobPatch,
         updatedAt,
-      };
+      });
       savedJob = state.jobs[index];
       return;
     }
 
-    savedJob = {
+    savedJob = normalizeJob({
       ...jobPatch,
       createdAt,
       updatedAt,
-    };
+    });
     state.jobs.push(savedJob);
   });
   return savedJob;
@@ -326,13 +409,13 @@ export function readLastUsedProvider(workspaceRoot) {
 
 export function writeJobFile(workspaceRoot, jobId, payload) {
   ensureStateDir(workspaceRoot);
-  writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
+  writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), normalizeJobEnvelope(payload), { mode: PRIVATE_FILE_MODE });
   return resolveJobFile(workspaceRoot, jobId);
 }
 
 export function readJobFile(jobFile) {
   try {
-    return JSON.parse(fs.readFileSync(jobFile, "utf8"));
+    return normalizeJobEnvelope(JSON.parse(fs.readFileSync(jobFile, "utf8")));
   } catch {
     return null;
   }
@@ -348,13 +431,13 @@ export function removeJobFile(workspaceRoot, jobId) {
 
 export function writeJobConfigFile(workspaceRoot, jobId, payload) {
   ensureStateDir(workspaceRoot);
-  writeJsonAtomic(resolveJobConfigFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
+  writeJsonAtomic(resolveJobConfigFile(workspaceRoot, jobId), normalizeJobConfig(payload), { mode: PRIVATE_FILE_MODE });
   return resolveJobConfigFile(workspaceRoot, jobId);
 }
 
 export function readJobConfigFile(configFile) {
   try {
-    return JSON.parse(fs.readFileSync(configFile, "utf8"));
+    return normalizeJobConfig(JSON.parse(fs.readFileSync(configFile, "utf8")));
   } catch {
     return null;
   }

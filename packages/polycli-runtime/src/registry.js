@@ -68,6 +68,7 @@ import {
   runGrokPromptStreaming,
 } from "./grok.js";
 import { attachPromptTiming, extractProviderEventText } from "./timing.js";
+import { REVIEW_FLAG_EXPECTATIONS } from "./review-flags.js";
 
 const TIMING_SUPPORT = {
   claude: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
@@ -345,6 +346,52 @@ export function getProviderRuntime(providerId) {
 
 export function listProviderRuntimes() {
   return PROVIDER_IDS.map((providerId) => getProviderRuntime(providerId));
+}
+
+/**
+ * Return static provider metadata for offline command discovery.
+ *
+ * This deliberately copies only public, JSON-safe capability fields. It does
+ * not invoke availability/auth probes and does not expose invocation flags or
+ * operational state.
+ */
+export function describeProviderRuntimes() {
+  return PROVIDER_IDS.map((providerId) => {
+    const runtime = getProviderRuntime(providerId);
+    const timingSupport = getTimingSupport(providerId);
+    const reviewExpectation = REVIEW_FLAG_EXPECTATIONS[providerId];
+    const reviewSupported = reviewExpectation.reviewSafety !== "unsupported";
+
+    return {
+      id: providerId,
+      runtimeOperations: [...runtime.capabilities.operations],
+      commandSupport: {
+        setup: true,
+        health: true,
+        ask: true,
+        rescue: true,
+        review: reviewSupported,
+        adversarialReview: reviewSupported,
+      },
+      capabilities: {
+        streaming: runtime.capabilities.streaming,
+        sessionResume: runtime.capabilities.sessionResume,
+        structuredOutput: runtime.capabilities.structuredOutput,
+        authProbeCost: runtime.capabilities.authProbeCost,
+        runtimePersistence: timingSupport.runtimePersistence,
+        timing: {
+          ttft: timingSupport.ttft,
+          gen: timingSupport.gen,
+          tail: timingSupport.tail,
+          tool: timingSupport.tool,
+        },
+      },
+      reviewSafety: {
+        mode: reviewExpectation.reviewSafety,
+        stopReviewGate: reviewExpectation.stopReviewGateSafety,
+      },
+    };
+  });
 }
 
 function applyModelFallback(result, { model = null, defaultModel = null } = {}) {

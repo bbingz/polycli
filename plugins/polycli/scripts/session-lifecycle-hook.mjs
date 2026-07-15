@@ -3,7 +3,13 @@
 import fs from "node:fs";
 import process from "node:process";
 
-import { resolveStateFile, resolveWorkspaceRoot, updateState } from "./lib/state.mjs";
+import { isExpectedWorkerProcess } from "./lib/job-control.mjs";
+import {
+  resolveJobConfigFile,
+  resolveStateFile,
+  resolveWorkspaceRoot,
+  updateState,
+} from "./lib/state.mjs";
 
 export const SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
 
@@ -45,35 +51,54 @@ function terminateProcess(pid) {
   }
 }
 
-function cleanupSessionJobs(cwd, sessionId) {
+function jobHostSessionId(job) {
+  if (!job || typeof job !== "object") return null;
+  if (Object.prototype.hasOwnProperty.call(job, "hostSessionId")) {
+    return job.hostSessionId ?? null;
+  }
+  // Legacy sessionId represented host ownership only while a job was active.
+  return job.status === "running" || job.status === "queued"
+    ? (job.sessionId ?? null)
+    : null;
+}
+
+export function cleanupSessionJobs(cwd, sessionId, {
+  isExpectedWorkerProcess: verifyWorker = isExpectedWorkerProcess,
+  terminateProcess: terminateWorker = terminateProcess,
+} = {}) {
   if (!cwd || !sessionId) return;
 
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const stateFile = resolveStateFile(workspaceRoot);
   if (!fs.existsSync(stateFile)) return;
 
-  const pidsToTerminate = [];
+  const workersToTerminate = [];
   updateState(workspaceRoot, (state) => {
     const jobs = Array.isArray(state.jobs) ? state.jobs : [];
-    const sessionJobs = jobs.filter((job) => job.sessionId === sessionId);
+    const sessionJobs = jobs.filter((job) => jobHostSessionId(job) === sessionId);
     if (sessionJobs.length === 0) return;
 
     for (const job of sessionJobs) {
       if (job.status === "running" || job.status === "queued") {
-        pidsToTerminate.push(job.pid);
+        workersToTerminate.push({
+          pid: job.pid,
+          configFile: resolveJobConfigFile(workspaceRoot, job.jobId),
+        });
       }
     }
 
     state.jobs = jobs.filter((job) => {
-      if (job.sessionId !== sessionId) return true;
+      if (jobHostSessionId(job) !== sessionId) return true;
       return job.status === "completed"
         || job.status === "failed"
         || job.status === "cancelled";
     });
   });
 
-  for (const pid of pidsToTerminate) {
-    terminateProcess(pid);
+  for (const { pid, configFile } of workersToTerminate) {
+    if (!Number.isInteger(pid) || pid <= 1 || !fs.existsSync(configFile)) continue;
+    if (verifyWorker(pid, configFile) !== true) continue;
+    terminateWorker(pid);
   }
 }
 

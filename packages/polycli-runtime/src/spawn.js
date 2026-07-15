@@ -64,6 +64,8 @@ export function spawnStreamingCommand({
     let settled = false;
     let timer = null;
     let forceTimer = null;
+    let decoderError = null;
+    let terminationRequested = false;
 
     const signalChild = (signal) => {
       try {
@@ -74,6 +76,17 @@ export function spawnStreamingCommand({
         child.kill(signal);
       } catch {
         // ignore
+      }
+    };
+
+    const terminateChild = () => {
+      if (terminationRequested) return;
+      terminationRequested = true;
+      signalChild("SIGTERM");
+      if (killGraceMs > 0) {
+        forceTimer = setTimeout(() => {
+          signalChild("SIGKILL");
+        }, killGraceMs);
       }
     };
 
@@ -97,42 +110,41 @@ export function spawnStreamingCommand({
       resolve(result);
     };
 
-    const finishDecoderError = (error) => {
-      finish({
-        ok: false,
-        status: null,
-        signal: null,
-        timedOut,
-        stdout,
-        stderr,
-        error: error.message,
-      });
+    const decoderFailureResult = (status, signalName) => ({
+      ok: false,
+      status,
+      signal: signalName,
+      timedOut,
+      stdout,
+      stderr,
+      error: decoderError,
+    });
+
+    const handleDecoderError = (error) => {
+      if (decoderError || settled) return;
+      decoderError = String(error?.message ?? error).slice(0, 4_096);
+      child.stdout?.off?.("data", handleStdoutData);
+      terminateChild();
     };
 
     const abortHandler = () => {
       if (settled || aborted) return;
       aborted = true;
-      signalChild("SIGTERM");
-      if (killGraceMs > 0 && !forceTimer) {
-        forceTimer = setTimeout(() => {
-          signalChild("SIGKILL");
-        }, killGraceMs);
-      }
+      terminateChild();
     };
 
     if (timeout != null) {
       timer = setTimeout(() => {
+        if (settled || timedOut) return;
         timedOut = true;
-        signalChild("SIGTERM");
-        if (killGraceMs > 0) {
-          forceTimer = setTimeout(() => {
-            signalChild("SIGKILL");
-          }, killGraceMs);
-        }
+        terminateChild();
       }, timeout);
     }
 
     const handleChildError = (error) => {
+      if (decoderError) {
+        return;
+      }
       finish({
         ok: false,
         status: null,
@@ -157,7 +169,7 @@ export function spawnStreamingCommand({
       try {
         lines = decoder.push(chunk);
       } catch (error) {
-        finishDecoderError(error);
+        handleDecoderError(error);
         return;
       }
       for (const line of lines) {
@@ -174,11 +186,17 @@ export function spawnStreamingCommand({
     };
 
     const handleChildClose = (status, signalName) => {
+      if (decoderError) {
+        finish(decoderFailureResult(status, signalName));
+        return;
+      }
+
       let lines;
       try {
         lines = decoder.end();
       } catch (error) {
-        finishDecoderError(error);
+        handleDecoderError(error);
+        finish(decoderFailureResult(status, signalName));
         return;
       }
 

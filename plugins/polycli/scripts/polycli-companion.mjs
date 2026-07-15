@@ -9,20 +9,37 @@ import { fileURLToPath } from "node:url";
 
 import { parseArgs } from "@bbingz/polycli-utils/args";
 import { withLockfile, writeJsonAtomic } from "@bbingz/polycli-utils/atomic-save";
-import { getProviderRuntime, listProviderRuntimes, runProviderPromptStreaming } from "@bbingz/polycli-runtime";
+import {
+  describeProviderRuntimes,
+  getProviderRuntime,
+  listProviderRuntimes,
+  runProviderPromptStreaming,
+} from "@bbingz/polycli-runtime";
+
+import {
+  COMMAND_SURFACE_VERSION,
+  ERROR_DEFINITIONS,
+  OUTPUT_SCHEMA_DEFINITIONS,
+  assertCommandRegistry,
+  getCommandDefinition,
+  listCommandDefinitions,
+  parseCommandArgs,
+  renderCommandHelp,
+  renderRootHelp,
+  resolveCommandPath,
+  suggestFromCandidates,
+} from "./lib/command-registry.mjs";
 
 import {
   buildStatusSnapshot,
   cancelJob,
   refreshJob,
   refreshJobsForLedgerRecovery,
-  resolveJobReference,
-  resolveLatestActiveJob,
-  resolveLatestTerminalJob,
+  resolveJobSelector,
   waitForJob,
 } from "./lib/job-control.mjs";
 import { buildPromptRuntimeOptions } from "./lib/prompt-runtime.mjs";
-import { resolveProvider } from "./lib/providers.mjs";
+import { PROVIDER_IDS, resolveProvider } from "./lib/providers.mjs";
 import {
   assertReviewProviderSupported,
   assertStopReviewGateProviderSupported,
@@ -41,6 +58,7 @@ import {
   resolveJobLogFile,
   resolveStateDir,
   resolveWorkspaceRoot,
+  computeWorkspaceSlug,
   getConfig,
   setConfig,
   updateJobAtomically,
@@ -66,7 +84,14 @@ import {
   resolveRunId,
   stripRunIdArgs,
   summarizeRunLedger,
+  tailRunLedgerEvents,
 } from "./lib/run-ledger.mjs";
+import {
+  PolycliCliError,
+  createV2ErrorEnvelope,
+  createV2SuccessEnvelope,
+  serializeV2Result,
+} from "./lib/cli-contract.mjs";
 import {
   collectNonPurgeableSessions,
   collectRecordedArtifacts,
@@ -78,6 +103,8 @@ import {
 } from "./lib/sessions.mjs";
 
 const COMPANION_PATH = fileURLToPath(import.meta.url);
+const BUILD_VERSION = typeof __POLYCLI_VERSION__ === "string" ? __POLYCLI_VERSION__ : "0.0.0-dev";
+const BUILD_VERSION_SOURCE = typeof __POLYCLI_VERSION__ === "string" ? "bundled-release" : "development";
 const JOB_PREFIXES = {
   ask: "pa",
   rescue: "pr",
@@ -117,29 +144,32 @@ function resolveTimeoutMs(provider, kind, { model = null, defaultModel = null } 
 }
 const HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
 const SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
-const RUN_TRACKED_COMMANDS = new Set([
-  "health",
-  "ask",
-  "rescue",
-  "review",
-  "adversarial-review",
-]);
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const ACTIVE_JOB_STATUSES = new Set(["queued", "running"]);
 
 const RUN_CONTEXT = {
+  invocationId: null,
   runId: null,
   command: null,
   hostSurface: "unknown",
   rawArgs: [],
+  outputMode: "text",
+  background: false,
+  authoritativeJsonWritten: false,
+  workspaceSlug: null,
 };
+
+function createAttemptId() {
+  return `att_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+}
 
 function buildCurrentRunContext(overrides = {}) {
   if (!RUN_CONTEXT.runId) return null;
   const command = overrides.command || RUN_CONTEXT.command;
   return {
-    version: 1,
+    version: 2,
     runId: RUN_CONTEXT.runId,
+    invocationId: RUN_CONTEXT.invocationId,
     command,
     commands: [command].filter(Boolean),
     hostSurface: RUN_CONTEXT.hostSurface,
@@ -158,6 +188,9 @@ function buildRunEventForContext(runContext, base = {}) {
     runId: runContext.runId,
     hostSurface: runContext.hostSurface,
     argv: runContext.argv || [],
+    invocationId: runContext.invocationId ?? null,
+    attemptId: runContext.attemptId ?? null,
+    jobId: runContext.jobId ?? null,
     ...base,
     command,
     commands,
@@ -301,36 +334,64 @@ function resolveSessionArtifactPath(provider, sessionId, cwd) {
   return recordArtifactPath(candidate, { homedir });
 }
 
-function printUsage() {
-  console.log(
-    [
-      "Usage:",
-      "  polycli-companion.mjs setup [--provider <provider>] [--probe-auth] [--json]",
-      "    [--enable-review-gate|--disable-review-gate]",
-      "  polycli-companion.mjs health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]",
-      "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
-      "  polycli-companion.mjs rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>",
-      "  polycli-companion.mjs review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--max-diff-bytes <n>] [--json] [focus ...]",
-      "  polycli-companion.mjs adversarial-review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--max-diff-bytes <n>] [--json] [focus ...]",
-      "  polycli-companion.mjs status [job-id] [--all] [--wait] [--timeout-ms <ms>] [--json]",
-      "  polycli-companion.mjs result [job-id] [--json]",
-      "  polycli-companion.mjs cancel [job-id] [--json]",
-      "  polycli-companion.mjs timing [--provider <provider>] [--history <count|all>] [--all] [--json]",
-      "  polycli-companion.mjs debug runs [--json]",
-      "  polycli-companion.mjs debug show <run-id> [--json]",
-      "  polycli-companion.mjs debug explain <run-id> [--json]",
-      "  polycli-companion.mjs sessions [list] [--json]",
-      "  polycli-companion.mjs sessions purge [--confirm] [--json]",
-    ].join("\n")
-  );
+function printUsage(hostSurface = "unknown") {
+  console.log(renderRootHelp({ hostSurface }));
 }
 
-function hasHelpFlag(args = []) {
-  return args.includes("--help") || args.includes("-h");
+function cliError(code, message, data = {}, exitCode = 1) {
+  const error = new Error(message);
+  error.code = code;
+  error.data = data;
+  error.exitCode = exitCode;
+  return error;
 }
 
-function wantsJson(args = []) {
-  return args.includes("--json");
+function scanOutputModes(args = []) {
+  let json = false;
+  let jsonV2 = false;
+  for (const argument of args) {
+    if (argument === "--") break;
+    if (argument === "--json" || argument === "--json=true") json = true;
+    if (argument === "--json-v2" || argument === "--json-v2=true") jsonV2 = true;
+  }
+  return { json, jsonV2, conflict: json && jsonV2 };
+}
+
+function adaptArgsForLegacyHandler(args = []) {
+  const v2Enabled = scanOutputModes(args).jsonV2;
+  const adapted = [];
+  let passthrough = false;
+  let legacyJsonInjected = false;
+  for (const argument of args) {
+    if (passthrough) {
+      adapted.push(argument);
+      continue;
+    }
+    if (argument === "--") {
+      if (v2Enabled && !legacyJsonInjected) {
+        adapted.push("--json");
+        legacyJsonInjected = true;
+      }
+      passthrough = true;
+      adapted.push(argument);
+      continue;
+    }
+    if (v2Enabled && (
+      argument === "--json"
+      || argument === "--json=true"
+      || argument === "--json=false"
+      || argument === "--json-v2"
+      || argument === "--json-v2=true"
+      || argument === "--json-v2=false"
+    )) {
+      continue;
+    }
+    if (argument === "--json-v2=false") continue;
+    if (argument === "--help=false" || argument === "-h=false") continue;
+    adapted.push(argument);
+  }
+  if (v2Enabled && !legacyJsonInjected) adapted.push("--json");
+  return adapted;
 }
 
 function classifyErrorCode(message = "") {
@@ -350,21 +411,165 @@ function classifyErrorCode(message = "") {
   return "error";
 }
 
-function exitWithError({ message, code = classifyErrorCode(message), asJson = false, exitCode = 1 }) {
-  if (asJson) {
-    process.stdout.write(`${JSON.stringify({ error: message, code }, null, 2)}\n`);
-  } else {
-    process.stderr.write(`Error: ${message}\n`);
+function toTypedCliError(error) {
+  let candidate = error;
+  if (!(error instanceof PolycliCliError) && !error?.code) {
+    const classified = classifyErrorCode(error?.message || "");
+    if (classified !== "error") {
+      const typedCode = classified === "invalid_history" || classified === "invalid_max_diff_bytes"
+        ? "invalid_argument"
+        : classified;
+      candidate = cliError(typedCode, error.message, error.data || {}, error.exitCode || 1);
+    }
   }
-  process.exitCode = exitCode;
+  const typed = PolycliCliError.from(candidate);
+  if (typed.code === "internal_error" || typed.nextSteps.length > 0 || !RUN_CONTEXT.command) {
+    return typed;
+  }
+  const definition = getCommandDefinition(RUN_CONTEXT.command.split("."));
+  return new PolycliCliError({
+    code: typed.code,
+    message: typed.message,
+    exitCode: typed.exitCode,
+    data: typed.data,
+    nextSteps: definition?.visibility === "public"
+      ? [`Run \`polycli ${definition.path.join(" ")} --help\`.`]
+      : [],
+  });
+}
+
+function assertPreDispatchReviewSafety(definition, parsed) {
+  if (!definition || !["review", "adversarial-review"].includes(definition.id)) return;
+  const explicitProvider = parsed.options.provider
+    || (PROVIDER_IDS.includes(parsed.positionals[0]) ? parsed.positionals[0] : null);
+  if (!explicitProvider) return;
+  const descriptor = describeProviderRuntimes().find((entry) => entry.id === explicitProvider);
+  if (descriptor?.reviewSafety?.mode !== "unsupported") return;
+  let message = `Provider '${explicitProvider}' does not support review.`;
+  try {
+    assertReviewProviderSupported(explicitProvider);
+  } catch (error) {
+    message = error.message;
+  }
+  const error = cliError("invalid_argument", message, {
+    provider: explicitProvider,
+    reviewSafety: "unsupported",
+  });
+  error.legacyCode = "error";
+  throw error;
+}
+
+function exitWithError(error) {
+  const typed = toTypedCliError(error);
+  if (RUN_CONTEXT.outputMode === "json-v2") {
+    process.stdout.write(`${JSON.stringify(createV2ErrorEnvelope(typed, {
+      invocationId: RUN_CONTEXT.invocationId,
+      command: RUN_CONTEXT.command || process.argv[2] || "",
+      hostSurface: RUN_CONTEXT.hostSurface,
+      workspaceSlug: RUN_CONTEXT.workspaceSlug,
+      runId: RUN_CONTEXT.runId,
+      jobId: typeof typed.data?.jobId === "string" ? typed.data.jobId : null,
+    }), null, 2)}\n`);
+  } else if (RUN_CONTEXT.outputMode === "legacy-json") {
+    const code = error?.legacyCode || error?.code || classifyErrorCode(error?.message || "");
+    const legacyCode = code === "unknown_command" ? "unknown_subcommand" : code;
+    process.stdout.write(`${JSON.stringify({ error: typed.message, code: legacyCode }, null, 2)}\n`);
+  } else {
+    process.stderr.write(`Error: ${typed.message}\n`);
+    for (const suggestion of typed.data?.suggestions || []) {
+      process.stderr.write(`Suggestion: ${suggestion}\n`);
+    }
+    for (const step of typed.nextSteps) process.stderr.write(`${step}\n`);
+  }
+  process.exitCode = typed.exitCode || error?.exitCode || 1;
 }
 
 function output(value, asJson) {
+  if (RUN_CONTEXT.outputMode === "json-v2") {
+    const result = serializeV2Result(RUN_CONTEXT.command, value, {
+      background: RUN_CONTEXT.background,
+      wait: value?.wait ?? (Object.prototype.hasOwnProperty.call(value || {}, "waitTimedOut") ? true : null),
+    });
+    const envelope = createV2SuccessEnvelope(result, {
+      invocationId: RUN_CONTEXT.invocationId,
+      command: RUN_CONTEXT.command,
+      hostSurface: RUN_CONTEXT.hostSurface,
+      workspaceSlug: RUN_CONTEXT.workspaceSlug,
+      runId: RUN_CONTEXT.runId,
+      jobId: result.job?.jobId ?? result.jobId ?? null,
+    });
+    process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
+    RUN_CONTEXT.authoritativeJsonWritten = true;
+    return;
+  }
   if (asJson) {
     process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+    RUN_CONTEXT.authoritativeJsonWritten = true;
     return;
   }
   process.stdout.write(typeof value === "string" ? `${value}\n` : `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function buildAgentContext(hostSurface) {
+  const commands = listCommandDefinitions({ hostSurface }).map((entry) => ({
+    ...entry,
+    options: entry.options.filter((option) => option.visibility !== "internal"),
+  }));
+  const exitCodes = Array.from(new Set([
+    0,
+    ...commands.flatMap((entry) => entry.exitCodes),
+    ...ERROR_DEFINITIONS.map((entry) => entry.exitCode),
+  ])).sort((left, right) => left - right);
+  return {
+    schemaVersion: 1,
+    commandSurfaceVersion: COMMAND_SURFACE_VERSION,
+    build: {
+      version: BUILD_VERSION,
+      versionSource: BUILD_VERSION_SOURCE,
+      nodeMinimum: "20",
+    },
+    hostSurface,
+    offline: true,
+    commands,
+    providers: describeProviderRuntimes(),
+    outputSchemas: OUTPUT_SCHEMA_DEFINITIONS,
+    errors: ERROR_DEFINITIONS,
+    exitCodes,
+    features: {
+      legacyJson: true,
+      jsonEnvelopeV2: true,
+      ledgerCursor: true,
+      skillsDiscovery: false,
+      workflowRuntime: false,
+    },
+    compatibility: {
+      legacyJobSessionId: {
+        field: "sessionId",
+        semantics: "ambiguous",
+        deprecated: true,
+        replacements: ["hostSessionId", "providerSessionId"],
+      },
+    },
+  };
+}
+
+async function runAgentContext(rawArgs) {
+  const { options } = parseArgs(rawArgs, { booleanOptions: ["json"] });
+  const context = buildAgentContext(RUN_CONTEXT.hostSurface);
+  if (options.json) {
+    output(context, true);
+    return;
+  }
+  output(
+    [
+      `Polycli ${context.build.version} command surface v${context.commandSurfaceVersion}`,
+      `Host surface: ${context.hostSurface}`,
+      `Commands: ${context.commands.filter((entry) => entry.path.length === 1).length}`,
+      `Providers: ${context.providers.length}`,
+      "Run `polycli agent-context --json` for the complete offline contract.",
+    ].join("\n"),
+    false,
+  );
 }
 
 function resolveProviderModelCacheFile(workspaceRoot) {
@@ -441,6 +646,78 @@ async function inspectProvider(provider, { probeAuth = false } = {}) {
     capabilities: runtime.capabilities,
   };
   cacheProviderModel(resolveWorkspaceRoot(process.cwd()), provider, row.model);
+  return row;
+}
+
+async function inspectSetupProvider(provider, { probeAuth, workspaceRoot }) {
+  const attemptId = createAttemptId();
+  const runContext = buildCurrentRunContext({
+    command: "setup",
+    kind: "setup",
+    provider,
+    attemptId,
+  });
+  await recordRunEventForContext(workspaceRoot, runContext, {
+    command: "setup",
+    kind: "setup",
+    provider,
+    phase: "attempt_started",
+    status: "started",
+    attempt: { ordinal: 1 },
+  });
+
+  let row = null;
+  let inspectionError = null;
+  try {
+    row = await inspectProvider(provider, { probeAuth });
+  } catch (error) {
+    inspectionError = error;
+  }
+
+  const reason = inspectionError ? "setup_probe_failed" : "setup_probe_completed";
+  const terminal = prepareTerminalRunEventsForContext(runContext, [
+    {
+      command: "setup",
+      kind: "setup",
+      provider,
+      phase: "attempt_result",
+      status: inspectionError ? "failed" : "completed",
+      reason,
+      attempt: { ordinal: 1 },
+      model: row?.model ?? null,
+      errorCode: inspectionError ? "provider_failed" : null,
+      failureClass: inspectionError ? "provider_failed" : null,
+      error: inspectionError
+        ? { message: String(inspectionError.message || inspectionError).slice(0, 300) }
+        : null,
+    },
+    {
+      command: "setup",
+      kind: "setup",
+      provider,
+      phase: "provider_decision",
+      status: inspectionError ? "failed" : "adopted",
+      reason,
+    },
+  ]);
+  try {
+    ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+  } catch {
+    throw cliError(
+      "ledger_persist_failed",
+      "Failed to persist setup attempt ledger events. Provider work may have occurred, but durable finalization is unverified.",
+      { runId: runContext?.runId ?? null, invocationId: runContext?.invocationId ?? null, attemptId },
+    );
+  }
+  if (inspectionError) {
+    const error = cliError(
+      "provider_failed",
+      String(inspectionError.message || inspectionError).slice(0, 500),
+      { provider, kind: "setup" },
+    );
+    error.legacyCode = "error";
+    throw error;
+  }
   return row;
 }
 
@@ -629,7 +906,16 @@ function hydrateRuntimeOptions(runtimeOptions = {}) {
 
 async function runForegroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
-  await recordRunEvent(workspaceRoot, {
+  const attemptId = createAttemptId();
+  const runContext = buildCurrentRunContext({
+    command: execution.kind,
+    kind: execution.kind,
+    provider: execution.provider,
+    attemptId,
+    model: execution.model || null,
+    defaultModel: execution.defaultModel || null,
+  });
+  await recordRunEventForContext(workspaceRoot, runContext, {
     command: execution.kind,
     kind: execution.kind,
     provider: execution.provider,
@@ -637,7 +923,11 @@ async function runForegroundExecution(execution, asJson) {
     status: "started",
     attempt: { ordinal: 1 },
   });
-  let result;
+
+  const startedAt = Date.now();
+  let result = null;
+  let executionError = null;
+  let sessionArtifactPath = null;
   try {
     result = await runProviderPromptStreaming({
       provider: execution.provider,
@@ -652,58 +942,86 @@ async function runForegroundExecution(execution, asJson) {
       ...hydrateRuntimeOptions(execution.runtimeOptions),
       onEvent() {},
     });
+    emitRuntimeWarnings(result);
+    if (result.timing) {
+      appendTimingRecord(workspaceRoot, result.timing);
+    }
+    cacheProviderModel(workspaceRoot, execution.provider, result.model);
+    sessionArtifactPath = resolveSessionArtifactPath(
+      execution.provider,
+      result.sessionId,
+      execution.cwd,
+    );
+  } catch (error) {
+    executionError = error;
   } finally {
     cleanupRuntimeOptions(execution.runtimeOptions);
   }
-  emitRuntimeWarnings(result);
-  if (result.timing) {
-    appendTimingRecord(workspaceRoot, result.timing);
+
+  const resultOk = Boolean(result?.ok) && !executionError;
+  const publicError = executionError?.message || result?.error || null;
+  const terminalReason = resultOk ? null : `${execution.kind}_failed`;
+  const terminalErrorCode = executionError
+    ? "provider_failed"
+    : (result?.errorCode ?? result?.timing?.errorCode ?? null);
+  const terminal = prepareTerminalRunEventsForContext(runContext, [
+    {
+      command: execution.kind,
+      kind: execution.kind,
+      provider: execution.provider,
+      phase: "attempt_result",
+      status: resultOk ? "completed" : "failed",
+      reason: terminalReason,
+      attempt: { ordinal: 1 },
+      model: result?.model || null,
+      providerSessionId: result?.sessionId ?? null,
+      sessionArtifactPath,
+      defaultModel: result?.defaultModel || null,
+      preview: result?.response ? String(result.response).slice(0, 180) : null,
+      stdoutBytes: result?.stdoutBytes ?? null,
+      stderrBytes: result?.stderrBytes ?? null,
+      durationMs: Date.now() - startedAt,
+      errorCode: terminalErrorCode,
+      failureClass: terminalErrorCode,
+      timingRef: result?.timing
+        ? {
+          provider: result.timing.provider,
+          kind: result.timing.kind,
+          completedAt: result.timing.completedAt,
+        }
+        : null,
+      error: publicError ? { message: String(publicError).slice(0, 300) } : null,
+    },
+    {
+      command: execution.kind,
+      kind: execution.kind,
+      provider: execution.provider,
+      phase: "provider_decision",
+      status: resultOk ? "adopted" : "failed",
+      reason: terminalReason,
+      providerSessionId: result?.sessionId ?? null,
+      sessionArtifactPath,
+    },
+  ]);
+  try {
+    ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+  } catch {
+    throw cliError(
+      "ledger_persist_failed",
+      "Failed to persist terminal ledger events. Provider work may have occurred, but durable finalization is unverified.",
+      { runId: runContext?.runId ?? null, invocationId: runContext?.invocationId ?? null, attemptId },
+    );
   }
-  cacheProviderModel(workspaceRoot, execution.provider, result.model);
 
-  const sessionArtifactPath = resolveSessionArtifactPath(
-    execution.provider,
-    result.sessionId,
-    execution.cwd,
-  );
-
-  await recordRunEvent(workspaceRoot, {
-    command: execution.kind,
-    kind: execution.kind,
-    provider: execution.provider,
-    phase: "attempt_result",
-    status: result.ok ? "completed" : "failed",
-    attempt: { ordinal: 1 },
-    model: result.model || null,
-    sessionId: result.sessionId ?? null,
-    sessionArtifactPath,
-    defaultModel: result.defaultModel || null,
-    preview: result.response ? String(result.response).slice(0, 180) : null,
-    stdoutBytes: result.stdoutBytes ?? null,
-    stderrBytes: result.stderrBytes ?? null,
-    errorCode: result.errorCode ?? result.timing?.errorCode ?? null,
-    failureClass: result.errorCode ?? result.timing?.errorCode ?? null,
-    timingRef: result.timing
-      ? {
-        provider: result.timing.provider,
-        kind: result.timing.kind,
-        completedAt: result.timing.completedAt,
-      }
-      : null,
-    error: result.ok || !result.error
-      ? null
-      : { message: String(result.error).slice(0, 300) },
-  });
-  await recordRunEvent(workspaceRoot, {
-    command: execution.kind,
-    kind: execution.kind,
-    provider: execution.provider,
-    phase: "provider_decision",
-    status: result.ok ? "adopted" : "failed",
-    reason: result.ok ? null : `${execution.kind}_failed`,
-    sessionId: result.sessionId ?? null,
-    sessionArtifactPath,
-  });
+  if (executionError) {
+    const error = cliError(
+      terminalErrorCode === "ledger_persist_failed" ? terminalErrorCode : "provider_failed",
+      String(executionError.message || executionError).slice(0, 500),
+      { provider: execution.provider, kind: execution.kind },
+    );
+    error.legacyCode = "error";
+    throw error;
+  }
 
   const envelope = buildExecutionEnvelope(execution, result);
   if (asJson) {
@@ -712,7 +1030,9 @@ async function runForegroundExecution(execution, asJson) {
   }
 
   if (!result.ok) {
-    throw new Error(result.error || `${execution.provider} ${execution.kind} failed`);
+    process.stderr.write(`Error: ${String(result.error || `${execution.provider} ${execution.kind} failed`).slice(0, 500)}\n`);
+    process.exitCode = 1;
+    return;
   }
 
   const lines = [];
@@ -723,7 +1043,7 @@ async function runForegroundExecution(execution, asJson) {
   output(lines.join("\n\n"), false);
 }
 
-function buildQueuedJob(execution, workspaceRoot) {
+function buildQueuedJob(execution, workspaceRoot, attemptId) {
   const now = new Date().toISOString();
   const jobId = createJobId(execution.kind);
   return {
@@ -738,7 +1058,10 @@ function buildQueuedJob(execution, workspaceRoot) {
     logFile: resolveJobLogFile(workspaceRoot, jobId),
     createdAt: now,
     updatedAt: now,
-    sessionId: process.env[SESSION_ID_ENV] || null,
+    invocationId: RUN_CONTEXT.invocationId,
+    attemptId,
+    hostSessionId: process.env[SESSION_ID_ENV] || null,
+    providerSessionId: null,
     ...execution.jobMeta,
   };
 }
@@ -764,7 +1087,8 @@ function renderJobDetail(job) {
   if (job.baseRef) lines.push(`Base Ref: ${job.baseRef}`);
   if (job.createdAt) lines.push(`Created: ${job.createdAt}`);
   if (job.finishedAt) lines.push(`Finished: ${job.finishedAt}`);
-  if (job.sessionId) lines.push(`Session: ${job.sessionId}`);
+  const visibleSessionId = job.providerSessionId || job.hostSessionId || job.sessionId;
+  if (visibleSessionId) lines.push(`Session: ${visibleSessionId}`);
   if (job.progressPreview) {
     lines.push("");
     lines.push("Progress:");
@@ -830,7 +1154,8 @@ function renderResultEnvelope(envelope) {
     `Status: ${envelope.job.status}`,
   ];
   if (envelope.job.finishedAt) lines.push(`Finished: ${envelope.job.finishedAt}`);
-  if (envelope.job.sessionId) lines.push(`Session: ${envelope.job.sessionId}`);
+  const visibleSessionId = envelope.job.providerSessionId || envelope.job.hostSessionId || envelope.job.sessionId;
+  if (visibleSessionId) lines.push(`Session: ${visibleSessionId}`);
   if (result?.response) {
     lines.push("");
     lines.push("Response:");
@@ -865,6 +1190,10 @@ function buildResultPayload(envelope) {
       finishedAt: job.finishedAt ?? null,
       pid: job.pid ?? null,
       logFile: job.logFile ?? null,
+      invocationId: job.invocationId ?? null,
+      attemptId: job.attemptId ?? null,
+      hostSessionId: job.hostSessionId ?? null,
+      providerSessionId: job.providerSessionId ?? null,
       sessionId: job.sessionId ?? null,
       error: job.error ?? null,
     },
@@ -873,19 +1202,22 @@ function buildResultPayload(envelope) {
 
 async function startBackgroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
-  const job = buildQueuedJob(execution, workspaceRoot);
+  const attemptId = createAttemptId();
+  const job = buildQueuedJob(execution, workspaceRoot, attemptId);
   upsertJob(workspaceRoot, job);
   const runContext = buildCurrentRunContext({
     command: execution.kind,
     jobId: job.jobId,
     provider: execution.provider,
     kind: execution.kind,
+    attemptId,
     model: execution.model || null,
     defaultModel: execution.defaultModel || null,
     logFile: job.logFile,
   });
   writeJobConfigFile(workspaceRoot, job.jobId, {
     workspaceRoot,
+    hostSessionId: job.hostSessionId,
     execution: {
       ...execution,
       measurementScope: "job",
@@ -987,7 +1319,10 @@ async function runSetup(rawArgs) {
   const results = [];
   for (const provider of providers) {
     results.push({
-      ...(await inspectProvider(provider, { probeAuth: Boolean(options["probe-auth"]) })),
+      ...(await inspectSetupProvider(provider, {
+        probeAuth: Boolean(options["probe-auth"]),
+        workspaceRoot,
+      })),
       stopReviewGate: gateConfig.stopReviewGate === true,
       stopReviewGateWorkspace: workspaceRoot,
     });
@@ -1021,7 +1356,26 @@ async function probeProviderHealth({
   timeout,
   workspaceRoot,
 }) {
-  const inspection = await inspectProviderAvailability(provider);
+  let providerSessionId = null;
+  let inspection;
+  try {
+    inspection = await inspectProviderAvailability(provider);
+  } catch (error) {
+    const runtime = getProviderRuntime(provider);
+    const detail = String(error?.message || error).slice(0, 300);
+    inspection = {
+      provider,
+      available: false,
+      availabilityDetail: detail,
+      loggedIn: null,
+      authState: "unknown",
+      authChecked: false,
+      authProbeCost: normalizeAuthProbeCost(runtime),
+      authDetail: "not checked because the availability probe failed",
+      model: null,
+      capabilities: runtime.capabilities,
+    };
+  }
   const report = {
     ...inspection,
     ok: false,
@@ -1078,6 +1432,7 @@ async function probeProviderHealth({
       if (result.timing) {
         appendTimingRecord(workspaceRoot, result.timing);
       }
+      providerSessionId = result.sessionId ?? null;
       const response = result.response || "";
       const responseMatched = response.trim() === HEALTH_SENTINEL;
       report.probe = {
@@ -1096,6 +1451,10 @@ async function probeProviderHealth({
     }
   }
 
+  Object.defineProperty(report, "_providerSessionId", {
+    value: providerSessionId,
+    enumerable: false,
+  });
   return report;
 }
 
@@ -1145,36 +1504,90 @@ async function runHealth(rawArgs) {
     ? [resolveProvider({ provider: options.provider, positionals }).provider]
     : listProviderRuntimes().map((runtime) => runtime.id);
 
-  const results = await Promise.all(providers.map((provider) => probeProviderHealth({
+  const results = await Promise.all(providers.map(async (provider) => {
+    const attemptId = createAttemptId();
+    const runContext = buildCurrentRunContext({
+      command: "health",
+      kind: "health",
+      provider,
+      attemptId,
+      model: options.model || null,
+    });
+    await recordRunEventForContext(workspaceRoot, runContext, {
+      command: "health",
+      kind: "health",
+      provider,
+      phase: "attempt_started",
+      status: "started",
+      attempt: { ordinal: 1 },
+      model: options.model || null,
+    });
+    const report = await probeProviderHealth({
       provider,
       model: options.model || null,
       timeout,
       workspaceRoot,
-    })));
-
-  for (const report of results) {
-    await recordRunEvent(workspaceRoot, {
-      command: "health",
-      kind: "health",
-      provider: report.provider,
-      phase: "health_result",
-      status: report.ok ? "passed" : "failed",
-      reason: report.ok ? "health_passed" : "health_failed",
-      model: report.model || null,
-      preview: report.probe?.responsePreview || null,
-      error: report.probe?.error
-        ? { message: String(report.probe.error).slice(0, 300) }
-        : null,
     });
-    await recordRunEvent(workspaceRoot, {
-      command: "health",
-      kind: "health",
-      provider: report.provider,
-      phase: "provider_decision",
-      status: report.ok ? "passed" : "skipped",
-      reason: report.ok ? "health_passed" : "health_failed",
-    });
-  }
+    const providerResultOk = report.probe?.ok === true;
+    const terminalReason = providerResultOk ? null : "health_probe_failed";
+    const terminal = prepareTerminalRunEventsForContext(runContext, [
+      {
+        command: "health",
+        kind: "health",
+        provider,
+        phase: "attempt_result",
+        status: providerResultOk ? "completed" : "failed",
+        reason: terminalReason,
+        attempt: { ordinal: 1 },
+        model: report.model || null,
+        providerSessionId: report._providerSessionId,
+        preview: report.probe?.responsePreview || null,
+        errorCode: providerResultOk ? null : "health_failed",
+        failureClass: providerResultOk ? null : "health_failed",
+        error: report.probe?.error
+          ? { message: String(report.probe.error).slice(0, 300) }
+          : null,
+      },
+      {
+        command: "health",
+        kind: "health",
+        provider,
+        phase: "provider_decision",
+        status: report.ok ? "passed" : "skipped",
+        reason: report.ok ? "health_passed" : "health_failed",
+        providerSessionId: report._providerSessionId,
+      },
+    ]);
+    try {
+      ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+    } catch {
+      throw cliError(
+        "ledger_persist_failed",
+        "Failed to persist health attempt ledger events. Provider work may have occurred, but durable finalization is unverified.",
+        { runId: runContext?.runId ?? null, invocationId: runContext?.invocationId ?? null, attemptId },
+      );
+    }
+    try {
+      await recordRunEventForContext(workspaceRoot, runContext, {
+        command: "health",
+        kind: "health",
+        provider,
+        phase: "health_result",
+        status: report.ok ? "passed" : "failed",
+        reason: report.ok ? "health_passed" : "health_failed",
+        model: report.model || null,
+        providerSessionId: report._providerSessionId,
+        preview: report.probe?.responsePreview || null,
+        error: report.probe?.error
+          ? { message: String(report.probe.error).slice(0, 300) }
+          : null,
+      });
+    } catch {
+      // health_result is a compatibility projection. The atomic attempt_result +
+      // provider_decision pair above is the authoritative terminal record.
+    }
+    return report;
+  }));
 
   const payload = buildHealthPayload(results);
   if (!payload.anyHealthy) {
@@ -1330,7 +1743,20 @@ function buildReviewExecution(rawArgs, { adversarial }) {
   });
 
   if (!reviewContext.ok) {
-    throw new Error(reviewContext.error);
+    const argument = options.base ? "--base" : "--scope";
+    const error = cliError(
+      "invalid_argument",
+      options.base
+        ? `Unable to resolve review base '${String(options.base).slice(0, 200)}'.`
+        : "Unable to collect the requested review diff.",
+      {
+        argument,
+        value: options.base || options.scope || "auto",
+        scope: options.scope || "auto",
+      },
+    );
+    error.legacyCode = "error";
+    throw error;
   }
 
   return {
@@ -1420,10 +1846,11 @@ async function runReviewCommand(rawArgs, { adversarial }) {
 async function runStatus(rawArgs) {
   const { options, positionals } = parseArgs(rawArgs, {
     booleanOptions: ["json", "all", "wait"],
-    valueOptions: ["timeout-ms"],
+    valueOptions: ["job", "for", "timeout-ms"],
   });
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
-  const reference = positionals[0] || null;
+  const reference = options.job || positionals[0] || null;
+  const selectorOptions = options.job ? { grammar: "explicit" } : undefined;
   const timeoutMs = options.wait ? parseStatusTimeoutMs(options["timeout-ms"]) : undefined;
 
   if (options.wait && options.all && !reference) {
@@ -1442,32 +1869,34 @@ async function runStatus(rawArgs) {
   }
 
   if (options.wait) {
-    const target = reference ? resolveJobReference(workspaceRoot, reference) : resolveLatestActiveJob(workspaceRoot);
-    if (!target) {
-      throw new Error(reference ? `Job '${reference}' not found.` : "No active job found.");
-    }
+    const target = resolveJobSelector(workspaceRoot, reference || "latest-active", selectorOptions);
     const waited = await waitForJob(workspaceRoot, target.jobId, {
       timeoutMs,
+      for: options.for || "terminal",
     });
     if (waited.waitTimedOut) {
       process.exitCode = 2;
+    }
+    if (waited.error && RUN_CONTEXT.outputMode === "json-v2") {
+      throw cliError("job_not_found", `Job '${target.jobId}' was not found while waiting.`, {
+        jobId: target.jobId,
+      });
     }
     if (options.json) {
       output(waited, true);
       return;
     }
     if (waited.error) {
-      throw new Error(waited.error);
+      throw cliError("job_not_found", `Job '${target.jobId}' was not found while waiting.`, {
+        jobId: target.jobId,
+      });
     }
     output(renderJobDetail(waited.job), false);
     return;
   }
 
   if (reference) {
-    const job = resolveJobReference(workspaceRoot, reference);
-    if (!job) {
-      throw new Error(`Job '${reference}' not found.`);
-    }
+    const job = resolveJobSelector(workspaceRoot, reference, selectorOptions);
     const refreshed = refreshJob(workspaceRoot, job);
     if (options.json) {
       output({ job: refreshed }, true);
@@ -1488,19 +1917,24 @@ async function runStatus(rawArgs) {
 async function runResult(rawArgs) {
   const { options, positionals } = parseArgs(rawArgs, {
     booleanOptions: ["json"],
+    valueOptions: ["job"],
   });
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
-  const job = positionals[0]
-    ? resolveJobReference(workspaceRoot, positionals[0])
-    : resolveLatestTerminalJob(workspaceRoot);
-
-  if (!job) {
-    throw new Error(positionals[0] ? `Job '${positionals[0]}' not found.` : "No completed job found.");
-  }
+  const job = resolveJobSelector(
+    workspaceRoot,
+    options.job || positionals[0] || "latest-terminal",
+    options.job ? { grammar: "explicit" } : undefined,
+  );
 
   const refreshed = refreshJob(workspaceRoot, job);
   if (refreshed.status === "queued" || refreshed.status === "running") {
-    throw new Error(`Job '${refreshed.jobId}' is still ${refreshed.status}. Use status first.`);
+    const error = cliError(
+      "no_completed_job",
+      `Job '${refreshed.jobId}' is still ${refreshed.status}. Use status first.`,
+      { jobId: refreshed.jobId, status: refreshed.status },
+    );
+    error.legacyCode = "error";
+    throw error;
   }
 
   const envelope = readJobFile(resolveJobFile(workspaceRoot, refreshed.jobId)) || { job: refreshed, result: refreshed.result };
@@ -1514,13 +1948,15 @@ async function runResult(rawArgs) {
 async function runCancel(rawArgs) {
   const { options, positionals } = parseArgs(rawArgs, {
     booleanOptions: ["json"],
+    valueOptions: ["job"],
   });
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
-  const job = positionals[0]
-    ? resolveJobReference(workspaceRoot, positionals[0])
-    : resolveLatestActiveJob(workspaceRoot);
-
-  if (!job) {
+  const selector = options.job || positionals[0] || "latest-active";
+  let job;
+  try {
+    job = resolveJobSelector(workspaceRoot, selector, options.job ? { grammar: "explicit" } : undefined);
+  } catch (error) {
+    if (RUN_CONTEXT.outputMode === "json-v2" || error.code === "ambiguous_selector") throw error;
     if (options.json) {
       output({ cancelled: false, reason: "not_found", jobId: positionals[0] || null }, true);
       process.exitCode = 1;
@@ -1532,6 +1968,25 @@ async function runCancel(rawArgs) {
   }
 
   const report = await cancelJob(workspaceRoot, job.jobId);
+  if (RUN_CONTEXT.outputMode === "json-v2") {
+    if (report.cancelled) {
+      output(report, true);
+      return;
+    }
+    if (report.reason === "not_cancellable") {
+      output(report, true);
+      process.exitCode = 4;
+      return;
+    }
+    throw new PolycliCliError({
+      code: report.reason === "worker_identity_unverified"
+        ? "worker_identity_unverified"
+        : "cancel_failed",
+      message: `Failed to cancel ${report.jobId}: ${report.error || report.reason}`,
+      exitCode: 5,
+      data: { jobId: report.jobId, reason: report.reason },
+    });
+  }
   if (options.json) {
     output(report, true);
   } else if (report.cancelled) {
@@ -1725,7 +2180,7 @@ async function runJobWorker(rawArgs) {
         pid: null,
         finishedAt,
         updatedAt: finishedAt,
-        sessionId: result.sessionId ?? null,
+        providerSessionId: result.sessionId ?? null,
         error: result.error ?? null,
       };
       const terminalReason = result.ok ? null : `${execution.kind}_failed`;
@@ -1741,7 +2196,7 @@ async function runJobWorker(rawArgs) {
             attempt: { ordinal: 1 },
             jobId,
             model: result.model || null,
-            sessionId: result.sessionId ?? null,
+            providerSessionId: result.sessionId ?? null,
             sessionArtifactPath,
             defaultModel: result.defaultModel || null,
             preview: result.response ? String(result.response).slice(0, 180) : null,
@@ -1770,7 +2225,7 @@ async function runJobWorker(rawArgs) {
             status: result.ok ? "adopted" : "failed",
             reason: terminalReason,
             jobId,
-            sessionId: result.sessionId ?? null,
+            providerSessionId: result.sessionId ?? null,
             sessionArtifactPath,
           },
         ]
@@ -1886,55 +2341,69 @@ function formatDebugRunsTable(runs) {
   return lines.join("\n");
 }
 
-async function runDebugCommand(rawArgs) {
-  const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json"],
-  });
-  const subcommand = positionals[0] || "runs";
+async function readDebugLedger({ raw = false } = {}) {
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
   refreshJobsForLedgerRecovery(workspaceRoot);
-  const events = await readRunLedgerEvents(workspaceRoot);
-  const asJson = Boolean(options.json);
+  const events = await readRunLedgerEvents(workspaceRoot, { raw });
+  return { workspaceRoot, events };
+}
 
-  if (subcommand === "runs") {
-    const runs = summarizeRunLedger(events);
-    if (asJson) {
-      output({ ok: true, runs }, true);
-      return;
-    }
-    output(formatDebugRunsTable(runs), false);
+async function runDebugTail(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, {
+    booleanOptions: ["json", "wait"],
+    valueOptions: ["after", "limit", "timeout-ms"],
+  });
+  const workspaceRoot = resolveWorkspaceRoot(process.cwd());
+  const result = await tailRunLedgerEvents(workspaceRoot, {
+    runId: positionals[0] || null,
+    after: options.after || null,
+    limit: options.limit == null ? undefined : Number(options.limit),
+    wait: Boolean(options.wait),
+    timeoutMs: options["timeout-ms"] == null ? undefined : Number(options["timeout-ms"]),
+  });
+  if (result.waitTimedOut) process.exitCode = 2;
+  if (options.json) {
+    output(result, true);
     return;
   }
+  output(JSON.stringify(result, null, 2), false);
+}
 
-  if (subcommand === "show") {
-    const runId = positionals[1];
-    if (!runId) {
-      throw new Error("Missing run id for debug show.");
-    }
-    const runEvents = events.filter((event) => event.runId === runId);
-    if (asJson) {
-      output({ ok: true, runId, events: runEvents }, true);
-      return;
-    }
-    output(JSON.stringify({ runId, events: runEvents }, null, 2), false);
+async function runDebugRuns(rawArgs) {
+  const { options } = parseArgs(rawArgs, { booleanOptions: ["json"] });
+  const { events } = await readDebugLedger();
+  const runs = summarizeRunLedger(events);
+  if (options.json) {
+    output({ ok: true, runs }, true);
     return;
   }
+  output(formatDebugRunsTable(runs), false);
+}
 
-  if (subcommand === "explain") {
-    const runId = positionals[1];
-    if (!runId) {
-      throw new Error("Missing run id for debug explain.");
-    }
-    const explanation = buildRunExplanation(events, runId);
-    if (asJson) {
-      output({ ok: true, ...explanation }, true);
-      return;
-    }
-    output(explanation.text, false);
+async function runDebugShow(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, { booleanOptions: ["json"] });
+  const runId = positionals[0];
+  if (!runId) throw cliError("invalid_argument", "Missing run id for debug show.");
+  const { events } = await readDebugLedger({ raw: RUN_CONTEXT.outputMode !== "json-v2" });
+  const runEvents = events.filter((event) => event.runId === runId);
+  if (options.json) {
+    output({ ok: true, runId, events: runEvents }, true);
     return;
   }
+  output(JSON.stringify({ runId, events: runEvents }, null, 2), false);
+}
 
-  throw new Error(`Unknown subcommand 'debug ${subcommand}'.`);
+async function runDebugExplain(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, { booleanOptions: ["json"] });
+  const runId = positionals[0];
+  if (!runId) throw cliError("invalid_argument", "Missing run id for debug explain.");
+  const { events } = await readDebugLedger();
+  const explanation = buildRunExplanation(events, runId);
+  if (options.json) {
+    output({ ok: true, ...explanation }, true);
+    return;
+  }
+  output(explanation.text, false);
 }
 
 function formatBytes(bytes) {
@@ -1994,108 +2463,201 @@ function renderPurgePlan(plan, summary, nonPurgeable = []) {
   return lines.join("\n");
 }
 
-async function runSessionsCommand(rawArgs) {
-  const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json", "confirm"],
-  });
-  const subcommand = positionals[0] || "list";
+async function readSessionLedger() {
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
   const events = await readRunLedgerEvents(workspaceRoot);
   const recorded = collectRecordedArtifacts(events);
   const nonPurgeable = collectNonPurgeableSessions(events);
-  const asJson = Boolean(options.json);
-
-  if (subcommand === "list") {
-    if (asJson) {
-      output({ ok: true, recorded, nonPurgeable }, true);
-      return;
-    }
-    output(renderSessionsList(recorded, nonPurgeable), false);
-    return;
-  }
-
-  if (subcommand === "purge") {
-    const homedir = defaultHomedir();
-    const plan = planPurge({ recorded, homedir });
-    const confirm = Boolean(options.confirm);
-    const summary = executePurge(plan, { confirm });
-    if (asJson) {
-      output({ ok: true, confirmed: summary.confirmed, plan, nonPurgeable, summary }, true);
-      return;
-    }
-    output(renderPurgePlan(plan, summary, nonPurgeable), false);
-    return;
-  }
-
-  throw new Error(`Unknown subcommand 'sessions ${subcommand}'.`);
+  return { recorded, nonPurgeable };
 }
 
-async function dispatchCommand(command, rawArgs) {
-  if (command === "setup") return runSetup(rawArgs);
-  if (command === "health") return runHealth(rawArgs);
-  if (command === "ask") return runAsk(rawArgs);
-  if (command === "rescue") return runRescue(rawArgs);
-  if (command === "review") return runReviewCommand(rawArgs, { adversarial: false });
-  if (command === "adversarial-review") return runReviewCommand(rawArgs, { adversarial: true });
-  if (command === "status") return runStatus(rawArgs);
-  if (command === "result") return runResult(rawArgs);
-  if (command === "cancel") return runCancel(rawArgs);
-  if (command === "timing") return runTiming(rawArgs);
-  if (command === "debug") return runDebugCommand(rawArgs);
-  if (command === "sessions") return runSessionsCommand(rawArgs);
-  if (command === "_stop-review-gate") return runStopReviewGate(rawArgs);
-  if (command === "_job-worker") return runJobWorker(rawArgs);
-  throw new Error(`Unknown subcommand '${command}'.`);
+async function runSessionsList(rawArgs) {
+  const { options } = parseArgs(rawArgs, { booleanOptions: ["json"] });
+  const { recorded, nonPurgeable } = await readSessionLedger();
+  if (options.json) {
+    output({ ok: true, recorded, nonPurgeable }, true);
+    return;
+  }
+  output(renderSessionsList(recorded, nonPurgeable), false);
+}
+
+async function runSessionsPurge(rawArgs) {
+  const { options } = parseArgs(rawArgs, { booleanOptions: ["json", "confirm"] });
+  const { recorded, nonPurgeable } = await readSessionLedger();
+  const homedir = defaultHomedir();
+  const plan = planPurge({ recorded, homedir });
+  const confirm = Boolean(options.confirm);
+  const summary = executePurge(plan, { confirm });
+  if (options.json) {
+    output({ ok: true, confirmed: summary.confirmed, plan, nonPurgeable, summary }, true);
+    return;
+  }
+  output(renderPurgePlan(plan, summary, nonPurgeable), false);
+}
+
+const COMMAND_HANDLERS = Object.freeze({
+  setup: runSetup,
+  health: runHealth,
+  ask: runAsk,
+  rescue: runRescue,
+  review: (args) => runReviewCommand(args, { adversarial: false }),
+  "adversarial-review": (args) => runReviewCommand(args, { adversarial: true }),
+  status: runStatus,
+  result: runResult,
+  cancel: runCancel,
+  timing: runTiming,
+  "debug.runs": runDebugRuns,
+  "debug.show": runDebugShow,
+  "debug.explain": runDebugExplain,
+  "debug.tail": runDebugTail,
+  "sessions.list": runSessionsList,
+  "sessions.purge": runSessionsPurge,
+  "agent-context": runAgentContext,
+  "_stop-review-gate": runStopReviewGate,
+  "_job-worker": runJobWorker,
+});
+
+assertCommandRegistry({ handlerIds: Object.keys(COMMAND_HANDLERS) });
+
+async function dispatchCommand(commandId, rawArgs) {
+  const handler = COMMAND_HANDLERS[commandId];
+  if (!handler) throw cliError("unknown_command", `Unknown command '${commandId}'.`);
+  return handler(rawArgs);
+}
+
+function commandResolutionError(fullArgs, resolution, hostSurface) {
+  if (!resolution) {
+    const argument = fullArgs[0] || "";
+    const validCommands = listCommandDefinitions({ hostSurface, topLevelOnly: true })
+      .map((entry) => entry.path[0]);
+    const suggestions = suggestFromCandidates(argument, validCommands);
+    return cliError(
+      "unknown_command",
+      `Unknown command '${argument}'.${suggestions.length ? ` Did you mean ${suggestions.join(" or ")}?` : ""}`,
+      { argument, validCommands, suggestions },
+    );
+  }
+  const { definition, args } = resolution;
+  if (definition.executable) return null;
+  if (args[0] === "--help" || args[0] === "-h") return null;
+  const argument = args[0] || "";
+  const validSubcommands = listCommandDefinitions({ hostSurface })
+    .filter((entry) => entry.path.length === definition.path.length + 1
+      && definition.path.every((part, index) => entry.path[index] === part))
+    .map((entry) => entry.path.at(-1));
+  const suggestions = suggestFromCandidates(argument, validSubcommands);
+  return cliError(
+    "unknown_subcommand",
+    `Unknown subcommand '${[...definition.path, argument].filter(Boolean).join(" ")}'.${suggestions.length ? ` Did you mean ${suggestions.join(" or ")}?` : ""}`,
+    { command: definition.path, argument, validSubcommands, suggestions },
+  );
 }
 
 async function main() {
   const fullArgs = process.argv.slice(2);
-  const { argv: normalizedArgs, runId: explicitRunId } = stripRunIdArgs(fullArgs);
-  const [command, ...rawArgs] = normalizedArgs;
-  if (!command || command === "--help" || command === "-h") {
-    printUsage();
-    return;
-  }
-  if (hasHelpFlag(rawArgs) && command !== "_job-worker") {
-    printUsage();
-    return;
-  }
-
-  RUN_CONTEXT.command = command;
+  RUN_CONTEXT.invocationId = `inv_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+  RUN_CONTEXT.authoritativeJsonWritten = false;
   RUN_CONTEXT.hostSurface = resolveHostSurface(process.env, import.meta.url);
   RUN_CONTEXT.rawArgs = fullArgs;
-  RUN_CONTEXT.runId = RUN_TRACKED_COMMANDS.has(command)
-    ? resolveRunId({ runId: explicitRunId }, process.env)
-    : null;
+  const outputModes = scanOutputModes(fullArgs);
+  const command = fullArgs[0];
+  const implicitLegacyJson = command === "setup"
+    && RUN_CONTEXT.hostSurface === "claude-plugin"
+    && !outputModes.json
+    && !outputModes.jsonV2;
+  RUN_CONTEXT.outputMode = outputModes.jsonV2
+    ? "json-v2"
+    : ((outputModes.json || implicitLegacyJson) ? "legacy-json" : "text");
+
+  RUN_CONTEXT.command = command || null;
+  if (outputModes.conflict) {
+    throw cliError(
+      "invalid_argument",
+      "Options --json and --json-v2 cannot be used together.",
+      { argument: "--json-v2", conflictsWith: "--json" },
+    );
+  }
+  if (!command || command === "--help" || command === "-h") {
+    printUsage(RUN_CONTEXT.hostSurface);
+    return;
+  }
+
+  const resolution = resolveCommandPath(fullArgs, {
+    hostSurface: RUN_CONTEXT.hostSurface,
+    includeInternal: true,
+  });
+  const resolutionError = commandResolutionError(fullArgs, resolution, RUN_CONTEXT.hostSurface);
+  if (resolutionError) throw resolutionError;
+  const { definition } = resolution;
+  RUN_CONTEXT.command = definition.id;
+  const parsed = parseCommandArgs(definition, resolution.args, {
+    enumSources: { providers: PROVIDER_IDS },
+  });
+  RUN_CONTEXT.background = parsed.options.background === true;
+  if (parsed.options.help && definition.visibility !== "internal") {
+    console.log(renderCommandHelp(definition));
+    return;
+  }
+
+  assertPreDispatchReviewSafety(definition, parsed);
+
+  const adaptedArgs = adaptArgsForLegacyHandler(resolution.args);
+  if (implicitLegacyJson) adaptedArgs.push("--json");
+  const { argv: rawArgs, runId: explicitRunId } = stripRunIdArgs(adaptedArgs);
+  if (definition.id === "agent-context") {
+    RUN_CONTEXT.runId = null;
+    RUN_CONTEXT.workspaceSlug = null;
+    return dispatchCommand(definition.id, rawArgs);
+  }
+  if (definition.runTracked) {
+    try {
+      RUN_CONTEXT.runId = resolveRunId({ runId: explicitRunId }, process.env);
+    } catch (error) {
+      if (!/^Invalid run id:/.test(error?.message || "")) throw error;
+      const typed = cliError("invalid_argument", error.message, {
+        argument: "--run-id",
+        value: explicitRunId || process.env.POLYCLI_RUN_ID || null,
+      });
+      typed.legacyCode = "error";
+      throw typed;
+    }
+  } else {
+    RUN_CONTEXT.runId = null;
+  }
+  RUN_CONTEXT.workspaceSlug = computeWorkspaceSlug(resolveWorkspaceRoot(process.cwd()));
 
   if (!RUN_CONTEXT.runId) {
-    return dispatchCommand(command, rawArgs);
+    return dispatchCommand(definition.id, rawArgs);
   }
 
   const workspaceRoot = resolveWorkspaceRoot(process.cwd());
   await recordRunEvent(workspaceRoot, { phase: "run_started", status: "started" });
   try {
-    const result = await dispatchCommand(command, rawArgs);
+    const result = await dispatchCommand(definition.id, rawArgs);
     const failed = process.exitCode != null && process.exitCode !== 0;
-    await recordRunEvent(workspaceRoot, {
-      phase: "run_summary",
-      status: failed ? "failed" : "completed",
-    });
+    try {
+      await recordRunEvent(workspaceRoot, {
+        phase: "run_summary",
+        status: failed ? "failed" : "completed",
+      });
+    } catch (summaryError) {
+      if (!RUN_CONTEXT.authoritativeJsonWritten) throw summaryError;
+    }
     return result;
   } catch (error) {
-    await recordRunEvent(workspaceRoot, {
-      phase: "run_summary",
-      status: "failed",
-      error: { message: String(error?.message || error).slice(0, 300) },
-    });
+    try {
+      await recordRunEvent(workspaceRoot, {
+        phase: "run_summary",
+        status: "failed",
+        error: { message: String(error?.message || error).slice(0, 300) },
+      });
+    } catch (summaryError) {
+      if (error?.code !== "ledger_persist_failed") throw summaryError;
+    }
     throw error;
   }
 }
 
 main().catch((error) => {
-  exitWithError({
-    message: error.message,
-    asJson: wantsJson(process.argv.slice(2)),
-    exitCode: process.exitCode || 1,
-  });
+  exitWithError(error);
 });

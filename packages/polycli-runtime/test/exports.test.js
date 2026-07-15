@@ -23,6 +23,7 @@ test("runtime index exports expected surface", () => {
     "buildPiInvocation",
     "buildQwenEnv",
     "buildQwenInvocation",
+    "describeProviderRuntimes",
     "extractAgyText",
     "extractClaudeText",
     "extractCmdText",

@@ -50,6 +50,103 @@ test("parseArgs rejects empty inline boolean values", () => {
   );
 });
 
+const strictConfig = {
+  booleanOptions: ["json"],
+  valueOptions: ["timeout", "cwd"],
+  aliasMap: { j: "json", t: "timeout", c: "cwd" },
+  unknownOptionMode: "error",
+  rejectDuplicateOptions: true,
+};
+
+function assertInvalidArgument(callback, argument, messagePattern) {
+  assert.throws(callback, (error) => (
+    error instanceof Error
+    && error.code === "invalid_argument"
+    && error.data?.argument === argument
+    && messagePattern.test(error.message)
+  ));
+}
+
+test("parseArgs strict mode rejects unknown long and short options with structured errors", () => {
+  assertInvalidArgument(
+    () => parseArgs(["--modle"], strictConfig),
+    "--modle",
+    /Unknown option/
+  );
+  assertInvalidArgument(
+    () => parseArgs(["-x"], strictConfig), "-x", /Unknown option/);
+  assertInvalidArgument(
+    () => parseArgs(["--t", "5000"], strictConfig), "--t", /Unknown option/);
+});
+
+test("parseArgs strict mode rejects duplicate canonical options across aliases", () => {
+  assertInvalidArgument(
+    () => parseArgs(["--timeout", "5000", "-t6000"], strictConfig),
+    "-t6000",
+    /Duplicate option/
+  );
+});
+
+test("parseArgs strict mode accepts documented forms and preserves delimiter positionals", () => {
+  const parsed = parseArgs(
+    ["prompt", "--json=false", "--timeout=5000", "-c/tmp/demo", "--", "--literal"],
+    strictConfig
+  );
+
+  assert.deepEqual(parsed.options, {
+    json: false,
+    timeout: "5000",
+    cwd: "/tmp/demo",
+  });
+  assert.deepEqual(parsed.positionals, ["prompt", "--literal"]);
+
+  const spacedValues = parseArgs(["--timeout", "6000", "-c", "/tmp/other"], strictConfig);
+  assert.deepEqual(spacedValues.options, {
+    timeout: "6000",
+    cwd: "/tmp/other",
+  });
+});
+
+test("parseArgs strict mode rejects short boolean clusters while retaining value-alias adjacency", () => {
+  assert.throws(
+    () => parseArgs(["-jt"], strictConfig),
+    (error) => error?.code === "invalid_argument",
+  );
+  assert.deepEqual(parseArgs(["-t5000"], strictConfig).options, { timeout: "5000" });
+});
+
+test("parseArgs strict mode accepts options before, between, and after positionals", () => {
+  const parsed = parseArgs(
+    ["--json", "first", "--timeout", "5000", "second", "-c/tmp/demo"],
+    strictConfig,
+  );
+  assert.deepEqual(parsed.options, { json: true, timeout: "5000", cwd: "/tmp/demo" });
+  assert.deepEqual(parsed.positionals, ["first", "second"]);
+});
+
+test("parseArgs strict mode rejects invalid boolean values and missing option values", () => {
+  assertInvalidArgument(
+    () => parseArgs(["--json=maybe"], strictConfig),
+    "--json=maybe",
+    /Invalid boolean value/
+  );
+  assertInvalidArgument(
+    () => parseArgs(["--timeout", "--json"], strictConfig),
+    "--timeout",
+    /Missing value/
+  );
+  assertInvalidArgument(
+    () => parseArgs(["--timeout", "--", "literal"], strictConfig),
+    "--timeout",
+    /Missing value/
+  );
+  assertInvalidArgument(
+    () => parseArgs(["-t", "--", "literal"], strictConfig),
+    "-t",
+    /Missing value/
+  );
+});
+
 test("splitRawArgumentString keeps escaped double quotes inside double-quoted regions", () => {
   const tokens = splitRawArgumentString(String.raw`ask "he said \"hi\"" plain`);
   assert.deepEqual(tokens, ["ask", 'he said "hi"', "plain"]);

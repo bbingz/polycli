@@ -22,6 +22,7 @@ Run `health` once after install, login, or provider config changes. With no prov
 
 ## Commands
 
+- `/polycli:agent-context`
 - `/polycli:setup`
 - `/polycli:health`
 - `/polycli:ask`
@@ -41,6 +42,7 @@ The read-only run-inspector TUI belongs to the terminal package as `polycli tui`
 
 ```text
 /polycli:setup --provider gemini
+/polycli:agent-context --json
 /polycli:health
 /polycli:ask --provider kimi Explain this stack trace
 /polycli:rescue --provider qwen --background Audit the flaky test and explain the root cause
@@ -51,8 +53,11 @@ The read-only run-inspector TUI belongs to the terminal package as `polycli tui`
 /polycli:cancel pr-1234abcd
 /polycli:timing --provider qwen
 /polycli:debug runs
+/polycli:debug tail --after evt_abc --limit 100 --wait --json-v2
 /polycli:sessions list
 ```
+
+Operational commands retain legacy `--json` as the host default and offer opt-in `--json-v2` envelopes. Job commands also accept explicit `--job id:<id>|prefix:<prefix>|latest|latest-active|latest-terminal` selectors; `status --wait --for <state>` reports typed satisfaction, timeout, or terminal mismatch.
 
 ## Provider Model
 

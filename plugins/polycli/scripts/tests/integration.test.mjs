@@ -661,7 +661,7 @@ test("integration: subcommand help exits before provider dispatch", async () => 
       "timing",
     ];
     for (const command of commands) {
-      const result = await runCompanion([command, "--help", "--provider", "qwen"], {
+      const result = await runCompanion([command, "--help"], {
         cwd: process.cwd(),
         env,
       });
@@ -2347,7 +2347,8 @@ test("integration: status --wait rejects invalid timeout values", async () => {
       cwd: process.cwd(),
       env: cleanEnv({ CLAUDE_PLUGIN_DATA: pluginData }),
     });
-    assert.equal(invalidWithoutWait.code, 0, invalidWithoutWait.stderr);
+    assert.equal(invalidWithoutWait.code, 1, invalidWithoutWait.stderr);
+    assert.match(JSON.parse(invalidWithoutWait.stdout).error, /--timeout-ms requires --wait/);
 
     const invalidAll = await runCompanion(["status", "--all", "--wait", "--timeout-ms", "abc", "--json"], {
       cwd: process.cwd(),
@@ -2527,6 +2528,57 @@ test("integration: ask writes failed provider decisions for unusable provider ou
       event.status === "failed",
   );
   assert.equal(failures.length, 2, `expected 2 failed provider decisions; got ${failures.length}`);
+});
+
+test("integration: foreground provider attempts persist one identity-complete terminal pair", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const context = createLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    POLYCLI_COMPANION_SESSION_ID: "host-session-foreground",
+  });
+  const result = await runCompanion(
+    ["ask", "--provider", "qwen", "--json", "--run-id", "run-fg-identities", "__reply=IDENTITY_OK"],
+    context,
+  );
+  assert.equal(result.code, 0, result.stderr);
+
+  const events = (await readRunLedgerEvents(context.cwd))
+    .filter((event) => event.runId === "run-fg-identities");
+  const started = events.find((event) => event.phase === "attempt_started");
+  const terminal = events.filter((event) => ["attempt_result", "provider_decision"].includes(event.phase));
+  assert.ok(started?.invocationId, JSON.stringify(events, null, 2));
+  assert.ok(started?.attemptId, JSON.stringify(events, null, 2));
+  assert.equal(terminal.length, 2, JSON.stringify(events, null, 2));
+  for (const event of terminal) {
+    assert.equal(event.invocationId, started.invocationId);
+    assert.equal(event.attemptId, started.attemptId);
+    assert.equal(event.providerSessionId, "11111111-1111-1111-1111-111111111111");
+    assert.equal(event.hostSessionId, undefined, "host session identity must not be projected as provider identity");
+  }
+});
+
+test("integration: foreground post-provider exceptions still persist a failed terminal pair", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const context = createLedgerContext(t, { QWEN_CLI_BIN: fake.bin });
+  fs.mkdirSync(resolveTimingHistoryFile(context.cwd), { recursive: true, mode: 0o700 });
+
+  const result = await runCompanion(
+    ["ask", "--provider", "qwen", "--json", "--run-id", "run-fg-exception", "__reply=UNPUBLISHED"],
+    context,
+  );
+  assert.notEqual(result.code, 0);
+
+  const events = (await readRunLedgerEvents(context.cwd))
+    .filter((event) => event.runId === "run-fg-exception");
+  const terminal = events.filter((event) => ["attempt_result", "provider_decision"].includes(event.phase));
+  assert.equal(terminal.length, 2, JSON.stringify(events, null, 2));
+  assert.equal(terminal.every((event) => event.status === "failed"), true);
+  assert.ok(terminal[0].invocationId);
+  assert.ok(terminal[0].attemptId);
+  assert.equal(terminal[1].invocationId, terminal[0].invocationId);
+  assert.equal(terminal[1].attemptId, terminal[0].attemptId);
 });
 
 test("integration: review with no changes writes no_changes skipped decision", async (t) => {
@@ -2792,7 +2844,15 @@ test("integration: background rescue with --run-id writes job_started + attempt_
   for (const event of workerEvents) {
     assert.equal(event.jobId, started.job.jobId, `event ${event.phase} jobId mismatch`);
     assert.equal(event.hostSurface, parentHostSurface, `event ${event.phase} should match parent hostSurface`);
+    assert.equal(event.invocationId, started.job.invocationId, `event ${event.phase} invocationId mismatch`);
+    assert.equal(event.attemptId, started.job.attemptId, `event ${event.phase} attemptId mismatch`);
   }
+  assert.ok(started.job.invocationId);
+  assert.ok(started.job.attemptId);
+  assert.equal(started.job.providerSessionId, null);
+  assert.equal(finalStatus.job.invocationId, started.job.invocationId);
+  assert.equal(finalStatus.job.attemptId, started.job.attemptId);
+  assert.equal(finalStatus.job.providerSessionId, "11111111-1111-1111-1111-111111111111");
 });
 
 test("integration: background status stays active until terminal ledger writes are durable", async (t) => {

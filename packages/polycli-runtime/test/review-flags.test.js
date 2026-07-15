@@ -96,3 +96,29 @@ test("stop-review gate only permits providers with enforced runtime constraints"
   );
   assert.deepEqual(bySafety.unsupported, ["agy"]);
 });
+
+test("review safety is explicit and consistent with review and stop-gate support", () => {
+  const bySafety = { enforced: [], prompt_only: [], unsupported: [] };
+
+  for (const [provider, entry] of Object.entries(REVIEW_FLAG_EXPECTATIONS)) {
+    assert.match(entry.reviewSafety, /^(enforced|prompt_only|unsupported)$/, provider);
+    bySafety[entry.reviewSafety].push(provider);
+    assert.equal(
+      Boolean(entry.reviewUnsupported),
+      entry.reviewSafety === "unsupported",
+      `${provider} reviewUnsupported agrees with reviewSafety`,
+    );
+    assert.equal(
+      entry.stopReviewGateSafety,
+      entry.reviewSafety,
+      `${provider} stopReviewGateSafety agrees with reviewSafety`,
+    );
+  }
+
+  assert.deepEqual(
+    bySafety.enforced.sort(),
+    ["claude", "cmd", "copilot", "gemini", "grok", "opencode", "pi", "qwen"],
+  );
+  assert.deepEqual(bySafety.prompt_only.sort(), ["kimi", "minimax"]);
+  assert.deepEqual(bySafety.unsupported, ["agy"]);
+});

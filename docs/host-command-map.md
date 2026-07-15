@@ -1,6 +1,6 @@
 # Host Command Map
 
-polycli ships four host plugins plus an optional standalone Terminal CLI. They expose the same twelve capabilities, but each host's invocation surface is shaped by what the host can express — slash-commands, skill subcommands, tool calls, or a PATH binary. This document is the Rosetta stone.
+polycli ships four host plugins plus an optional standalone Terminal CLI. They expose the same thirteen capabilities, but each host's invocation surface is shaped by what the host can express — slash-commands, skill subcommands, tool calls, or a PATH binary. This document is the Rosetta stone.
 
 If you are switching between hosts, read the first two sections (identity + sample command) and ignore the rest. If you are maintaining a host adapter, read the whole thing.
 
@@ -8,7 +8,7 @@ If you are switching between hosts, read the first two sections (identity + samp
 
 | host plugin          | host           | invocation style                      | example                                      |
 |----------------------|----------------|---------------------------------------|----------------------------------------------|
-| `polycli`            | Claude Code    | 12 slash commands                     | `/polycli:health`                            |
+| `polycli`            | Claude Code    | 13 slash commands                     | `/polycli:health`                            |
 | `polycli-codex`      | Codex          | 1 installed skill with subcommands    | `Choose Polycli with @, then ask it to run: health` |
 | `polycli-copilot`    | GitHub Copilot CLI | skill with subcommands (top-level) | `polycli health`                             |
 | `polycli-opencode`   | OpenCode       | 2 tool functions                      | `polycli_run(["health", "--json"])`          |
@@ -24,6 +24,7 @@ All commands take the same flags regardless of host (see `node polycli-companion
 
 | capability            | Claude Code (`polycli`)               | Codex (`polycli-codex`)                     | Copilot (`polycli-copilot`) | OpenCode (`polycli-opencode`)                                  | Terminal CLI (`@bbingz/polycli`)        |
 |-----------------------|---------------------------------------|---------------------------------------------|------------------------------|----------------------------------------------------------------|------------------------------------------|
+| agent-context         | `/polycli:agent-context --json`       | `Choose Polycli with @, then ask it to run: agent-context --json` | `polycli agent-context --json` | `polycli_run(["agent-context", "--json"])`                  | `polycli agent-context --json`           |
 | setup                 | `/polycli:setup`                      | `Choose Polycli with @, then ask it to run: setup` | `polycli setup`              | `polycli_run(["setup"])`                                       | `polycli setup`                          |
 | health                | `/polycli:health`                     | `Choose Polycli with @, then ask it to run: health` | `polycli health`             | `polycli_run(["health"])`                                      | `polycli health`                         |
 | ask                   | `/polycli:ask`                        | `Choose Polycli with @, then ask it to run: ask` | `polycli ask`                | `polycli_run(["ask", ...])`                                    | `polycli ask ...`                        |
@@ -40,6 +41,8 @@ All commands take the same flags regardless of host (see `node polycli-companion
 Notes:
 
 - Anywhere a cell shows `...`, pass the same flags you would to the raw CLI: `--provider <p>`, `--json`, `--background`, `<prompt>`, etc. The argument grammar does not change between hosts.
+- Operational commands keep legacy `--json` as the host default; callers may opt into `--json-v2`. Job control accepts `--job id:<id>|prefix:<prefix>|latest|latest-active|latest-terminal`, typed `status --wait --for <state>`, and redacted incremental observation through `debug tail --after <event-id> --limit <n> [--wait]`.
+- `agent-context --json` is offline discovery. It reads the installed static contract and does not probe provider availability, inspect authentication, or connect to a background service.
 - Provider `agy` supports `setup`, `health`, `ask`, `rescue`, `status`, `result`, `cancel`, `timing`, and `debug`. `review` and `adversarial-review` are unsupported because `agy --mode plan` is not a verified non-interactive hard read-only mode.
 - OpenCode has two tool functions. `polycli_run` is the generic one accepting `argv: string[]`. `polycli_timing` is a convenience wrapper that takes `{provider?, history?, json?}` for the single most-used read-only command. Everything else must go through `polycli_run`.
 - `polycli tui` is terminal-only. Host plugins continue to use `debug runs/show/explain`; no Claude/Codex/Copilot/OpenCode command is added for the TUI.
@@ -90,7 +93,7 @@ The same four operations, across all four host adapters plus the Terminal CLI.
 
 ## Why the surfaces differ
 
-Claude Code first-classes user-visible slash-commands, so twelve separate command files produce better autocomplete and discoverability. Codex and Copilot express the same capabilities as a skill with an `$ARGUMENTS`-style dispatcher — the subcommand is data, not a separate registered handler. Codex does not register a user slash command for `polycli-codex`; install it from `/plugins` and invoke it as a skill. OpenCode is a tool-calling host, so the natural surface is JSON-schema'd tool functions. See `docs/roadmap.md` Q3 for the deeper question of whether to converge these surfaces; the current answer is "no, document the asymmetry instead."
+Claude Code first-classes user-visible slash-commands, so thirteen separate command files produce better autocomplete and discoverability. Codex and Copilot express the same capabilities as a skill with an `$ARGUMENTS`-style dispatcher — the subcommand is data, not a separate registered handler. Codex does not register a user slash command for `polycli-codex`; install it from `/plugins` and invoke it as a skill. OpenCode is a tool-calling host, so the natural surface is JSON-schema'd tool functions. See `docs/roadmap.md` Q3 for the deeper question of whether to converge these surfaces; the current answer is "no, document the asymmetry instead."
 
 ## When this doc goes stale
 

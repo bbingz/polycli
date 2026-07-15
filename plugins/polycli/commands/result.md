@@ -1,6 +1,6 @@
 ---
 description: Show the stored final output for a finished polycli job in this repository
-argument-hint: '[job-id]'
+argument-hint: '[job-selector] [--job <selector>] [--json|--json-v2]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---

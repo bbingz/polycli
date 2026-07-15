@@ -13,9 +13,31 @@ function parseArgs(argv, config = {}) {
   const valueOptions = new Set(config.valueOptions ?? []);
   const booleanOptions = new Set(config.booleanOptions ?? []);
   const aliasMap = config.aliasMap ?? {};
+  const strict = config.unknownOptionMode === "error" || config.rejectDuplicateOptions === true;
+  const seenOptions = /* @__PURE__ */ new Set();
   const options = {};
   const positionals = [];
   let passthrough = false;
+  function argumentError(argument, message) {
+    const error = new Error(message);
+    error.code = "invalid_argument";
+    error.data = { argument };
+    return error;
+  }
+  function isRegisteredOption(token) {
+    if (token === "--" || !token.startsWith("-") || token === "-") {
+      return false;
+    }
+    const rawKey = token.startsWith("--") ? token.slice(2).split("=", 1)[0] : token[1];
+    const key = token.startsWith("--") && strict ? rawKey : aliasMap[rawKey] ?? rawKey;
+    return booleanOptions.has(key) || valueOptions.has(key);
+  }
+  function rejectDuplicateOption(key, argument) {
+    if (config.rejectDuplicateOptions === true && seenOptions.has(key)) {
+      throw argumentError(argument, `Duplicate option ${argument}`);
+    }
+    seenOptions.add(key);
+  }
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (passthrough) {
@@ -34,17 +56,28 @@ function parseArgs(argv, config = {}) {
       const eqIdx = token.indexOf("=", 2);
       const rawKey = eqIdx >= 0 ? token.slice(2, eqIdx) : token.slice(2);
       const inlineValue = eqIdx >= 0 ? token.slice(eqIdx + 1) : void 0;
-      const key2 = aliasMap[rawKey] ?? rawKey;
+      const key2 = strict ? rawKey : aliasMap[rawKey] ?? rawKey;
       if (booleanOptions.has(key2)) {
+        rejectDuplicateOption(key2, token);
         if (inlineValue === "") {
+          if (strict) {
+            throw argumentError(token, `Invalid boolean value for --${rawKey}`);
+          }
           throw new Error(`Invalid boolean value for --${rawKey}`);
+        }
+        if (strict && inlineValue !== void 0 && inlineValue !== "true" && inlineValue !== "false") {
+          throw argumentError(token, `Invalid boolean value for --${rawKey}`);
         }
         options[key2] = inlineValue === void 0 ? true : inlineValue !== "false";
         continue;
       }
       if (valueOptions.has(key2)) {
+        rejectDuplicateOption(key2, token);
         const nextValue = inlineValue ?? argv[index + 1];
-        if (nextValue === void 0) {
+        if (nextValue === void 0 || strict && inlineValue === void 0 && (nextValue === "--" || isRegisteredOption(nextValue))) {
+          if (strict) {
+            throw argumentError(token, `Missing value for --${rawKey}`);
+          }
           throw new Error(`Missing value for --${rawKey}`);
         }
         options[key2] = nextValue;
@@ -52,6 +85,9 @@ function parseArgs(argv, config = {}) {
           index += 1;
         }
         continue;
+      }
+      if (config.unknownOptionMode === "error") {
+        throw argumentError(token, `Unknown option ${token}`);
       }
       positionals.push(token);
       continue;
@@ -61,7 +97,15 @@ function parseArgs(argv, config = {}) {
     const inlineShortValue = shortToken.length > 1 ? shortToken.slice(1) : void 0;
     const key = aliasMap[shortKey] ?? shortKey;
     if (booleanOptions.has(key)) {
+      rejectDuplicateOption(key, token);
       if (inlineShortValue !== void 0) {
+        if (strict && (inlineShortValue === "=true" || inlineShortValue === "=false")) {
+          options[key] = inlineShortValue === "=true";
+          continue;
+        }
+        if (strict) {
+          throw argumentError(token, `Invalid boolean value for -${shortKey}`);
+        }
         positionals.push(token);
         continue;
       }
@@ -69,8 +113,12 @@ function parseArgs(argv, config = {}) {
       continue;
     }
     if (valueOptions.has(key)) {
+      rejectDuplicateOption(key, token);
       const nextValue = inlineShortValue ?? argv[index + 1];
-      if (nextValue === void 0) {
+      if (nextValue === void 0 || strict && inlineShortValue === void 0 && (nextValue === "--" || isRegisteredOption(nextValue))) {
+        if (strict) {
+          throw argumentError(token, `Missing value for -${shortKey}`);
+        }
         throw new Error(`Missing value for -${shortKey}`);
       }
       options[key] = nextValue;
@@ -78,6 +126,9 @@ function parseArgs(argv, config = {}) {
         index += 1;
       }
       continue;
+    }
+    if (config.unknownOptionMode === "error") {
+      throw argumentError(token, `Unknown option ${token}`);
     }
     positionals.push(token);
   }
@@ -653,6 +704,8 @@ function spawnStreamingCommand({
     let settled = false;
     let timer = null;
     let forceTimer = null;
+    let decoderError = null;
+    let terminationRequested = false;
     const signalChild = (signal2) => {
       try {
         if (detached && Number.isInteger(child.pid) && child.pid > 0 && process.platform !== "win32") {
@@ -661,6 +714,16 @@ function spawnStreamingCommand({
         }
         child.kill(signal2);
       } catch {
+      }
+    };
+    const terminateChild = () => {
+      if (terminationRequested) return;
+      terminationRequested = true;
+      signalChild("SIGTERM");
+      if (killGraceMs > 0) {
+        forceTimer = setTimeout(() => {
+          signalChild("SIGKILL");
+        }, killGraceMs);
       }
     };
     const cleanup = () => {
@@ -681,39 +744,37 @@ function spawnStreamingCommand({
       cleanup();
       resolve(result);
     };
-    const finishDecoderError = (error) => {
-      finish({
-        ok: false,
-        status: null,
-        signal: null,
-        timedOut,
-        stdout,
-        stderr,
-        error: error.message
-      });
+    const decoderFailureResult = (status, signalName) => ({
+      ok: false,
+      status,
+      signal: signalName,
+      timedOut,
+      stdout,
+      stderr,
+      error: decoderError
+    });
+    const handleDecoderError = (error) => {
+      if (decoderError || settled) return;
+      decoderError = String(error?.message ?? error).slice(0, 4096);
+      child.stdout?.off?.("data", handleStdoutData);
+      terminateChild();
     };
     const abortHandler = () => {
       if (settled || aborted) return;
       aborted = true;
-      signalChild("SIGTERM");
-      if (killGraceMs > 0 && !forceTimer) {
-        forceTimer = setTimeout(() => {
-          signalChild("SIGKILL");
-        }, killGraceMs);
-      }
+      terminateChild();
     };
     if (timeout != null) {
       timer = setTimeout(() => {
+        if (settled || timedOut) return;
         timedOut = true;
-        signalChild("SIGTERM");
-        if (killGraceMs > 0) {
-          forceTimer = setTimeout(() => {
-            signalChild("SIGKILL");
-          }, killGraceMs);
-        }
+        terminateChild();
       }, timeout);
     }
     const handleChildError = (error) => {
+      if (decoderError) {
+        return;
+      }
       finish({
         ok: false,
         status: null,
@@ -737,7 +798,7 @@ function spawnStreamingCommand({
       try {
         lines = decoder.push(chunk);
       } catch (error) {
-        finishDecoderError(error);
+        handleDecoderError(error);
         return;
       }
       for (const line of lines) {
@@ -759,11 +820,16 @@ function spawnStreamingCommand({
       }
     };
     const handleChildClose = (status, signalName) => {
+      if (decoderError) {
+        finish(decoderFailureResult(status, signalName));
+        return;
+      }
       let lines;
       try {
         lines = decoder.end();
       } catch (error) {
-        finishDecoderError(error);
+        handleDecoderError(error);
+        finish(decoderFailureResult(status, signalName));
         return;
       }
       for (const line of lines) {
@@ -4654,6 +4720,138 @@ function attachPromptTiming(result, {
   };
 }
 
+// packages/polycli-runtime/src/review-flags.js
+var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
+  claude: Object.freeze({
+    expectFlags: Object.freeze(["--tools", "--mcp-config", "--strict-mcp-config"]),
+    extraArgTokens: Object.freeze(["--tools", "--mcp-config", "--strict-mcp-config"]),
+    readOnlyOptionKey: "permissionMode",
+    readOnlyValue: "plan",
+    reviewSafety: "enforced",
+    stopReviewGateSafety: "enforced"
+  }),
+  gemini: Object.freeze({
+    expectFlags: Object.freeze(["--approval-mode", "--policy"]),
+    extraArgTokens: Object.freeze(["--extensions", "--allowed-mcp-server-names"]),
+    readOnlyOptionKey: "approvalMode",
+    readOnlyValue: "plan",
+    reviewSafety: "enforced",
+    stopReviewGateSafety: "enforced"
+  }),
+  qwen: Object.freeze({
+    expectFlags: Object.freeze(["--approval-mode", "--exclude-tools", "--max-session-turns"]),
+    // Qwen Code 0.19.6 emits a minimal bare `qwen --help` page.
+    // Supplying one registered option reveals the complete headless option
+    // surface, but that option itself is omitted from the rendered help. Use
+    // complementary, side-effect-free help probes so the drift check verifies
+    // every invocation flag without issuing a model request.
+    probes: Object.freeze([
+      Object.freeze({
+        helpArgs: Object.freeze(["--approval-mode", "plan", "--help"]),
+        expect: Object.freeze(["--exclude-tools", "--max-session-turns"])
+      }),
+      Object.freeze({
+        helpArgs: Object.freeze(["--max-session-turns", "1", "--help"]),
+        expect: Object.freeze(["--approval-mode"])
+      })
+    ]),
+    extraArgTokens: Object.freeze(["--exclude-tools"]),
+    readOnlyOptionKey: "approvalMode",
+    readOnlyValue: "plan",
+    reviewSafety: "enforced",
+    stopReviewGateSafety: "enforced"
+  }),
+  copilot: Object.freeze({
+    expectFlags: Object.freeze([
+      "--excluded-tools",
+      "--allow-all-tools",
+      "--allow-all-paths",
+      "--allow-all-urls",
+      "--no-ask-user"
+    ]),
+    extraArgTokens: Object.freeze(["--excluded-tools"]),
+    readOnlyOptionKeys: Object.freeze(["allowAllTools", "allowAllPaths", "allowAllUrls"]),
+    readOnlyValue: null,
+    reviewSafety: "enforced",
+    stopReviewGateSafety: "enforced"
+  }),
+  opencode: Object.freeze({
+    expectFlags: Object.freeze(["--agent"]),
+    extraArgTokens: Object.freeze(["--agent"]),
+    readOnlyOptionKey: "skipPermissions",
+    readOnlyValue: null,
+    reviewSafety: "enforced",
+    stopReviewGateSafety: "enforced"
+  }),
+  pi: Object.freeze({
+    expectFlags: Object.freeze([
+      "--no-session",
+      "--no-tools",
+      "--no-extensions",
+      "--no-skills",
+      "--no-context-files"
+    ]),
+    extraArgTokens: Object.freeze([
+      "--no-tools",
+      "--no-extensions",
+      "--no-skills",
+      "--no-context-files"
+    ]),
+    readOnlyOptionKey: null,
+    readOnlyValue: null,
+    reviewSafety: "enforced",
+    stopReviewGateSafety: "enforced"
+  }),
+  cmd: Object.freeze({
+    expectFlags: Object.freeze(["--permission-mode"]),
+    extraArgTokens: Object.freeze(["--permission-mode"]),
+    readOnlyOptionKey: "yolo",
+    readOnlyValue: null,
+    reviewSafety: "enforced",
+    stopReviewGateSafety: "enforced"
+  }),
+  kimi: Object.freeze({
+    // No independently verified flag-based no-tool/read-only lever is available for Kimi prompt
+    // mode, so review is prompt-only (extraArgTokens empty, like minimax). expectFlags are the
+    // load-bearing invocation flags the runtime depends on
+    // (-p/--prompt + --output-format), so the drift check warns if kimi-code renames or drops them.
+    expectFlags: Object.freeze(["--prompt", "--output-format"]),
+    extraArgTokens: Object.freeze([]),
+    reviewSafety: "prompt_only",
+    stopReviewGateSafety: "prompt_only"
+  }),
+  agy: Object.freeze({
+    // agy 1.1.2 exposes `--mode plan`, but the non-interactive `-p` path has
+    // no verified hard no-write/no-command guarantee. Keep /review rejected
+    // until that guarantee is independently proven without yolo permissions.
+    expectFlags: Object.freeze(["--mode"]),
+    extraArgTokens: Object.freeze([]),
+    reviewUnsupported: true,
+    reviewSafety: "unsupported",
+    stopReviewGateSafety: "unsupported"
+  }),
+  minimax: Object.freeze({
+    expectFlags: Object.freeze([]),
+    extraArgTokens: Object.freeze([]),
+    probes: Object.freeze([
+      Object.freeze({ helpArgs: Object.freeze(["text", "chat", "--help"]), expect: Object.freeze(["--message"]) }),
+      Object.freeze({ helpArgs: Object.freeze(["--help"]), expect: Object.freeze(["--output", "--non-interactive"]) })
+    ]),
+    reviewSafety: "prompt_only",
+    stopReviewGateSafety: "prompt_only"
+  }),
+  grok: Object.freeze({
+    // grok review enforces read-only via the --permission-mode plan runtimeOption (composes with
+    // the -p one-shot mode, verified). It carries no review extraArgs of its own.
+    expectFlags: Object.freeze(["--permission-mode"]),
+    extraArgTokens: Object.freeze([]),
+    readOnlyOptionKey: "permissionMode",
+    readOnlyValue: "plan",
+    reviewSafety: "enforced",
+    stopReviewGateSafety: "enforced"
+  })
+});
+
 // packages/polycli-runtime/src/registry.js
 var TIMING_SUPPORT = {
   claude: { ttft: true, gen: true, tail: true, tool: false, runtimePersistence: "session" },
@@ -4917,6 +5115,43 @@ function getProviderRuntime(providerId) {
 function listProviderRuntimes() {
   return PROVIDER_IDS.map((providerId) => getProviderRuntime(providerId));
 }
+function describeProviderRuntimes() {
+  return PROVIDER_IDS.map((providerId) => {
+    const runtime = getProviderRuntime(providerId);
+    const timingSupport = getTimingSupport(providerId);
+    const reviewExpectation = REVIEW_FLAG_EXPECTATIONS[providerId];
+    const reviewSupported = reviewExpectation.reviewSafety !== "unsupported";
+    return {
+      id: providerId,
+      runtimeOperations: [...runtime.capabilities.operations],
+      commandSupport: {
+        setup: true,
+        health: true,
+        ask: true,
+        rescue: true,
+        review: reviewSupported,
+        adversarialReview: reviewSupported
+      },
+      capabilities: {
+        streaming: runtime.capabilities.streaming,
+        sessionResume: runtime.capabilities.sessionResume,
+        structuredOutput: runtime.capabilities.structuredOutput,
+        authProbeCost: runtime.capabilities.authProbeCost,
+        runtimePersistence: timingSupport.runtimePersistence,
+        timing: {
+          ttft: timingSupport.ttft,
+          gen: timingSupport.gen,
+          tail: timingSupport.tail,
+          tool: timingSupport.tool
+        }
+      },
+      reviewSafety: {
+        mode: reviewExpectation.reviewSafety,
+        stopReviewGate: reviewExpectation.stopReviewGateSafety
+      }
+    };
+  });
+}
 function applyModelFallback(result, { model = null, defaultModel = null } = {}) {
   if (result.model) return result;
   const fallbackModel = model || defaultModel;
@@ -4979,126 +5214,1197 @@ async function runProviderPromptStreaming({
   });
 }
 
-// packages/polycli-runtime/src/review-flags.js
-var REVIEW_FLAG_EXPECTATIONS = Object.freeze({
-  claude: Object.freeze({
-    expectFlags: Object.freeze(["--tools", "--mcp-config", "--strict-mcp-config"]),
-    extraArgTokens: Object.freeze(["--tools", "--mcp-config", "--strict-mcp-config"]),
-    readOnlyOptionKey: "permissionMode",
-    readOnlyValue: "plan",
-    stopReviewGateSafety: "enforced"
-  }),
-  gemini: Object.freeze({
-    expectFlags: Object.freeze(["--approval-mode", "--policy"]),
-    extraArgTokens: Object.freeze(["--extensions", "--allowed-mcp-server-names"]),
-    readOnlyOptionKey: "approvalMode",
-    readOnlyValue: "plan",
-    stopReviewGateSafety: "enforced"
-  }),
-  qwen: Object.freeze({
-    expectFlags: Object.freeze(["--approval-mode", "--exclude-tools", "--max-session-turns"]),
-    // Qwen Code 0.19.6 emits a minimal bare `qwen --help` page.
-    // Supplying one registered option reveals the complete headless option
-    // surface, but that option itself is omitted from the rendered help. Use
-    // complementary, side-effect-free help probes so the drift check verifies
-    // every invocation flag without issuing a model request.
-    probes: Object.freeze([
-      Object.freeze({
-        helpArgs: Object.freeze(["--approval-mode", "plan", "--help"]),
-        expect: Object.freeze(["--exclude-tools", "--max-session-turns"])
-      }),
-      Object.freeze({
-        helpArgs: Object.freeze(["--max-session-turns", "1", "--help"]),
-        expect: Object.freeze(["--approval-mode"])
-      })
-    ]),
-    extraArgTokens: Object.freeze(["--exclude-tools"]),
-    readOnlyOptionKey: "approvalMode",
-    readOnlyValue: "plan",
-    stopReviewGateSafety: "enforced"
-  }),
-  copilot: Object.freeze({
-    expectFlags: Object.freeze([
-      "--excluded-tools",
-      "--allow-all-tools",
-      "--allow-all-paths",
-      "--allow-all-urls",
-      "--no-ask-user"
-    ]),
-    extraArgTokens: Object.freeze(["--excluded-tools"]),
-    readOnlyOptionKeys: Object.freeze(["allowAllTools", "allowAllPaths", "allowAllUrls"]),
-    readOnlyValue: null,
-    stopReviewGateSafety: "enforced"
-  }),
-  opencode: Object.freeze({
-    expectFlags: Object.freeze(["--agent"]),
-    extraArgTokens: Object.freeze(["--agent"]),
-    readOnlyOptionKey: "skipPermissions",
-    readOnlyValue: null,
-    stopReviewGateSafety: "enforced"
-  }),
-  pi: Object.freeze({
-    expectFlags: Object.freeze([
-      "--no-session",
-      "--no-tools",
-      "--no-extensions",
-      "--no-skills",
-      "--no-context-files"
-    ]),
-    extraArgTokens: Object.freeze([
-      "--no-tools",
-      "--no-extensions",
-      "--no-skills",
-      "--no-context-files"
-    ]),
-    readOnlyOptionKey: null,
-    readOnlyValue: null,
-    stopReviewGateSafety: "enforced"
-  }),
-  cmd: Object.freeze({
-    expectFlags: Object.freeze(["--permission-mode"]),
-    extraArgTokens: Object.freeze(["--permission-mode"]),
-    readOnlyOptionKey: "yolo",
-    readOnlyValue: null,
-    stopReviewGateSafety: "enforced"
-  }),
-  kimi: Object.freeze({
-    // No independently verified flag-based no-tool/read-only lever is available for Kimi prompt
-    // mode, so review is prompt-only (extraArgTokens empty, like minimax). expectFlags are the
-    // load-bearing invocation flags the runtime depends on
-    // (-p/--prompt + --output-format), so the drift check warns if kimi-code renames or drops them.
-    expectFlags: Object.freeze(["--prompt", "--output-format"]),
-    extraArgTokens: Object.freeze([]),
-    stopReviewGateSafety: "prompt_only"
-  }),
-  agy: Object.freeze({
-    // agy 1.1.2 exposes `--mode plan`, but the non-interactive `-p` path has
-    // no verified hard no-write/no-command guarantee. Keep /review rejected
-    // until that guarantee is independently proven without yolo permissions.
-    expectFlags: Object.freeze(["--mode"]),
-    extraArgTokens: Object.freeze([]),
-    reviewUnsupported: true,
-    stopReviewGateSafety: "unsupported"
-  }),
-  minimax: Object.freeze({
-    expectFlags: Object.freeze([]),
-    extraArgTokens: Object.freeze([]),
-    probes: Object.freeze([
-      Object.freeze({ helpArgs: Object.freeze(["text", "chat", "--help"]), expect: Object.freeze(["--message"]) }),
-      Object.freeze({ helpArgs: Object.freeze(["--help"]), expect: Object.freeze(["--output", "--non-interactive"]) })
-    ]),
-    stopReviewGateSafety: "prompt_only"
-  }),
-  grok: Object.freeze({
-    // grok review enforces read-only via the --permission-mode plan runtimeOption (composes with
-    // the -p one-shot mode, verified). It carries no review extraArgs of its own.
-    expectFlags: Object.freeze(["--permission-mode"]),
-    extraArgTokens: Object.freeze([]),
-    readOnlyOptionKey: "permissionMode",
-    readOnlyValue: "plan",
-    stopReviewGateSafety: "enforced"
-  })
+// plugins/polycli/scripts/lib/command-registry.mjs
+var COMMAND_SURFACE_VERSION = 1;
+var SHARED_SURFACES = Object.freeze([
+  "claude-plugin",
+  "codex-skill",
+  "copilot-skill",
+  "opencode-plugin",
+  "terminal"
+]);
+var TERMINAL_SURFACE = Object.freeze(["terminal"]);
+var INTERNAL_SURFACE = Object.freeze(["internal"]);
+function deepFreeze(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+}
+function option(name, type, description, extras = {}) {
+  const aliases = extras.aliases ?? [];
+  const valueName = extras.valueName ?? name;
+  const forms = extras.forms ?? [
+    type === "boolean" ? `--${name}` : `--${name} <${valueName}>`,
+    ...aliases.map((alias) => type === "boolean" ? `-${alias}` : `-${alias} <${valueName}>`)
+  ];
+  return {
+    name,
+    aliases,
+    type,
+    forms,
+    required: extras.required ?? false,
+    repeatable: extras.repeatable ?? false,
+    default: extras.default ?? null,
+    enumValues: extras.enumValues ?? null,
+    enumSource: extras.enumSource ?? null,
+    description,
+    conflictsWith: extras.conflictsWith ?? [],
+    requires: extras.requires ?? [],
+    sensitive: extras.sensitive ?? false,
+    visibility: extras.visibility ?? "public",
+    minimum: extras.minimum ?? null,
+    maximum: extras.maximum ?? null
+  };
+}
+function positional(name, description, extras = {}) {
+  return {
+    name,
+    description,
+    required: extras.required ?? false,
+    variadic: extras.variadic ?? false,
+    sensitive: extras.sensitive ?? false,
+    role: extras.role ?? "value"
+  };
+}
+var HELP_OPTION = option("help", "boolean", "Show command-specific help.", { aliases: ["h"] });
+var JSON_OPTION = option("json", "boolean", "Emit the legacy JSON contract.");
+var JSON_V2_OPTION = option("json-v2", "boolean", "Emit the versioned JSON envelope contract.", {
+  conflictsWith: ["json"]
 });
+var RUN_ID_OPTION = option("run-id", "string", "Join this invocation to a run correlation id.", { valueName: "id" });
+var V2_RESULT_SCHEMA_BY_COMMAND = Object.freeze({
+  setup: "polycli.result.provider.setup.v2",
+  health: "polycli.result.provider.health.v2",
+  ask: "polycli.result.provider-command.v2",
+  rescue: "polycli.result.provider-command.v2",
+  review: "polycli.result.provider-command.v2",
+  "adversarial-review": "polycli.result.provider-command.v2",
+  status: "polycli.result.job-status-command.v2",
+  result: "polycli.result.job.result.v2",
+  cancel: "polycli.result.job.cancel.v2",
+  timing: "polycli.result.timing.report.v2",
+  "debug.runs": "polycli.result.ledger.run-list.v2",
+  "debug.show": "polycli.result.ledger.run-events.v2",
+  "debug.explain": "polycli.result.ledger.explanation.v2",
+  "debug.tail": "polycli.result.ledger.tail.v2",
+  "sessions.list": "polycli.result.session.list.v2",
+  "sessions.purge": "polycli.result.session.purge.v2"
+});
+function definition({
+  id,
+  path: path9,
+  summary,
+  usage,
+  argumentMode = "options",
+  surfaces = SHARED_SURFACES,
+  dispatchTarget = "companion",
+  visibility = "public",
+  executable = true,
+  defaultSubcommand = null,
+  runTracked = false,
+  effects = {},
+  options = [],
+  positionals = [],
+  constraints = [],
+  examples = [],
+  outputs = null,
+  errors = [],
+  exitCodes = [0, 1]
+}) {
+  const resolvedOutputs = outputs && V2_RESULT_SCHEMA_BY_COMMAND[id] ? { ...outputs, jsonV2: V2_RESULT_SCHEMA_BY_COMMAND[id] } : outputs;
+  const globalOptions = visibility === "public" ? [HELP_OPTION] : [];
+  if (resolvedOutputs?.jsonV1) {
+    globalOptions.push(resolvedOutputs?.jsonV2 ? { ...JSON_OPTION, conflictsWith: ["json-v2"] } : JSON_OPTION);
+  }
+  if (resolvedOutputs?.jsonV2) globalOptions.push(JSON_V2_OPTION);
+  if (runTracked) globalOptions.push(RUN_ID_OPTION);
+  return {
+    id,
+    path: path9,
+    aliases: [],
+    visibility,
+    surfaces,
+    dispatchTarget,
+    executable,
+    defaultSubcommand,
+    summary,
+    usage,
+    argumentMode,
+    runTracked,
+    effects: {
+      providerInvocation: false,
+      readsWorkspace: false,
+      writesLocalState: false,
+      destructive: false,
+      ...effects
+    },
+    options: [...globalOptions, ...options],
+    positionals,
+    constraints,
+    examples,
+    outputs: resolvedOutputs,
+    errors,
+    exitCodes
+  };
+}
+var LEGACY_OBJECT_OUTPUT = Object.freeze({
+  text: "text.v1",
+  jsonV1: "legacy.object.v1",
+  jsonV2: null
+});
+var LEGACY_ARRAY_OUTPUT = Object.freeze({
+  text: "text.v1",
+  jsonV1: "legacy.array.v1",
+  jsonV2: null
+});
+var AGENT_CONTEXT_OUTPUT = Object.freeze({
+  text: "text.v1",
+  jsonV1: "polycli.agent-context.v1",
+  jsonV2: null
+});
+var PROVIDER_OPTION = option("provider", "string", "Provider id; may also be the first positional.", {
+  enumSource: "providers",
+  valueName: "provider"
+});
+var MODEL_OPTION = option("model", "string", "Override the provider model.", {
+  aliases: ["m"],
+  valueName: "model"
+});
+var BACKGROUND_OPTION = option("background", "boolean", "Launch a durable background job.", {
+  conflictsWith: ["wait"]
+});
+var WAIT_OPTION = option("wait", "boolean", "Run in the foreground or wait for a selected job.", {
+  conflictsWith: ["background"]
+});
+var PROMPT_OPTIONS = [
+  PROVIDER_OPTION,
+  MODEL_OPTION,
+  BACKGROUND_OPTION,
+  WAIT_OPTION,
+  option("resume-last", "boolean", "Resume the provider's latest session where supported.", {
+    conflictsWith: ["resume", "fresh"]
+  }),
+  option("fresh", "boolean", "Force a fresh provider session where supported.", {
+    conflictsWith: ["resume", "resume-last"]
+  }),
+  option("write", "boolean", "Allow provider write mode where explicitly supported."),
+  option("resume", "string", "Resume an explicit provider session.", {
+    valueName: "session-id",
+    conflictsWith: ["resume-last", "fresh"]
+  }),
+  option("effort", "enum", "Provider reasoning effort.", {
+    enumValues: ["low", "medium", "high"],
+    valueName: "level"
+  })
+];
+var REVIEW_OPTIONS = [
+  PROVIDER_OPTION,
+  MODEL_OPTION,
+  BACKGROUND_OPTION,
+  WAIT_OPTION,
+  option("base", "string", "Base revision for branch review.", { valueName: "ref" }),
+  option("scope", "enum", "Diff scope.", {
+    enumValues: ["auto", "staged", "unstaged", "working-tree", "branch"],
+    valueName: "scope"
+  }),
+  option("max-diff-bytes", "integer", "Maximum diff bytes included in the review prompt.", { valueName: "n", minimum: 0 })
+];
+var COMMON_ERRORS = ["invalid_argument", "unknown_command", "unknown_subcommand", "internal_error"];
+var COMMAND_DEFINITIONS = deepFreeze([
+  definition({
+    id: "agent-context",
+    path: ["agent-context"],
+    summary: "Describe the installed Polycli command and provider contract without probes.",
+    usage: "polycli agent-context [--json]",
+    effects: {},
+    options: [],
+    examples: [{ argv: ["agent-context", "--json"], description: "Emit deterministic machine discovery." }],
+    outputs: AGENT_CONTEXT_OUTPUT,
+    errors: COMMON_ERRORS
+  }),
+  definition({
+    id: "setup",
+    path: ["setup"],
+    summary: "Inspect provider setup and configure the local review gate.",
+    usage: "polycli setup [provider] [options]",
+    argumentMode: "provider-optional",
+    runTracked: true,
+    effects: { providerInvocation: true, readsWorkspace: true, writesLocalState: true },
+    options: [
+      PROVIDER_OPTION,
+      option("probe-auth", "boolean", "Run the provider auth probe."),
+      option("enable-review-gate", "boolean", "Enable the workspace stop-review gate.", { conflictsWith: ["disable-review-gate"] }),
+      option("disable-review-gate", "boolean", "Disable the workspace stop-review gate.", { conflictsWith: ["enable-review-gate"] })
+    ],
+    positionals: [positional("provider", "Optional provider id.", { role: "provider" })],
+    examples: [{ argv: ["setup", "--provider", "qwen", "--json"], description: "Inspect one provider." }],
+    outputs: LEGACY_ARRAY_OUTPUT,
+    errors: [...COMMON_ERRORS, "unknown_provider", "provider_failed", "ledger_persist_failed"]
+  }),
+  definition({
+    id: "health",
+    path: ["health"],
+    summary: "Probe provider availability and a bounded health prompt.",
+    usage: "polycli health [provider] [options]",
+    argumentMode: "provider-optional",
+    runTracked: true,
+    effects: { providerInvocation: true, readsWorkspace: true, writesLocalState: true },
+    options: [
+      PROVIDER_OPTION,
+      MODEL_OPTION,
+      option("timeout-ms", "integer", "Health probe timeout in milliseconds.", { valueName: "ms", minimum: 1 })
+    ],
+    positionals: [positional("provider", "Optional provider id.", { role: "provider" })],
+    examples: [{ argv: ["health", "--provider", "qwen", "--json"], description: "Probe one provider." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: [...COMMON_ERRORS, "unknown_provider", "ledger_persist_failed"],
+    exitCodes: [0, 1, 2]
+  }),
+  ...["ask", "rescue"].map((id) => definition({
+    id,
+    path: [id],
+    summary: id === "ask" ? "Ask one provider a prompt." : "Ask one provider to rescue a difficult task.",
+    usage: `polycli ${id} [provider] [options] <prompt...>`,
+    argumentMode: "provider-prompt-tail",
+    runTracked: true,
+    effects: { providerInvocation: true, readsWorkspace: true, writesLocalState: true },
+    options: PROMPT_OPTIONS,
+    positionals: [
+      positional("provider-or-prompt", "Provider id when --provider is omitted, otherwise prompt text.", { role: "provider-or-prompt", sensitive: true }),
+      positional("prompt", "Prompt text.", { required: true, variadic: true, sensitive: true, role: "prompt" })
+    ],
+    constraints: [{ kind: "conflicts", options: ["background", "wait"] }],
+    examples: [{ argv: [id, "--provider", "qwen", "Reply with only OK"], description: "Run one foreground prompt." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: [...COMMON_ERRORS, "missing_provider", "unknown_provider", "missing_prompt", "provider_failed", "ledger_persist_failed"]
+  })),
+  ...["review", "adversarial-review"].map((id) => definition({
+    id,
+    path: [id],
+    summary: id === "review" ? "Review the selected Git diff read-only." : "Run an adversarial read-only review of the selected Git diff.",
+    usage: `polycli ${id} [provider] [options] [focus...]`,
+    argumentMode: "provider-focus-tail",
+    runTracked: true,
+    effects: { providerInvocation: true, readsWorkspace: true, writesLocalState: true },
+    options: REVIEW_OPTIONS,
+    positionals: [
+      positional("provider-or-focus", "Provider id when --provider is omitted, otherwise review focus.", { role: "provider-or-prompt", sensitive: true }),
+      positional("focus", "Optional review focus.", { variadic: true, sensitive: true, role: "prompt" })
+    ],
+    constraints: [{ kind: "conflicts", options: ["background", "wait"] }],
+    examples: [{ argv: [id, "--provider", "claude", "--scope", "staged"], description: "Review staged changes." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: [...COMMON_ERRORS, "missing_provider", "unknown_provider", "invalid_scope", "provider_failed", "ledger_persist_failed"]
+  })),
+  definition({
+    id: "status",
+    path: ["status"],
+    summary: "Inspect or wait for background jobs in the current workspace.",
+    usage: "polycli status [job-selector] [--job <selector>] [--all] [--wait] [--for <state>] [--timeout-ms <ms>] [--json|--json-v2]",
+    argumentMode: "job-optional",
+    effects: { readsWorkspace: true, writesLocalState: true },
+    options: [
+      option("job", "string", "Typed job selector.", { valueName: "selector", conflictsWith: ["all"] }),
+      option("all", "boolean", "Show all retained jobs.", { conflictsWith: ["job", "for"] }),
+      option("wait", "boolean", "Wait for selected jobs to reach terminal state."),
+      option("for", "enum", "Requested terminal state for a selected wait.", {
+        enumValues: ["terminal", "completed", "failed", "cancelled"],
+        valueName: "state",
+        default: "terminal",
+        requires: ["wait"],
+        conflictsWith: ["all"]
+      }),
+      option("timeout-ms", "integer", "Wait timeout in milliseconds.", { valueName: "ms", requires: ["wait"], minimum: 1 })
+    ],
+    positionals: [positional("job-selector", "Optional legacy exact or unique-prefix selector.", { role: "job" })],
+    examples: [{ argv: ["status", "--job", "latest-active", "--wait", "--for", "terminal", "--json-v2"], description: "Wait for one selected job." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: [...COMMON_ERRORS, "job_not_found", "ambiguous_selector", "no_active_job", "no_completed_job"],
+    exitCodes: [0, 1, 2]
+  }),
+  definition({
+    id: "result",
+    path: ["result"],
+    summary: "Read one terminal background job result.",
+    usage: "polycli result [job-selector] [--job <selector>] [--json|--json-v2]",
+    argumentMode: "job-optional",
+    effects: { readsWorkspace: true, writesLocalState: true },
+    options: [option("job", "string", "Typed job selector.", { valueName: "selector" })],
+    positionals: [positional("job-selector", "Optional legacy exact or unique-prefix selector.", { role: "job" })],
+    examples: [{ argv: ["result", "--job", "latest-terminal", "--json-v2"], description: "Read the latest terminal result." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: [...COMMON_ERRORS, "job_not_found", "ambiguous_selector", "no_completed_job"]
+  }),
+  definition({
+    id: "cancel",
+    path: ["cancel"],
+    summary: "Cancel one active background job safely.",
+    usage: "polycli cancel [job-selector] [--job <selector>] [--json|--json-v2]",
+    argumentMode: "job-optional",
+    effects: { readsWorkspace: true, writesLocalState: true },
+    options: [option("job", "string", "Typed job selector.", { valueName: "selector" })],
+    positionals: [positional("job-selector", "Optional legacy exact or unique-prefix selector.", { role: "job" })],
+    constraints: [{ kind: "targetsActiveJob" }],
+    examples: [{ argv: ["cancel", "--job", "latest-active", "--json-v2"], description: "Cancel the latest active job." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: [...COMMON_ERRORS, "job_not_found", "ambiguous_selector", "no_active_job", "worker_identity_unverified", "cancel_failed"],
+    exitCodes: [0, 1, 4, 5]
+  }),
+  definition({
+    id: "timing",
+    path: ["timing"],
+    summary: "Read timing history and aggregates.",
+    usage: "polycli timing [--provider <provider>] [--history <count|all>] [--all] [--json|--json-v2]",
+    effects: { readsWorkspace: true },
+    options: [
+      PROVIDER_OPTION,
+      option("history", "string", "History count or all.", { valueName: "count|all" }),
+      option("all", "boolean", "Include all provider histories.")
+    ],
+    examples: [{ argv: ["timing", "--provider", "qwen", "--history", "20", "--json"], description: "Read one provider history." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: [...COMMON_ERRORS, "unknown_provider"]
+  }),
+  definition({
+    id: "debug",
+    path: ["debug"],
+    summary: "Inspect the redacted run ledger.",
+    usage: "polycli debug <runs|show|explain|tail> ...",
+    executable: false,
+    defaultSubcommand: "runs",
+    effects: { readsWorkspace: true },
+    examples: [{ argv: ["debug", "runs", "--json"], description: "List recent runs." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: COMMON_ERRORS
+  }),
+  definition({
+    id: "debug.runs",
+    path: ["debug", "runs"],
+    summary: "List recent run summaries.",
+    usage: "polycli debug runs [--json|--json-v2]",
+    effects: { readsWorkspace: true, writesLocalState: true },
+    examples: [{ argv: ["debug", "runs", "--json"], description: "List recent runs." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: COMMON_ERRORS
+  }),
+  ...["show", "explain"].map((subcommand) => definition({
+    id: `debug.${subcommand}`,
+    path: ["debug", subcommand],
+    summary: subcommand === "show" ? "Show redacted events for one run." : "Explain one run deterministically.",
+    usage: `polycli debug ${subcommand} <run-id> [--json|--json-v2]`,
+    effects: { readsWorkspace: true, writesLocalState: true },
+    positionals: [positional("run-id", "Run correlation id.", { required: true, role: "run" })],
+    examples: [{ argv: ["debug", subcommand, "run_abc", "--json"], description: `${subcommand} one run.` }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: [...COMMON_ERRORS, "invalid_argument"]
+  })),
+  definition({
+    id: "debug.tail",
+    path: ["debug", "tail"],
+    summary: "Read bounded redacted ledger events using an opaque cursor.",
+    usage: "polycli debug tail [run-id] [--after <event-id>] [--limit <n>] [--wait] [--timeout-ms <ms>] [--json|--json-v2]",
+    effects: { readsWorkspace: true },
+    options: [
+      option("after", "string", "Return events after this opaque event cursor.", { valueName: "event-id" }),
+      option("limit", "integer", "Maximum events to return (1-500).", { valueName: "n", minimum: 1, maximum: 500 }),
+      option("wait", "boolean", "Wait for an event after the required cursor.", { requires: ["after"] }),
+      option("timeout-ms", "integer", "Wait timeout in milliseconds.", { valueName: "ms", requires: ["wait"], minimum: 1 })
+    ],
+    positionals: [positional("run-id", "Optional run correlation id.", { role: "run" })],
+    examples: [{ argv: ["debug", "tail", "--after", "evt_abc", "--wait", "--json-v2"], description: "Follow one pinned run from an opaque cursor." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: [...COMMON_ERRORS, "cursor_expired"],
+    exitCodes: [0, 1, 2]
+  }),
+  definition({
+    id: "sessions",
+    path: ["sessions"],
+    summary: "Inspect or purge recorded upstream session artifacts.",
+    usage: "polycli sessions <list|purge> ...",
+    executable: false,
+    defaultSubcommand: "list",
+    effects: { readsWorkspace: true },
+    examples: [{ argv: ["sessions", "list", "--json"], description: "List recorded artifacts." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: COMMON_ERRORS
+  }),
+  definition({
+    id: "sessions.list",
+    path: ["sessions", "list"],
+    summary: "List recorded upstream session artifacts.",
+    usage: "polycli sessions list [--json|--json-v2]",
+    effects: { readsWorkspace: true },
+    examples: [{ argv: ["sessions", "list", "--json"], description: "List recorded artifacts." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: COMMON_ERRORS
+  }),
+  definition({
+    id: "sessions.purge",
+    path: ["sessions", "purge"],
+    summary: "Dry-run or explicitly purge recorded upstream session artifacts.",
+    usage: "polycli sessions purge [--confirm] [--json|--json-v2]",
+    effects: { readsWorkspace: true, writesLocalState: true, destructive: true },
+    options: [option("confirm", "boolean", "Delete the validated artifacts instead of dry-running.")],
+    constraints: [{ kind: "confirmationOption", option: "confirm" }],
+    examples: [{ argv: ["sessions", "purge", "--json"], description: "Preview the purge plan." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: COMMON_ERRORS
+  }),
+  definition({
+    id: "tui",
+    path: ["tui"],
+    summary: "Open the read-only terminal run inspector.",
+    usage: "polycli tui [--run-id <id>] [--history <n>]",
+    surfaces: TERMINAL_SURFACE,
+    dispatchTarget: "terminal-wrapper",
+    effects: { readsWorkspace: true },
+    options: [
+      option("run-id", "string", "Select an initial run.", { valueName: "id" }),
+      option("history", "integer", "Limit the run list.", { valueName: "n" }),
+      option("smoke", "boolean", "Render one non-interactive smoke frame."),
+      option("fixture-dir", "string", "Test fixture directory.", { valueName: "path", visibility: "internal" }),
+      option("script-keys", "string", "Test-only scripted input.", { valueName: "keys", visibility: "internal" })
+    ],
+    examples: [{ argv: ["tui", "--history", "20"], description: "Inspect recent runs." }],
+    outputs: { text: "tui.v1", jsonV1: null, jsonV2: null },
+    errors: COMMON_ERRORS
+  }),
+  definition({
+    id: "_stop-review-gate",
+    path: ["_stop-review-gate"],
+    summary: "Internal stop-review gate execution.",
+    usage: "polycli _stop-review-gate ...",
+    visibility: "internal",
+    surfaces: INTERNAL_SURFACE,
+    runTracked: true,
+    effects: { providerInvocation: true, readsWorkspace: true },
+    options: [PROVIDER_OPTION],
+    positionals: [positional("prompt", "Internal gate prompt.", { required: true, variadic: true, sensitive: true })],
+    examples: [{ argv: ["_stop-review-gate"], description: "Internal only." }],
+    outputs: LEGACY_OBJECT_OUTPUT,
+    errors: COMMON_ERRORS
+  }),
+  definition({
+    id: "_job-worker",
+    path: ["_job-worker"],
+    summary: "Internal background job worker.",
+    usage: "polycli _job-worker <config-file>",
+    visibility: "internal",
+    surfaces: INTERNAL_SURFACE,
+    effects: { providerInvocation: true, readsWorkspace: true, writesLocalState: true },
+    positionals: [positional("config-file", "Internal job config path.", { required: true, sensitive: true })],
+    examples: [{ argv: ["_job-worker"], description: "Internal only." }],
+    outputs: { text: "text.v1", jsonV1: null, jsonV2: null },
+    errors: COMMON_ERRORS
+  })
+]);
+var ERROR_DEFINITIONS = deepFreeze([
+  { code: "invalid_argument", exitCode: 1, retryable: false, summary: "An argument violates the registered command contract." },
+  { code: "unknown_command", exitCode: 1, retryable: false, summary: "The top-level command is not registered." },
+  { code: "unknown_subcommand", exitCode: 1, retryable: false, summary: "The nested command is not registered." },
+  { code: "missing_provider", exitCode: 1, retryable: false, summary: "No provider was selected." },
+  { code: "unknown_provider", exitCode: 1, retryable: false, summary: "The provider id is not integrated." },
+  { code: "missing_prompt", exitCode: 1, retryable: false, summary: "A prompt-bearing command has no prompt text." },
+  { code: "invalid_scope", exitCode: 1, retryable: false, summary: "The review scope is invalid." },
+  { code: "job_not_found", exitCode: 1, retryable: false, summary: "The selected job does not exist in this workspace." },
+  { code: "ambiguous_selector", exitCode: 1, retryable: false, summary: "A job selector matches more than one retained job." },
+  { code: "no_active_job", exitCode: 1, retryable: true, summary: "No active job matches the command default." },
+  { code: "no_completed_job", exitCode: 1, retryable: true, summary: "No terminal job matches the command default." },
+  { code: "cursor_expired", exitCode: 1, retryable: false, summary: "The requested ledger cursor is not retained for the selected run." },
+  { code: "provider_failed", exitCode: 1, retryable: true, summary: "The provider path failed without a normal result." },
+  { code: "ledger_persist_failed", exitCode: 1, retryable: true, summary: "A required terminal ledger record could not be persisted." },
+  { code: "worker_identity_unverified", exitCode: 5, retryable: true, summary: "The worker identity could not be verified safely." },
+  { code: "cancel_failed", exitCode: 5, retryable: true, summary: "The worker could not be cancelled safely." },
+  { code: "internal_error", exitCode: 1, retryable: false, summary: "Polycli failed outside a typed domain result." }
+]);
+var NULLABLE_STRING_SCHEMA = { type: ["string", "null"] };
+var PUBLIC_OBJECT_SCHEMA = { type: "object", additionalProperties: true };
+function typedResultSchema(id, type, required = [], properties = {}, { additionalProperties = false } = {}) {
+  return {
+    $id: id,
+    type: "object",
+    required: ["type", ...required],
+    properties: {
+      type: { const: type },
+      ...properties
+    },
+    additionalProperties
+  };
+}
+var V2_RESULT_SCHEMA_IDS = Object.freeze([
+  "polycli.result.provider.setup.v2",
+  "polycli.result.provider.health.v2",
+  "polycli.result.provider.execution.v2",
+  "polycli.result.job.started.v2",
+  "polycli.result.job.status-list.v2",
+  "polycli.result.job.status.v2",
+  "polycli.result.job.result.v2",
+  "polycli.result.job.cancel.v2",
+  "polycli.result.timing.report.v2",
+  "polycli.result.ledger.run-list.v2",
+  "polycli.result.ledger.run-events.v2",
+  "polycli.result.ledger.explanation.v2",
+  "polycli.result.ledger.tail.v2",
+  "polycli.result.session.list.v2",
+  "polycli.result.session.purge.v2"
+]);
+var OUTPUT_SCHEMA_DEFINITIONS = deepFreeze({
+  "text.v1": { $id: "text.v1", type: "string" },
+  "tui.v1": { $id: "tui.v1", type: "string" },
+  "legacy.object.v1": { $id: "legacy.object.v1", type: "object", additionalProperties: true },
+  "legacy.array.v1": { $id: "legacy.array.v1", type: "array", items: { type: "object" } },
+  "polycli.agent-context.v1": {
+    $id: "polycli.agent-context.v1",
+    type: "object",
+    required: ["schemaVersion", "commandSurfaceVersion", "build", "hostSurface", "offline", "commands", "providers", "outputSchemas", "errors", "exitCodes", "features", "compatibility"],
+    properties: {
+      schemaVersion: { const: 1 },
+      commandSurfaceVersion: { type: "integer" },
+      build: { type: "object" },
+      hostSurface: { type: "string" },
+      offline: { const: true },
+      commands: { type: "array" },
+      providers: { type: "array" },
+      outputSchemas: { type: "object" },
+      errors: { type: "array" },
+      exitCodes: { type: "array" },
+      features: { type: "object" },
+      compatibility: { type: "object" }
+    },
+    additionalProperties: false
+  },
+  "polycli.job.v2": {
+    $id: "polycli.job.v2",
+    type: "object",
+    required: ["jobId", "provider", "kind", "status", "model", "defaultModel", "promptPreview", "hostSessionId", "providerSessionId", "createdAt", "updatedAt", "finishedAt", "logFile", "error"],
+    properties: {
+      jobId: NULLABLE_STRING_SCHEMA,
+      provider: NULLABLE_STRING_SCHEMA,
+      kind: NULLABLE_STRING_SCHEMA,
+      status: NULLABLE_STRING_SCHEMA,
+      model: NULLABLE_STRING_SCHEMA,
+      defaultModel: NULLABLE_STRING_SCHEMA,
+      promptPreview: NULLABLE_STRING_SCHEMA,
+      hostSessionId: NULLABLE_STRING_SCHEMA,
+      providerSessionId: NULLABLE_STRING_SCHEMA,
+      createdAt: NULLABLE_STRING_SCHEMA,
+      updatedAt: NULLABLE_STRING_SCHEMA,
+      finishedAt: NULLABLE_STRING_SCHEMA,
+      logFile: NULLABLE_STRING_SCHEMA,
+      error: {}
+    },
+    additionalProperties: false
+  },
+  "polycli.wait.v2": {
+    $id: "polycli.wait.v2",
+    type: ["object", "null"],
+    required: ["for", "satisfied", "timedOut", "terminalMismatch"],
+    properties: {
+      for: { enum: ["terminal", "completed", "failed", "cancelled"] },
+      satisfied: { type: "boolean" },
+      timedOut: { type: "boolean" },
+      terminalMismatch: { type: "boolean" }
+    },
+    additionalProperties: false
+  },
+  "polycli.error.v2": {
+    $id: "polycli.error.v2",
+    type: "object",
+    required: ["code", "message", "data", "nextSteps"],
+    properties: {
+      code: { enum: ERROR_DEFINITIONS.map((entry) => entry.code) },
+      message: { type: "string" },
+      data: { type: "object" },
+      nextSteps: { type: "array", items: { type: "string" } }
+    },
+    additionalProperties: false
+  },
+  "polycli.result.provider.setup.v2": typedResultSchema(
+    "polycli.result.provider.setup.v2",
+    "provider.setup",
+    ["providers"],
+    { providers: { type: "array", items: PUBLIC_OBJECT_SCHEMA } }
+  ),
+  "polycli.result.provider.health.v2": typedResultSchema(
+    "polycli.result.provider.health.v2",
+    "provider.health",
+    ["results", "healthyProviders", "unhealthyProviders", "allHealthy", "anyHealthy"],
+    {
+      results: { type: "array", items: PUBLIC_OBJECT_SCHEMA },
+      healthyProviders: { type: "array" },
+      unhealthyProviders: { type: "array" },
+      allHealthy: { type: "boolean" },
+      anyHealthy: { type: "boolean" }
+    }
+  ),
+  "polycli.result.provider.execution.v2": typedResultSchema(
+    "polycli.result.provider.execution.v2",
+    "provider.execution",
+    ["execution", "providerResult"],
+    {
+      execution: {
+        type: "object",
+        required: ["provider", "kind", "model", "promptPreview"],
+        properties: {
+          provider: NULLABLE_STRING_SCHEMA,
+          kind: NULLABLE_STRING_SCHEMA,
+          model: NULLABLE_STRING_SCHEMA,
+          promptPreview: NULLABLE_STRING_SCHEMA
+        },
+        additionalProperties: false
+      },
+      providerResult: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: true }
+    }
+  ),
+  "polycli.result.job.started.v2": typedResultSchema(
+    "polycli.result.job.started.v2",
+    "job.started",
+    ["job"],
+    { job: { $ref: "polycli.job.v2" } }
+  ),
+  "polycli.result.provider-command.v2": {
+    $id: "polycli.result.provider-command.v2",
+    oneOf: [
+      { $ref: "polycli.result.provider.execution.v2" },
+      { $ref: "polycli.result.job.started.v2" }
+    ]
+  },
+  "polycli.result.job.status-list.v2": typedResultSchema(
+    "polycli.result.job.status-list.v2",
+    "job.status-list",
+    ["totalJobs", "running", "recent", "wait"],
+    {
+      totalJobs: { type: "integer", minimum: 0 },
+      running: { type: "array", items: { $ref: "polycli.job.v2" } },
+      recent: { type: "array", items: { $ref: "polycli.job.v2" } },
+      wait: { $ref: "polycli.wait.v2" }
+    }
+  ),
+  "polycli.result.job.status.v2": typedResultSchema(
+    "polycli.result.job.status.v2",
+    "job.status",
+    ["job", "wait"],
+    { job: { $ref: "polycli.job.v2" }, wait: { $ref: "polycli.wait.v2" } }
+  ),
+  "polycli.result.job-status-command.v2": {
+    $id: "polycli.result.job-status-command.v2",
+    oneOf: [
+      { $ref: "polycli.result.job.status-list.v2" },
+      { $ref: "polycli.result.job.status.v2" }
+    ]
+  },
+  "polycli.result.job.result.v2": typedResultSchema(
+    "polycli.result.job.result.v2",
+    "job.result",
+    ["job", "providerResult"],
+    { job: { $ref: "polycli.job.v2" }, providerResult: PUBLIC_OBJECT_SCHEMA }
+  ),
+  "polycli.result.job.cancel.v2": typedResultSchema(
+    "polycli.result.job.cancel.v2",
+    "job.cancel",
+    ["jobId", "cancelled", "reason"],
+    { jobId: NULLABLE_STRING_SCHEMA, cancelled: { type: "boolean" }, reason: NULLABLE_STRING_SCHEMA }
+  ),
+  "polycli.result.timing.report.v2": typedResultSchema(
+    "polycli.result.timing.report.v2",
+    "timing.report",
+    ["records", "aggregate", "metadata"],
+    { records: { type: "array" }, aggregate: PUBLIC_OBJECT_SCHEMA, metadata: PUBLIC_OBJECT_SCHEMA }
+  ),
+  "polycli.result.ledger.run-list.v2": typedResultSchema(
+    "polycli.result.ledger.run-list.v2",
+    "ledger.run-list",
+    ["runs"],
+    { runs: { type: "array" } }
+  ),
+  "polycli.result.ledger.run-events.v2": typedResultSchema(
+    "polycli.result.ledger.run-events.v2",
+    "ledger.run-events",
+    ["runId", "events"],
+    { runId: NULLABLE_STRING_SCHEMA, events: { type: "array" } }
+  ),
+  "polycli.result.ledger.explanation.v2": typedResultSchema(
+    "polycli.result.ledger.explanation.v2",
+    "ledger.explanation",
+    [],
+    {},
+    { additionalProperties: true }
+  ),
+  "polycli.result.ledger.tail.v2": typedResultSchema(
+    "polycli.result.ledger.tail.v2",
+    "ledger.tail",
+    ["runId", "events", "cursor", "limited", "cursorExpired", "waitTimedOut"],
+    {
+      runId: NULLABLE_STRING_SCHEMA,
+      events: { type: "array" },
+      cursor: {
+        type: "object",
+        required: ["requested", "oldest", "latest", "next"],
+        properties: {
+          requested: NULLABLE_STRING_SCHEMA,
+          oldest: NULLABLE_STRING_SCHEMA,
+          latest: NULLABLE_STRING_SCHEMA,
+          next: NULLABLE_STRING_SCHEMA
+        },
+        additionalProperties: false
+      },
+      limited: { type: "boolean" },
+      cursorExpired: { type: "boolean" },
+      waitTimedOut: { type: "boolean" }
+    }
+  ),
+  "polycli.result.session.list.v2": typedResultSchema(
+    "polycli.result.session.list.v2",
+    "session.list",
+    ["recorded", "nonPurgeable"],
+    { recorded: { type: "array" }, nonPurgeable: { type: "array" } }
+  ),
+  "polycli.result.session.purge.v2": typedResultSchema(
+    "polycli.result.session.purge.v2",
+    "session.purge",
+    ["confirmed", "plan", "nonPurgeable", "summary"],
+    { confirmed: { type: "boolean" }, plan: PUBLIC_OBJECT_SCHEMA, nonPurgeable: { type: "array" }, summary: PUBLIC_OBJECT_SCHEMA }
+  ),
+  "polycli.envelope.v2": {
+    $id: "polycli.envelope.v2",
+    type: "object",
+    required: ["schemaVersion", "id", "ok", "_meta"],
+    properties: {
+      schemaVersion: { const: 2 },
+      id: { type: "string", pattern: "^inv_[a-f0-9]{20}$" },
+      ok: { type: "boolean" },
+      result: { oneOf: V2_RESULT_SCHEMA_IDS.map(($ref) => ({ $ref })) },
+      error: { $ref: "polycli.error.v2" },
+      _meta: {
+        type: "object",
+        required: ["command", "hostSurface", "workspaceSlug", "runId", "jobId"],
+        properties: {
+          command: { type: "array", items: { type: "string" } },
+          hostSurface: NULLABLE_STRING_SCHEMA,
+          workspaceSlug: NULLABLE_STRING_SCHEMA,
+          runId: NULLABLE_STRING_SCHEMA,
+          jobId: NULLABLE_STRING_SCHEMA
+        },
+        additionalProperties: false
+      }
+    },
+    oneOf: [
+      { required: ["result"], not: { required: ["error"] }, properties: { ok: { const: true } } },
+      { required: ["error"], not: { required: ["result"] }, properties: { ok: { const: false } } }
+    ],
+    additionalProperties: false
+  }
+});
+function pathKey(path9) {
+  return Array.isArray(path9) ? path9.join(".") : String(path9);
+}
+function isSurfaceVisible(entry, hostSurface) {
+  if (!hostSurface) return true;
+  if (hostSurface === "unknown") return entry.surfaces.length > 1;
+  return entry.surfaces.includes(hostSurface);
+}
+function listCommandDefinitions({
+  hostSurface = null,
+  includeInternal = false,
+  topLevelOnly = false
+} = {}) {
+  return COMMAND_DEFINITIONS.filter((entry) => {
+    if (!includeInternal && entry.visibility === "internal") return false;
+    if (topLevelOnly && entry.path.length !== 1) return false;
+    if (includeInternal && entry.visibility === "internal") return true;
+    return isSurfaceVisible(entry, hostSurface);
+  });
+}
+function getCommandDefinition(path9) {
+  const key = pathKey(path9);
+  return COMMAND_DEFINITIONS.find((entry) => pathKey(entry.path) === key) ?? null;
+}
+function resolveCommandPath(argv, { hostSurface = null, includeInternal = true } = {}) {
+  if (!Array.isArray(argv) || argv.length === 0) return null;
+  const candidates = listCommandDefinitions({ hostSurface, includeInternal }).filter((entry) => entry.path.every((part, index) => argv[index] === part)).sort((left, right) => right.path.length - left.path.length);
+  let definition2 = candidates[0] ?? null;
+  if (!definition2) return null;
+  let consumed = definition2.path.length;
+  if (!definition2.executable && definition2.defaultSubcommand) {
+    const explicitChild = argv[definition2.path.length];
+    if (explicitChild === "--help" || explicitChild === "-h") {
+      return { definition: definition2, args: argv.slice(consumed) };
+    }
+    if (explicitChild && !explicitChild.startsWith("-")) {
+      return { definition: definition2, args: argv.slice(consumed) };
+    }
+    const defaultDefinition = getCommandDefinition([...definition2.path, definition2.defaultSubcommand]);
+    if (defaultDefinition) definition2 = defaultDefinition;
+  }
+  return { definition: definition2, args: argv.slice(consumed) };
+}
+function levenshtein(left, right) {
+  const a = String(left);
+  const b = String(right);
+  const rows = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i += 1) rows[i][0] = i;
+  for (let j = 0; j <= b.length; j += 1) rows[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      rows[i][j] = Math.min(
+        rows[i - 1][j] + 1,
+        rows[i][j - 1] + 1,
+        rows[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return rows[a.length][b.length];
+}
+function suggestFromCandidates(argument, candidates) {
+  return candidates.map((candidate) => ({ candidate, distance: levenshtein(argument, candidate) })).filter(({ candidate, distance }) => candidate.startsWith(argument) || argument.startsWith(candidate) || distance <= 2).sort((left, right) => left.distance - right.distance || left.candidate.localeCompare(right.candidate)).slice(0, 3).map(({ candidate }) => candidate);
+}
+function commandArgumentError(definition2, message, data = {}, code = "invalid_argument") {
+  const error = new Error(message);
+  error.code = code;
+  error.data = { command: definition2.path, ...data };
+  return error;
+}
+function optionIsEnabled(value) {
+  return value !== void 0 && value !== null && value !== false;
+}
+function validateCommandPositionals(definition2, parsed, enumSources) {
+  const positionals = parsed.positionals;
+  const providers = enumSources.providers ?? [];
+  const explicitProvider = parsed.options.provider ?? null;
+  if (definition2.argumentMode === "provider-optional") {
+    if (positionals.length > 1) {
+      throw commandArgumentError(definition2, "Too many positional arguments.", { arguments: positionals });
+    }
+    const positionalProvider = positionals[0] ?? null;
+    if (positionalProvider && !providers.includes(positionalProvider)) {
+      throw commandArgumentError(
+        definition2,
+        `Unknown provider '${positionalProvider}'.`,
+        { argument: positionalProvider, validValues: providers },
+        "unknown_provider"
+      );
+    }
+    if (definition2.id === "health" && parsed.options.model && !explicitProvider && !positionalProvider) {
+      const error = commandArgumentError(
+        definition2,
+        "--model requires --provider for health; provider model names are not portable.",
+        { argument: "--model", requires: "provider" }
+      );
+      error.legacyCode = "error";
+      throw error;
+    }
+    return;
+  }
+  if (definition2.argumentMode === "provider-prompt-tail" || definition2.argumentMode === "provider-focus-tail") {
+    let tail = positionals;
+    if (!explicitProvider) {
+      if (!providers.includes(positionals[0])) {
+        throw commandArgumentError(
+          definition2,
+          `Missing provider. Pass --provider <${providers.join("|")}> or use one as the first argument.`,
+          { validValues: providers },
+          "missing_provider"
+        );
+      }
+      tail = positionals.slice(1);
+    }
+    if (definition2.argumentMode === "provider-prompt-tail" && !tail.join(" ").trim()) {
+      throw commandArgumentError(
+        definition2,
+        `Missing prompt text for ${definition2.path.join(" ")}.`,
+        {},
+        "missing_prompt"
+      );
+    }
+    return;
+  }
+  if (definition2.argumentMode === "job-optional") {
+    if (parsed.options.job && positionals.length > 0) {
+      throw commandArgumentError(
+        definition2,
+        "Pass either a positional job selector or --job, not both.",
+        { argument: "--job", conflictsWith: "positional job selector" }
+      );
+    }
+    if (positionals.length > 1) {
+      throw commandArgumentError(definition2, "Too many job selectors.", { arguments: positionals });
+    }
+    return;
+  }
+  const variadicIndex = definition2.positionals.findIndex((entry) => entry.variadic);
+  const requiredCount = definition2.positionals.filter((entry) => entry.required && !entry.variadic).length;
+  if (positionals.length < requiredCount) {
+    const missing = definition2.positionals.find((entry, index) => entry.required && positionals[index] == null);
+    throw commandArgumentError(definition2, `Missing positional argument ${missing?.name ?? "value"}.`, {
+      argument: missing?.name ?? null
+    });
+  }
+  if (variadicIndex === -1 && positionals.length > definition2.positionals.length) {
+    throw commandArgumentError(definition2, "Too many positional arguments.", { arguments: positionals });
+  }
+  if (variadicIndex >= 0 && definition2.positionals[variadicIndex].required && positionals.length <= variadicIndex) {
+    const entry = definition2.positionals[variadicIndex];
+    throw commandArgumentError(definition2, `Missing positional argument ${entry.name}.`, { argument: entry.name });
+  }
+}
+function parserConfig(definition2) {
+  const valueOptions = [];
+  const booleanOptions = [];
+  const aliasMap = {};
+  for (const entry of definition2.options) {
+    if (entry.type === "boolean") booleanOptions.push(entry.name);
+    else valueOptions.push(entry.name);
+    for (const alias of entry.aliases) aliasMap[alias] = entry.name;
+  }
+  return {
+    valueOptions,
+    booleanOptions,
+    aliasMap,
+    unknownOptionMode: "error",
+    rejectDuplicateOptions: true
+  };
+}
+function parseCommandArgs(definition2, argv, { enumSources = {} } = {}) {
+  if (!definition2) throw new TypeError("command definition is required");
+  try {
+    const parsed = parseArgs(argv, parserConfig(definition2));
+    const byName = new Map(definition2.options.map((entry) => [entry.name, entry]));
+    for (const entry of definition2.options) {
+      const value = parsed.options[entry.name];
+      if (value === void 0) {
+        if (entry.default !== null) parsed.options[entry.name] = entry.default;
+        if (entry.required) {
+          throw commandArgumentError(definition2, `Missing required option --${entry.name}.`, {
+            argument: `--${entry.name}`
+          });
+        }
+        continue;
+      }
+      if (optionIsEnabled(value)) {
+        for (const conflict of entry.conflictsWith) {
+          if (optionIsEnabled(parsed.options[conflict])) {
+            throw commandArgumentError(
+              definition2,
+              `Options --${entry.name} and --${conflict} cannot be used together.`,
+              { argument: `--${entry.name}`, conflictsWith: `--${conflict}` }
+            );
+          }
+        }
+        for (const requirement of entry.requires) {
+          if (!optionIsEnabled(parsed.options[requirement])) {
+            throw commandArgumentError(
+              definition2,
+              `Option --${entry.name} requires --${requirement}.`,
+              { argument: `--${entry.name}`, requires: `--${requirement}` }
+            );
+          }
+        }
+      }
+      if (entry.type === "integer") {
+        const integerText = String(value);
+        const integer = /^-?\d+$/.test(integerText) ? Number(integerText) : Number.NaN;
+        if (!Number.isSafeInteger(integer) || entry.minimum != null && integer < entry.minimum || entry.maximum != null && integer > entry.maximum) {
+          throw commandArgumentError(
+            definition2,
+            entry.maximum != null ? `Option --${entry.name} must be an integer from ${entry.minimum ?? Number.MIN_SAFE_INTEGER} to ${entry.maximum}.` : `Option --${entry.name} must be ${entry.minimum === 0 ? "a non-negative" : entry.minimum === 1 ? "a positive" : "an"} integer.`,
+            { argument: `--${entry.name}`, value, minimum: entry.minimum, maximum: entry.maximum }
+          );
+        }
+      }
+      if (entry.type === "enum" && !entry.enumValues.includes(value)) {
+        throw commandArgumentError(
+          definition2,
+          `Invalid --${entry.name} value '${value}'. Expected one of: ${entry.enumValues.join(", ")}.`,
+          { argument: `--${entry.name}`, value, validValues: entry.enumValues },
+          entry.name === "scope" ? "invalid_scope" : "invalid_argument"
+        );
+      }
+      if (entry.enumSource) {
+        const values = enumSources[entry.enumSource];
+        if (Array.isArray(values) && !values.includes(value)) {
+          throw commandArgumentError(
+            definition2,
+            `Unknown ${entry.enumSource === "providers" ? "provider" : entry.enumSource} '${value}'.`,
+            { argument: `--${entry.name}`, value, validValues: values },
+            entry.enumSource === "providers" ? "unknown_provider" : "invalid_argument"
+          );
+        }
+      }
+    }
+    for (const constraint of definition2.constraints) {
+      if (constraint.kind !== "conflicts") continue;
+      const enabled = constraint.options.filter((name) => optionIsEnabled(parsed.options[name]));
+      if (enabled.length > 1) {
+        throw commandArgumentError(
+          definition2,
+          `Options ${enabled.map((name) => `--${name}`).join(" and ")} cannot be used together.`,
+          { argument: `--${enabled[0]}`, conflictsWith: enabled.slice(1).map((name) => `--${name}`) }
+        );
+      }
+    }
+    for (const name of Object.keys(parsed.options)) {
+      if (!byName.has(name)) {
+        throw commandArgumentError(definition2, `Unknown parsed option --${name}.`, { argument: `--${name}` });
+      }
+    }
+    if (!parsed.options.help) validateCommandPositionals(definition2, parsed, enumSources);
+    return parsed;
+  } catch (error) {
+    if (error?.code === "invalid_argument" && /^Unknown option\b/.test(error.message)) {
+      const validFlags = definition2.options.filter((entry) => entry.visibility !== "internal").flatMap((entry) => [`--${entry.name}`, ...entry.aliases.map((alias) => `-${alias}`)]);
+      const argument = error.data?.argument ?? "";
+      error.data = {
+        ...error.data || {},
+        command: definition2.path,
+        validFlags,
+        suggestions: suggestFromCandidates(argument, validFlags)
+      };
+      if (error.data.suggestions.length > 0) {
+        error.message = `${error.message} Did you mean ${error.data.suggestions.join(" or ")}?`;
+      }
+    }
+    throw error;
+  }
+}
+function renderOption(entry) {
+  return `  ${entry.forms.join(", ").padEnd(30)} ${entry.description}`.trimEnd();
+}
+function renderRootHelp({ hostSurface = "unknown" } = {}) {
+  const entries = listCommandDefinitions({ hostSurface, topLevelOnly: true });
+  const lines = ["Usage:", "  polycli <command> [options]", "", "Commands:"];
+  for (const entry of entries) {
+    lines.push(`  ${entry.path[0].padEnd(24)} ${entry.summary}`.trimEnd());
+  }
+  lines.push("", "Run `polycli <command> --help` for command-specific usage.");
+  return lines.join("\n");
+}
+function renderCommandHelp(definition2) {
+  if (!definition2) throw new TypeError("command definition is required");
+  const lines = ["Usage:", `  ${definition2.usage}`, "", definition2.summary];
+  const publicOptions = definition2.options.filter((entry) => entry.visibility !== "internal");
+  if (publicOptions.length > 0) {
+    lines.push("", "Options:", ...publicOptions.map(renderOption));
+  }
+  if (definition2.positionals.length > 0) {
+    lines.push("", "Positionals:");
+    for (const entry of definition2.positionals) {
+      const rules = [
+        entry.required ? "required" : "optional",
+        entry.variadic ? "variadic" : null,
+        entry.sensitive ? "sensitive" : null,
+        `role=${entry.role}`
+      ].filter(Boolean).join(", ");
+      lines.push(`  ${entry.name.padEnd(24)} ${entry.description} (${rules})`.trimEnd());
+    }
+  }
+  lines.push(
+    "",
+    "Effects:",
+    `  providerInvocation: ${definition2.effects.providerInvocation ? "yes" : "no"}`,
+    `  readsWorkspace: ${definition2.effects.readsWorkspace ? "yes" : "no"}`,
+    `  writesLocalState: ${definition2.effects.writesLocalState ? "yes" : "no"}`,
+    `  destructive: ${definition2.effects.destructive ? "yes" : "no"}`
+  );
+  if (definition2.argumentMode.includes("prompt") || definition2.argumentMode.includes("focus")) {
+    lines.push("", "Use `--` before prompt text that begins with `-`.");
+  }
+  if (definition2.examples.length > 0) {
+    lines.push("", "Examples:");
+    for (const example of definition2.examples) {
+      lines.push(`  polycli ${example.argv.join(" ")}`);
+      lines.push(`    ${example.description}`);
+    }
+  }
+  return lines.join("\n");
+}
+function assertCommandRegistry({
+  commands = COMMAND_DEFINITIONS,
+  errorDefinitions = ERROR_DEFINITIONS,
+  outputSchemas = OUTPUT_SCHEMA_DEFINITIONS,
+  handlerIds = null
+} = {}) {
+  const ids = /* @__PURE__ */ new Set();
+  const paths = /* @__PURE__ */ new Set();
+  const commandNames = /* @__PURE__ */ new Set();
+  const errors = new Set(errorDefinitions.map((entry) => entry.code));
+  const schemas = new Set(Object.keys(outputSchemas));
+  if (errors.size !== errorDefinitions.length) throw new Error("duplicate error definition");
+  for (const error of errorDefinitions) {
+    if (!error.code || !Number.isInteger(error.exitCode) || error.exitCode < 0 || error.exitCode > 255) {
+      throw new Error(`invalid error definition: ${error.code || "unknown"}`);
+    }
+  }
+  function visitSchema(value, owner) {
+    if (!value || typeof value !== "object") return;
+    if (typeof value.$ref === "string" && !schemas.has(value.$ref)) {
+      throw new Error(`unknown schema reference ${value.$ref} in ${owner}`);
+    }
+    for (const child of Object.values(value)) visitSchema(child, owner);
+  }
+  for (const [schemaId, schema] of Object.entries(outputSchemas)) {
+    if (schema.$id !== schemaId) throw new Error(`schema id mismatch: ${schemaId}`);
+    visitSchema(schema, schemaId);
+  }
+  const tuiOnlyOptions = /* @__PURE__ */ new Set(["smoke", "fixture-dir", "script-keys"]);
+  for (const entry of commands) {
+    const key = pathKey(entry.path);
+    if (ids.has(entry.id)) throw new Error(`duplicate command id: ${entry.id}`);
+    if (paths.has(key)) throw new Error(`duplicate command path: ${key}`);
+    ids.add(entry.id);
+    paths.add(key);
+    for (const name of [entry.path.at(-1), ...entry.aliases]) {
+      const scopedName = `${entry.path.slice(0, -1).join(".")}:${name}`;
+      if (commandNames.has(scopedName)) throw new Error(`duplicate command name or alias: ${key}`);
+      commandNames.add(scopedName);
+    }
+    if (entry.visibility === "public" && (!entry.summary || !entry.usage || entry.examples.length === 0 || entry.surfaces.length === 0 || !entry.outputs || !Object.values(entry.outputs).some(Boolean) || !Array.isArray(entry.errors) || entry.errors.length === 0 || !Array.isArray(entry.exitCodes) || entry.exitCodes.length === 0)) {
+      throw new Error(`incomplete public command definition: ${key}`);
+    }
+    const optionKeys = /* @__PURE__ */ new Set();
+    for (const item of entry.options) {
+      for (const keyName of [item.name, ...item.aliases]) {
+        if (optionKeys.has(keyName)) throw new Error(`duplicate option ${keyName} for ${key}`);
+        optionKeys.add(keyName);
+      }
+      for (const reference of [...item.conflictsWith, ...item.requires]) {
+        if (!entry.options.some((candidate) => candidate.name === reference)) {
+          throw new Error(`unresolved option reference ${reference} for ${key}`);
+        }
+      }
+      if (entry.id !== "tui" && tuiOnlyOptions.has(item.name)) {
+        throw new Error(`terminal-only option ${item.name} on ${key}`);
+      }
+    }
+    for (const alias of entry.aliases) {
+      if (optionKeys.has(alias)) throw new Error(`command alias collides with option ${alias} for ${key}`);
+    }
+    if (entry.runTracked && !entry.options.some((item) => item.name === "run-id")) {
+      throw new Error(`run-tracked command missing run-id: ${key}`);
+    }
+    for (const error of entry.errors) {
+      if (!errors.has(error)) throw new Error(`unknown error ${error} for ${key}`);
+    }
+    for (const schema of Object.values(entry.outputs || {}).filter(Boolean)) {
+      if (!schemas.has(schema)) throw new Error(`unknown output schema ${schema} for ${key}`);
+    }
+    if (entry.visibility === "public" && entry.executable && entry.dispatchTarget === "companion" && entry.id !== "agent-context" && entry.outputs?.jsonV1 && !entry.outputs?.jsonV2) {
+      throw new Error(`operational command missing JSON v2 schema: ${key}`);
+    }
+    if (entry.effects.destructive && !entry.constraints.some((item) => item.kind === "confirmationOption")) {
+      throw new Error(`destructive command missing confirmation constraint: ${key}`);
+    }
+  }
+  if (handlerIds) {
+    const registered = commands.filter((entry) => entry.executable && entry.dispatchTarget === "companion").map((entry) => entry.id).sort();
+    const bound = [...handlerIds].sort();
+    if (JSON.stringify(registered) !== JSON.stringify(bound)) {
+      throw new Error(`handler/registry mismatch: registered=${registered.join(",")} handlers=${bound.join(",")}`);
+    }
+  }
+  return true;
+}
+assertCommandRegistry();
 
 // plugins/polycli/scripts/lib/job-control.mjs
 import fs6 from "node:fs";
@@ -5112,7 +6418,7 @@ import fs3 from "node:fs";
 import os2 from "node:os";
 import path3 from "node:path";
 import { spawnSync as spawnSync2 } from "node:child_process";
-var STATE_VERSION = 1;
+var STATE_VERSION = 2;
 var STATE_FILE_NAME = "state.json";
 var JOBS_DIR_NAME = "jobs";
 var MAX_JOBS = 100;
@@ -5121,6 +6427,7 @@ var PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
 var PRIVATE_DIR_MODE = 448;
 var PRIVATE_FILE_MODE = 384;
 var ACTIVE_STATUSES = /* @__PURE__ */ new Set(["queued", "running"]);
+var TERMINAL_STATUSES = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
 var FALLBACK_STATE_ROOT = path3.join(os2.homedir() || os2.tmpdir(), ".polycli", "state");
 function runCommand2(command, args = [], options = {}) {
   const result = spawnSync2(command, args, {
@@ -5151,6 +6458,63 @@ function defaultState() {
     version: STATE_VERSION,
     config: {},
     jobs: []
+  };
+}
+function hasOwn2(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+function normalizeNullableIdentity(value) {
+  return value == null || value === "" ? null : value;
+}
+function normalizeJob(job) {
+  if (!job || typeof job !== "object" || Array.isArray(job)) return job;
+  const hasExplicitHost = hasOwn2(job, "hostSessionId");
+  const hasExplicitProvider = hasOwn2(job, "providerSessionId");
+  const legacySessionOnly = !hasExplicitHost && !hasExplicitProvider;
+  const active = ACTIVE_STATUSES.has(job.status);
+  const terminal = TERMINAL_STATUSES.has(job.status);
+  const legacySessionId = normalizeNullableIdentity(job.sessionId);
+  const hostSessionId = hasExplicitHost ? normalizeNullableIdentity(job.hostSessionId) : legacySessionOnly && active ? legacySessionId : null;
+  const providerSessionId = hasExplicitProvider ? normalizeNullableIdentity(job.providerSessionId) : legacySessionOnly && terminal ? legacySessionId : null;
+  const sessionId = active ? hostSessionId : terminal ? providerSessionId : legacySessionId;
+  return {
+    ...job,
+    invocationId: normalizeNullableIdentity(job.invocationId),
+    attemptId: normalizeNullableIdentity(job.attemptId),
+    hostSessionId,
+    providerSessionId,
+    sessionId
+  };
+}
+function normalizeProviderResult(result) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const providerSessionId = hasOwn2(result, "providerSessionId") ? normalizeNullableIdentity(result.providerSessionId) : normalizeNullableIdentity(result.sessionId);
+  return {
+    ...result,
+    providerSessionId,
+    sessionId: providerSessionId
+  };
+}
+function normalizeJobEnvelope(envelope) {
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) return envelope;
+  return {
+    ...envelope,
+    ...hasOwn2(envelope, "job") ? { job: normalizeJob(envelope.job) } : {},
+    ...hasOwn2(envelope, "result") ? { result: normalizeProviderResult(envelope.result) } : {}
+  };
+}
+function normalizeJobConfig(config) {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return config;
+  if (!config.runContext || typeof config.runContext !== "object" || Array.isArray(config.runContext)) {
+    return config;
+  }
+  return {
+    ...config,
+    runContext: {
+      ...config.runContext,
+      invocationId: normalizeNullableIdentity(config.runContext.invocationId),
+      attemptId: normalizeNullableIdentity(config.runContext.attemptId)
+    }
   };
 }
 function buildCorruptBackupPath(stateFile) {
@@ -5257,7 +6621,7 @@ function loadState(workspaceRoot) {
     return {
       version: parsed.version ?? STATE_VERSION,
       config: parsed.config && typeof parsed.config === "object" ? parsed.config : {},
-      jobs: parsed.jobs
+      jobs: parsed.jobs.map((job) => normalizeJob(job))
     };
   } catch {
     backupCorruptStateFile(stateFile);
@@ -5266,11 +6630,12 @@ function loadState(workspaceRoot) {
 }
 function saveState(workspaceRoot, state, { preserveJobIds = [] } = {}) {
   ensureStateDir(workspaceRoot);
-  const jobs = pruneJobsForSave(state.jobs, { preserveJobIds });
+  const normalizedJobs = state.jobs.map((job) => normalizeJob(job));
+  const jobs = pruneJobsForSave(normalizedJobs, { preserveJobIds });
   const keptIds = new Set(jobs.map((job) => job.jobId));
   const config = state.config && typeof state.config === "object" ? state.config : {};
   writeJsonAtomic(resolveStateFile(workspaceRoot), { version: STATE_VERSION, config, jobs }, { mode: PRIVATE_FILE_MODE });
-  for (const job of state.jobs) {
+  for (const job of normalizedJobs) {
     if (job && job.jobId && !keptIds.has(job.jobId)) {
       removeJobFile(workspaceRoot, job.jobId);
       removeJobConfigFile(workspaceRoot, job.jobId);
@@ -5300,18 +6665,23 @@ function updateJobAtomically(workspaceRoot, jobId, buildNext) {
     if (!next) {
       return { written: false, job: current, envelope: null };
     }
-    const job = next.job ?? current;
+    const job = normalizeJob(next.job ?? current);
     if (!job) {
       return { written: false, job: null, envelope: next.envelope ?? null };
     }
-    if (Object.prototype.hasOwnProperty.call(next, "envelope")) {
-      writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), next.envelope, { mode: PRIVATE_FILE_MODE });
+    const hasEnvelope = Object.prototype.hasOwnProperty.call(next, "envelope");
+    const hookEnvelope = hasEnvelope ? next.envelope : null;
+    const envelope = hasEnvelope ? normalizeJobEnvelope(hookEnvelope) : null;
+    if (hasEnvelope) {
+      writeJsonAtomic(resolveJobFile(workspaceRoot, jobId), envelope, { mode: PRIVATE_FILE_MODE });
     }
     if (typeof next.beforeStateCommit === "function") {
       next.beforeStateCommit({
         current,
         job,
-        envelope: next.envelope ?? null
+        // Preserve the hook's input contract: it observes the caller's terminal
+        // intent, while persistence and readers use the normalized v2 envelope.
+        envelope: hookEnvelope
       });
     }
     if (index >= 0) {
@@ -5320,7 +6690,7 @@ function updateJobAtomically(workspaceRoot, jobId, buildNext) {
       state.jobs.push(job);
     }
     saveState(workspaceRoot, state, { preserveJobIds: [jobId] });
-    return { written: true, job, envelope: next.envelope ?? null };
+    return { written: true, job, envelope };
   });
 }
 function upsertJob(workspaceRoot, jobPatch) {
@@ -5331,19 +6701,19 @@ function upsertJob(workspaceRoot, jobPatch) {
     const updatedAt = jobPatch.updatedAt || now;
     const index = state.jobs.findIndex((job) => job.jobId === jobPatch.jobId);
     if (index >= 0) {
-      state.jobs[index] = {
+      state.jobs[index] = normalizeJob({
         ...state.jobs[index],
         ...jobPatch,
         updatedAt
-      };
+      });
       savedJob = state.jobs[index];
       return;
     }
-    savedJob = {
+    savedJob = normalizeJob({
       ...jobPatch,
       createdAt,
       updatedAt
-    };
+    });
     state.jobs.push(savedJob);
   });
   return savedJob;
@@ -5373,7 +6743,7 @@ function recordLastUsedProvider(workspaceRoot, provider) {
 }
 function readJobFile(jobFile) {
   try {
-    return JSON.parse(fs3.readFileSync(jobFile, "utf8"));
+    return normalizeJobEnvelope(JSON.parse(fs3.readFileSync(jobFile, "utf8")));
   } catch {
     return null;
   }
@@ -5386,12 +6756,12 @@ function removeJobFile(workspaceRoot, jobId) {
 }
 function writeJobConfigFile(workspaceRoot, jobId, payload) {
   ensureStateDir(workspaceRoot);
-  writeJsonAtomic(resolveJobConfigFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
+  writeJsonAtomic(resolveJobConfigFile(workspaceRoot, jobId), normalizeJobConfig(payload), { mode: PRIVATE_FILE_MODE });
   return resolveJobConfigFile(workspaceRoot, jobId);
 }
 function readJobConfigFile(configFile) {
   try {
-    return JSON.parse(fs3.readFileSync(configFile, "utf8"));
+    return normalizeJobConfig(JSON.parse(fs3.readFileSync(configFile, "utf8")));
   } catch {
     return null;
   }
@@ -5411,6 +6781,7 @@ function removeJobLogFile(workspaceRoot, jobId) {
 
 // plugins/polycli/scripts/lib/run-ledger.mjs
 import { randomUUID as randomUUID2 } from "node:crypto";
+import { stat as fsStat } from "node:fs/promises";
 import path4 from "node:path";
 
 // packages/polycli-utils/src/ndjson.js
@@ -5577,6 +6948,501 @@ function appendNdjsonBatch(filePath, records, {
   }, { timeoutMs, staleMs, pollMs });
 }
 
+// plugins/polycli/scripts/lib/cli-contract.mjs
+var ERROR_CODES = /* @__PURE__ */ new Set([
+  "invalid_argument",
+  "unknown_command",
+  "unknown_subcommand",
+  "missing_provider",
+  "unknown_provider",
+  "missing_prompt",
+  "invalid_scope",
+  "job_not_found",
+  "ambiguous_selector",
+  "no_active_job",
+  "no_completed_job",
+  "cursor_expired",
+  "provider_failed",
+  "ledger_persist_failed",
+  "worker_identity_unverified",
+  "cancel_failed",
+  "internal_error"
+]);
+var ERROR_EXIT_CODES = Object.freeze({
+  worker_identity_unverified: 5,
+  cancel_failed: 5
+});
+var INTERNAL_ERROR_MESSAGE = "An internal Polycli error occurred.";
+var MAX_ERROR_MESSAGE_LENGTH = 500;
+var MAX_ERROR_DATA_STRING_LENGTH = 512;
+var MAX_ERROR_DATA_ARRAY_LENGTH = 20;
+var MAX_ERROR_DATA_KEYS = 30;
+var MAX_ERROR_DATA_DEPTH = 4;
+var MAX_ERROR_DATA_NODES = 200;
+var MAX_NEXT_STEPS = 8;
+var MAX_NEXT_STEP_LENGTH = 300;
+var PRIVATE_ERROR_DATA_KEYS = /* @__PURE__ */ new Set([
+  "__proto__",
+  "cause",
+  "configfile",
+  "configpath",
+  "constructor",
+  "env",
+  "environment",
+  "pid",
+  "stack",
+  "prototype",
+  "runtimeoptions",
+  "workerargv",
+  "workercommand",
+  "workercommandline",
+  "workerpid",
+  "workspaceroot"
+]);
+var PRIVATE_RESULT_KEYS = /* @__PURE__ */ new Set([
+  "argv",
+  "configfile",
+  "configpath",
+  "environment",
+  "env",
+  "pid",
+  "prompt",
+  "runtimeoptions",
+  "stopreviewgateworkspace",
+  "stderr",
+  "stdout",
+  "workerargv",
+  "workercommand",
+  "workercommandline",
+  "workerpid",
+  "workspaceroot",
+  "userprompt"
+]);
+var ACTIVE_JOB_STATUSES = /* @__PURE__ */ new Set(["queued", "running"]);
+var TERMINAL_JOB_STATUSES = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
+var PROVIDER_COMMANDS = /* @__PURE__ */ new Set([
+  "ask",
+  "rescue",
+  "review",
+  "adversarial-review",
+  "_stop-review-gate"
+]);
+function truncate(value, maximum) {
+  return String(value ?? "").slice(0, maximum);
+}
+function sanitizePublicErrorMessage(value, maximum = MAX_ERROR_MESSAGE_LENGTH) {
+  return truncate(value, maximum).replace(/\b[A-Za-z]:[\\/][^\s"'`<>]+/g, "<path:redacted>").replace(/(^|[\s("'`=:[{,;])\/(?!\/)[^\s"'`<>\]}]+/g, "$1<path:redacted>").replace(/\b(TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_KEY|CREDENTIAL)=[^\s]+/gi, "$1=<secret:redacted>");
+}
+function isSecretKey(key) {
+  return /(?:token|secret|password|credential|credentials|api_?key|access_?key|private_?key)$/i.test(String(key));
+}
+function hasOwn3(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+function sanitizeErrorData(value, depth = 0, state = {
+  seen: /* @__PURE__ */ new WeakSet(),
+  remaining: MAX_ERROR_DATA_NODES
+}) {
+  if (state.remaining <= 0) return void 0;
+  state.remaining -= 1;
+  if (value == null || typeof value === "boolean") return value;
+  if (typeof value === "string") return sanitizePublicErrorMessage(value, MAX_ERROR_DATA_STRING_LENGTH);
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "bigint") return truncate(value, MAX_ERROR_DATA_STRING_LENGTH);
+  if (typeof value !== "object" || depth >= MAX_ERROR_DATA_DEPTH) return void 0;
+  if (state.seen.has(value)) return void 0;
+  state.seen.add(value);
+  if (Array.isArray(value)) {
+    const result2 = value.slice(0, MAX_ERROR_DATA_ARRAY_LENGTH).map((entry) => sanitizeErrorData(entry, depth + 1, state)).filter((entry) => entry !== void 0);
+    state.seen.delete(value);
+    return result2;
+  }
+  const result = {};
+  for (const [key, entry] of Object.entries(value).slice(0, MAX_ERROR_DATA_KEYS)) {
+    if (PRIVATE_ERROR_DATA_KEYS.has(key.toLowerCase()) || isSecretKey(key)) continue;
+    const sanitized = sanitizeErrorData(entry, depth + 1, state);
+    if (sanitized !== void 0) result[truncate(key, 128)] = sanitized;
+  }
+  state.seen.delete(value);
+  return result;
+}
+function sanitizeNextSteps(nextSteps) {
+  if (!Array.isArray(nextSteps)) return [];
+  return nextSteps.filter((step) => typeof step === "string" && step.trim() !== "").slice(0, MAX_NEXT_STEPS).map((step) => sanitizePublicErrorMessage(step, MAX_NEXT_STEP_LENGTH));
+}
+function defaultExitCode(code) {
+  return ERROR_EXIT_CODES[code] ?? 1;
+}
+var PolycliCliError = class _PolycliCliError extends Error {
+  constructor({
+    code,
+    message,
+    exitCode,
+    data = {},
+    nextSteps = []
+  } = {}) {
+    const catalogCode = ERROR_CODES.has(code) ? code : "internal_error";
+    const publicMessage = catalogCode === "internal_error" ? INTERNAL_ERROR_MESSAGE : sanitizePublicErrorMessage(message || "Polycli command failed.", MAX_ERROR_MESSAGE_LENGTH);
+    super(publicMessage);
+    Object.defineProperty(this, "name", { value: "PolycliCliError" });
+    this.code = catalogCode;
+    this.exitCode = Number.isInteger(exitCode) && exitCode >= 0 && exitCode <= 255 ? exitCode : defaultExitCode(catalogCode);
+    this.data = sanitizeErrorData(catalogCode === "internal_error" ? {} : data) || {};
+    this.nextSteps = sanitizeNextSteps(catalogCode === "internal_error" ? [] : nextSteps);
+  }
+  static from(error) {
+    if (error instanceof _PolycliCliError) return error;
+    if (error && ERROR_CODES.has(error.code)) {
+      return new _PolycliCliError({
+        code: error.code,
+        message: error.message,
+        exitCode: error.exitCode,
+        data: error.data,
+        nextSteps: error.nextSteps
+      });
+    }
+    return new _PolycliCliError({ code: "internal_error" });
+  }
+  toJSON() {
+    return {
+      code: this.code,
+      message: this.message,
+      exitCode: this.exitCode,
+      data: this.data,
+      nextSteps: this.nextSteps
+    };
+  }
+};
+function nullableIdentity(value) {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+function normalizeV2Job(job = {}) {
+  const source = job && typeof job === "object" && !Array.isArray(job) ? job : {};
+  const hasExplicitHost = hasOwn3(source, "hostSessionId");
+  const hasExplicitProvider = hasOwn3(source, "providerSessionId");
+  const legacyOnly = !hasExplicitHost && !hasExplicitProvider;
+  const legacySessionId = nullableIdentity(source.sessionId);
+  const hostSessionId = hasExplicitHost ? nullableIdentity(source.hostSessionId) : legacyOnly && ACTIVE_JOB_STATUSES.has(source.status) ? legacySessionId : null;
+  const providerSessionId = hasExplicitProvider ? nullableIdentity(source.providerSessionId) : legacyOnly && TERMINAL_JOB_STATUSES.has(source.status) ? legacySessionId : null;
+  return {
+    jobId: nullableIdentity(source.jobId),
+    provider: nullableIdentity(source.provider),
+    kind: nullableIdentity(source.kind),
+    status: nullableIdentity(source.status),
+    model: nullableIdentity(source.model),
+    defaultModel: nullableIdentity(source.defaultModel),
+    promptPreview: source.promptPreview == null ? null : String(source.promptPreview),
+    hostSessionId,
+    providerSessionId,
+    createdAt: nullableIdentity(source.createdAt),
+    updatedAt: nullableIdentity(source.updatedAt),
+    finishedAt: nullableIdentity(source.finishedAt),
+    logFile: nullableIdentity(source.logFile),
+    error: clonePublicResult(source.error, /* @__PURE__ */ new WeakSet(), "error") ?? null
+  };
+}
+function clonePublicResult(value, seen = /* @__PURE__ */ new WeakSet(), keyHint = "") {
+  if (value == null || typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    return /(error|message|detail|warning|reason)/i.test(keyHint) ? sanitizePublicErrorMessage(value, MAX_ERROR_DATA_STRING_LENGTH) : value;
+  }
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "bigint") return String(value);
+  if (typeof value !== "object") return void 0;
+  if (seen.has(value)) return null;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    const result2 = value.map((entry) => clonePublicResult(entry, seen, keyHint)).filter((entry) => entry !== void 0);
+    seen.delete(value);
+    return result2;
+  }
+  const result = {};
+  const explicitProviderSessionId = hasOwn3(value, "providerSessionId");
+  for (const [key, entry] of Object.entries(value)) {
+    const normalizedKey = key.toLowerCase();
+    if (PRIVATE_RESULT_KEYS.has(normalizedKey) || isSecretKey(key)) continue;
+    if (key === "sessionId") {
+      if (!explicitProviderSessionId) {
+        result.providerSessionId = nullableIdentity(entry);
+      }
+      continue;
+    }
+    const cloned = clonePublicResult(entry, seen, key);
+    if (cloned !== void 0) result[key] = cloned;
+  }
+  seen.delete(value);
+  return result;
+}
+function normalizeProviderResult2(result) {
+  return clonePublicResult(result && typeof result === "object" ? result : {}) || {};
+}
+function normalizeCommandId(commandId) {
+  if (Array.isArray(commandId)) {
+    return commandId.map((part) => String(part).trim()).filter(Boolean).join(".");
+  }
+  return String(commandId ?? "").trim().replace(/[\s.]+/g, ".");
+}
+function extractProviderExecution(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const executionSource = source.execution && typeof source.execution === "object" ? source.execution : source;
+  const resultSource = source.providerResult && typeof source.providerResult === "object" ? { ...source.providerResult } : { ...source };
+  for (const key of [
+    "execution",
+    "providerResult",
+    "provider",
+    "kind",
+    "model",
+    "promptPreview",
+    "prompt",
+    "userPrompt",
+    "meta",
+    "job"
+  ]) {
+    delete resultSource[key];
+  }
+  const providerResult = normalizeProviderResult2(resultSource);
+  if (typeof providerResult.ok !== "boolean") {
+    throw new PolycliCliError({
+      code: "internal_error",
+      message: "Provider result is missing its boolean ok field."
+    });
+  }
+  return {
+    type: "provider.execution",
+    execution: {
+      provider: nullableIdentity(executionSource.provider),
+      kind: nullableIdentity(executionSource.kind),
+      model: nullableIdentity(executionSource.model),
+      promptPreview: executionSource.promptPreview == null ? null : String(executionSource.promptPreview)
+    },
+    providerResult
+  };
+}
+function normalizeWaitResult(wait, payload, job) {
+  if (wait === false || wait === null) return null;
+  const source = wait && typeof wait === "object" ? wait : payload?.wait && typeof payload.wait === "object" ? payload.wait : null;
+  const hasLegacyWait = hasOwn3(payload || {}, "waitTimedOut");
+  if (!source && wait !== true && !hasLegacyWait) return null;
+  const forStatus = ["terminal", "completed", "failed", "cancelled"].includes(source?.for) ? source.for : "terminal";
+  const timedOut = source?.timedOut === true || payload?.waitTimedOut === true;
+  const terminalMismatch = source?.terminalMismatch === true;
+  const satisfied = typeof source?.satisfied === "boolean" ? source.satisfied : !timedOut && !terminalMismatch && (forStatus === "terminal" ? TERMINAL_JOB_STATUSES.has(job.status) : job.status === forStatus);
+  return {
+    for: forStatus,
+    satisfied,
+    timedOut,
+    terminalMismatch
+  };
+}
+function normalizeStatusListWait(wait, payload) {
+  if (wait === false || wait === null) return null;
+  const source = wait && typeof wait === "object" ? wait : payload?.wait && typeof payload.wait === "object" ? payload.wait : null;
+  const hasLegacyWait = hasOwn3(payload || {}, "waitTimedOut");
+  if (!source && wait !== true && !hasLegacyWait) return null;
+  const timedOut = source?.timedOut === true || payload?.waitTimedOut === true;
+  return {
+    for: "terminal",
+    satisfied: typeof source?.satisfied === "boolean" ? source.satisfied : !timedOut,
+    timedOut,
+    terminalMismatch: false
+  };
+}
+function normalizeSessionEntries(entries) {
+  return clonePublicResult(Array.isArray(entries) ? entries : []);
+}
+function serializeProviderCommand(commandId, payload, context) {
+  if (context.background === true || payload?.job && context.background !== false) {
+    return {
+      type: "job.started",
+      job: normalizeV2Job(payload.job)
+    };
+  }
+  return extractProviderExecution({
+    ...payload,
+    kind: payload?.kind ?? commandId
+  });
+}
+function serializeV2Result(commandId, legacyPayload, context = {}) {
+  const id = normalizeCommandId(commandId);
+  const payload = legacyPayload && typeof legacyPayload === "object" ? legacyPayload : {};
+  if (id === "setup") {
+    return {
+      type: "provider.setup",
+      providers: clonePublicResult(Array.isArray(legacyPayload) ? legacyPayload : payload.providers) || []
+    };
+  }
+  if (id === "health") {
+    return {
+      type: "provider.health",
+      results: clonePublicResult(payload.results) || [],
+      healthyProviders: clonePublicResult(payload.healthyProviders) || [],
+      unhealthyProviders: clonePublicResult(payload.unhealthyProviders) || [],
+      allHealthy: payload.allHealthy === true,
+      anyHealthy: payload.anyHealthy === true
+    };
+  }
+  if (PROVIDER_COMMANDS.has(id)) {
+    return serializeProviderCommand(id, payload, context);
+  }
+  if (id === "status") {
+    if (payload.job) {
+      const job = normalizeV2Job(payload.job);
+      return {
+        type: "job.status",
+        job,
+        wait: normalizeWaitResult(context.wait, payload, job)
+      };
+    }
+    return {
+      type: "job.status-list",
+      totalJobs: Number.isSafeInteger(payload.totalJobs) ? payload.totalJobs : 0,
+      running: (Array.isArray(payload.running) ? payload.running : []).map(normalizeV2Job),
+      recent: (Array.isArray(payload.recent) ? payload.recent : []).map(normalizeV2Job),
+      wait: normalizeStatusListWait(context.wait, payload)
+    };
+  }
+  if (id === "result") {
+    const source = payload.providerResult && typeof payload.providerResult === "object" ? { ...payload.providerResult } : payload.result && typeof payload.result === "object" ? payload.result : { ...payload };
+    delete source.job;
+    delete source.provider;
+    delete source.kind;
+    delete source.model;
+    delete source.promptPreview;
+    return {
+      type: "job.result",
+      job: normalizeV2Job(payload.job),
+      providerResult: normalizeProviderResult2(source)
+    };
+  }
+  if (id === "cancel") {
+    return {
+      type: "job.cancel",
+      jobId: nullableIdentity(payload.jobId),
+      cancelled: payload.cancelled === true,
+      reason: nullableIdentity(payload.reason) || (payload.cancelled === true ? "cancelled" : "unknown")
+    };
+  }
+  if (id === "timing") {
+    return {
+      type: "timing.report",
+      records: clonePublicResult(payload.records) || [],
+      aggregate: clonePublicResult(payload.aggregate) || {},
+      metadata: clonePublicResult(payload.metadata) || {}
+    };
+  }
+  if (id === "debug.runs") {
+    return {
+      type: "ledger.run-list",
+      runs: clonePublicResult(payload.runs) || []
+    };
+  }
+  if (id === "debug.show") {
+    return {
+      type: "ledger.run-events",
+      runId: nullableIdentity(payload.runId),
+      events: clonePublicResult(payload.events) || []
+    };
+  }
+  if (id === "debug.explain") {
+    const explanation = clonePublicResult(payload) || {};
+    delete explanation.ok;
+    return { type: "ledger.explanation", ...explanation };
+  }
+  if (id === "debug.tail") {
+    return {
+      type: "ledger.tail",
+      runId: nullableIdentity(payload.runId),
+      events: clonePublicResult(payload.events) || [],
+      cursor: clonePublicResult(payload.cursor) || {
+        requested: null,
+        oldest: null,
+        latest: null,
+        next: null
+      },
+      limited: payload.limited === true,
+      cursorExpired: payload.cursorExpired === true,
+      waitTimedOut: payload.waitTimedOut === true
+    };
+  }
+  if (id === "sessions.list") {
+    return {
+      type: "session.list",
+      recorded: normalizeSessionEntries(payload.recorded),
+      nonPurgeable: normalizeSessionEntries(payload.nonPurgeable)
+    };
+  }
+  if (id === "sessions.purge") {
+    return {
+      type: "session.purge",
+      confirmed: payload.confirmed === true,
+      plan: clonePublicResult(payload.plan) || {},
+      nonPurgeable: normalizeSessionEntries(payload.nonPurgeable),
+      summary: clonePublicResult(payload.summary) || {}
+    };
+  }
+  throw new PolycliCliError({
+    code: "unknown_command",
+    message: `Unknown command '${truncate(id, 120)}'.`,
+    data: { command: id }
+  });
+}
+function normalizeCommandPath(command) {
+  if (Array.isArray(command)) {
+    return command.slice(0, 8).map((part) => truncate(part, 128)).filter(Boolean);
+  }
+  return normalizeCommandId(command).split(".").slice(0, 8).map((part) => truncate(part, 128)).filter(Boolean);
+}
+function safeMetaIdentifier(value) {
+  if (typeof value !== "string" || value === "") return null;
+  return truncate(value, 256);
+}
+function assertInvocationId(invocationId) {
+  if (!/^inv_[a-f0-9]{20}$/.test(String(invocationId ?? ""))) {
+    throw new PolycliCliError({
+      code: "invalid_argument",
+      message: "A valid invocation ID is required for JSON v2 output.",
+      data: { field: "invocationId" }
+    });
+  }
+}
+function buildEnvelopeMeta(context, result = null) {
+  const inferredRunId = result && typeof result === "object" ? result.runId : null;
+  const inferredJobId = result && typeof result === "object" ? result.job?.jobId ?? result.jobId : null;
+  return {
+    command: normalizeCommandPath(context.command),
+    hostSurface: safeMetaIdentifier(context.hostSurface),
+    workspaceSlug: safeMetaIdentifier(context.workspaceSlug),
+    runId: safeMetaIdentifier(context.runId ?? inferredRunId),
+    jobId: safeMetaIdentifier(context.jobId ?? inferredJobId)
+  };
+}
+function createV2SuccessEnvelope(result, context = {}) {
+  assertInvocationId(context.invocationId);
+  return {
+    schemaVersion: 2,
+    id: context.invocationId,
+    ok: true,
+    result,
+    _meta: buildEnvelopeMeta(context, result)
+  };
+}
+function createV2ErrorEnvelope(error, context = {}) {
+  assertInvocationId(context.invocationId);
+  const typedError = PolycliCliError.from(error);
+  return {
+    schemaVersion: 2,
+    id: context.invocationId,
+    ok: false,
+    error: {
+      code: typedError.code,
+      message: typedError.message,
+      data: typedError.data,
+      nextSteps: typedError.nextSteps
+    },
+    _meta: buildEnvelopeMeta(context)
+  };
+}
+
 // plugins/polycli/scripts/lib/run-ledger.mjs
 var MAX_LEDGER_BYTES = 2e6;
 var KEEP_RATIO = 0.5;
@@ -5607,11 +7473,14 @@ var VALID_HOST_SURFACES = /* @__PURE__ */ new Set([
   "unknown"
 ]);
 var TERMINAL_LEDGER_PHASES = /* @__PURE__ */ new Set(["attempt_result", "provider_decision"]);
+var DEFAULT_LEDGER_TAIL_LIMIT = 100;
+var MAX_LEDGER_TAIL_LIMIT = 500;
+var DEFAULT_LEDGER_WAIT_TIMEOUT_MS = 3e4;
+var LEDGER_WAIT_POLL_INTERVAL_MS = 500;
 function terminalLedgerRetentionGroupKey(event) {
-  if (!TERMINAL_LEDGER_PHASES.has(event?.phase) || !event.runId || !event.jobId) {
-    return null;
-  }
-  return JSON.stringify([event.runId, event.jobId]);
+  if (!TERMINAL_LEDGER_PHASES.has(event?.phase)) return null;
+  const identity = terminalPairIdentity(event);
+  return identity ? JSON.stringify(identity.key) : null;
 }
 function resolveRunLedgerFile(workspaceRoot) {
   return path4.join(resolveStateDir(workspaceRoot), "run-ledger.ndjson");
@@ -5637,8 +7506,18 @@ function resolveHostSurface(env = process.env, companionUrl = import.meta.url) {
 function stripRunIdArgs(argv) {
   const next = [];
   let runId = null;
+  let passthrough = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (passthrough) {
+      next.push(arg);
+      continue;
+    }
+    if (arg === "--") {
+      passthrough = true;
+      next.push(arg);
+      continue;
+    }
     if (arg === "--run-id") {
       runId = argv[i + 1] || "";
       i += 1;
@@ -5725,12 +7604,26 @@ function redactArgv(argv, { command } = {}) {
   }
   return redacted;
 }
+function redactLedgerError(error) {
+  if (error == null) return null;
+  const message = typeof error === "string" ? error : error.message;
+  if (message == null || message === "") return null;
+  return { message: sanitizePublicErrorMessage(message, 300) };
+}
+function redactTerminalDescriptor(descriptor) {
+  if (!descriptor || typeof descriptor !== "object") return descriptor ?? null;
+  return {
+    ...descriptor,
+    events: Array.isArray(descriptor.events) ? descriptor.events.map((event) => ({ ...event, error: redactLedgerError(event.error) })) : descriptor.events
+  };
+}
 function createRunLedgerEvent(event = {}) {
   const at = event.at || (/* @__PURE__ */ new Date()).toISOString();
   const command = event.command || null;
   const commands = [...new Set(event.commands || (command ? [command] : []))].filter(Boolean).sort();
+  const providerSessionId = Object.prototype.hasOwnProperty.call(event, "providerSessionId") ? event.providerSessionId ?? null : event.sessionId ?? null;
   return {
-    version: 1,
+    version: 2,
     eventId: event.eventId || `evt_${randomUUID2().replaceAll("-", "").slice(0, 20)}`,
     at,
     runId: event.runId || null,
@@ -5740,20 +7633,23 @@ function createRunLedgerEvent(event = {}) {
     provider: event.provider ?? null,
     reason: event.reason ?? null,
     attempt: event.attempt ?? null,
+    invocationId: event.invocationId ?? null,
     jobId: event.jobId ?? null,
+    attemptId: event.attemptId ?? null,
     model: event.model ?? null,
-    sessionId: event.sessionId ?? null,
+    sessionId: providerSessionId,
     sessionArtifactPath: event.sessionArtifactPath ?? null,
     defaultModel: event.defaultModel ?? null,
+    providerSessionId,
     timingRef: event.timingRef ?? null,
-    error: event.error ?? null,
+    error: redactLedgerError(event.error),
     preview: event.preview ?? null,
     stdoutBytes: event.stdoutBytes ?? null,
     stderrBytes: event.stderrBytes ?? null,
     durationMs: event.durationMs ?? null,
     errorCode: event.errorCode ?? null,
     failureClass: event.failureClass ?? null,
-    terminalDescriptor: event.terminalDescriptor ?? null,
+    terminalDescriptor: redactTerminalDescriptor(event.terminalDescriptor),
     pid: event.pid ?? null,
     logFile: event.logFile ?? null,
     argv: event.argv || [],
@@ -5808,6 +7704,7 @@ function canonicalTerminalValue(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalTerminalValue(value[key])]));
 }
 function terminalEventMaterial(event) {
+  const providerSessionId = event.providerSessionId ?? event.sessionId ?? null;
   return {
     phase: event.phase ?? null,
     status: event.status ?? null,
@@ -5817,37 +7714,102 @@ function terminalEventMaterial(event) {
     kind: event.kind ?? null,
     hostSurface: event.hostSurface || "unknown",
     attempt: canonicalTerminalValue(event.attempt),
-    sessionId: event.sessionId ?? null,
+    invocationId: event.invocationId ?? null,
+    attemptId: event.attemptId ?? null,
+    providerSessionId,
+    sessionId: providerSessionId,
     model: event.model ?? null,
     defaultModel: event.defaultModel ?? null,
     timingRef: canonicalTerminalValue(event.timingRef),
-    error: canonicalTerminalValue(event.error),
+    error: canonicalTerminalValue(redactLedgerError(event.error)),
     errorCode: event.errorCode ?? null,
     failureClass: event.failureClass ?? null
+  };
+}
+function legacyTerminalEventMaterial(event) {
+  const material = terminalEventMaterial(event);
+  return {
+    phase: material.phase,
+    status: material.status,
+    reason: material.reason,
+    provider: material.provider,
+    command: material.command,
+    kind: material.kind,
+    hostSurface: material.hostSurface,
+    attempt: material.attempt,
+    sessionId: material.sessionId,
+    model: material.model,
+    defaultModel: material.defaultModel,
+    timingRef: material.timingRef,
+    error: material.error,
+    errorCode: material.errorCode,
+    failureClass: material.failureClass
   };
 }
 function stableTerminalJson(value) {
   return JSON.stringify(canonicalTerminalValue(value));
 }
+function terminalPairIdentity(event) {
+  if (!event?.runId) return null;
+  if (event.jobId) {
+    const hasInvocationId = Boolean(event.invocationId);
+    const hasAttemptId = Boolean(event.attemptId);
+    if (hasInvocationId !== hasAttemptId) return null;
+    return {
+      kind: "job",
+      runId: event.runId,
+      jobId: event.jobId,
+      invocationId: event.invocationId ?? null,
+      attemptId: event.attemptId ?? null,
+      key: ["job", event.runId, event.jobId, event.attemptId ?? null]
+    };
+  }
+  if (event.invocationId && event.attemptId) {
+    return {
+      kind: "attempt",
+      runId: event.runId,
+      jobId: null,
+      invocationId: event.invocationId,
+      attemptId: event.attemptId,
+      key: ["attempt", event.runId, event.invocationId, event.attemptId]
+    };
+  }
+  return null;
+}
 function validateTerminalPair(events) {
   if (!Array.isArray(events) || events.length !== 2) {
     throw new TypeError("terminal ledger pair must contain exactly two events");
   }
-  const [first] = events;
-  const runId = first?.runId;
-  const jobId = first?.jobId;
-  if (!runId || !jobId || events.some((event) => event?.runId !== runId || event?.jobId !== jobId || !TERMINAL_LEDGER_PHASES.has(event?.phase)) || new Set(events.map((event) => event.phase)).size !== TERMINAL_LEDGER_PHASES.size) {
-    throw new TypeError("terminal ledger pair must share runId/jobId and contain attempt_result plus provider_decision");
+  const identity = terminalPairIdentity(events[0]);
+  const identityJson = identity ? JSON.stringify(identity.key) : null;
+  if (!identity || events.some((event) => JSON.stringify(terminalPairIdentity(event)?.key ?? null) !== identityJson || !TERMINAL_LEDGER_PHASES.has(event?.phase)) || new Set(events.map((event) => event.phase)).size !== TERMINAL_LEDGER_PHASES.size) {
+    throw new TypeError("terminal ledger pair must share its run/job/attempt identity and contain attempt_result plus provider_decision");
   }
-  return { runId, jobId };
+  return identity;
+}
+function createV2TerminalLedgerDescriptor(events, identity = validateTerminalPair(events)) {
+  return {
+    version: 2,
+    identityKey: identity.key,
+    runId: identity.runId,
+    jobId: identity.jobId,
+    invocationId: identity.invocationId,
+    attemptId: identity.attemptId,
+    events: events.map((event) => terminalEventMaterial(event)).sort((left, right) => left.phase.localeCompare(right.phase))
+  };
 }
 function createTerminalLedgerDescriptor(events) {
-  const { runId, jobId } = validateTerminalPair(events);
+  const identity = validateTerminalPair(events);
+  return identity.kind === "job" ? createLegacyTerminalLedgerDescriptor(events) : createV2TerminalLedgerDescriptor(events, identity);
+}
+function createLegacyTerminalLedgerDescriptor(events) {
+  const identity = validateTerminalPair(events);
+  if (identity.kind !== "job") return null;
   return {
     version: 1,
-    runId,
-    jobId,
-    events: events.map((event) => terminalEventMaterial(event)).sort((left, right) => left.phase.localeCompare(right.phase))
+    runId: identity.runId,
+    jobId: identity.jobId,
+    events: events.map((event) => legacyTerminalEventMaterial(event)).sort((left, right) => left.phase.localeCompare(right.phase))
   };
 }
 function descriptorsMatch(left, right) {
@@ -5859,7 +7821,7 @@ function legacyTerminalEventMatches(existing, expected) {
   for (const key of ["phase", "status", "reason", "provider", "command", "kind", "hostSurface"]) {
     if (actual[key] !== wanted[key]) return false;
   }
-  for (const key of ["attempt", "sessionId", "model", "defaultModel", "timingRef", "error", "errorCode", "failureClass"]) {
+  for (const key of ["attempt", "invocationId", "attemptId", "providerSessionId", "sessionId", "model", "defaultModel", "timingRef", "error", "errorCode", "failureClass"]) {
     if (actual[key] != null && stableTerminalJson(actual[key]) !== stableTerminalJson(wanted[key])) {
       return false;
     }
@@ -5869,6 +7831,9 @@ function legacyTerminalEventMatches(existing, expected) {
 function terminalEventMatches(existing, expected) {
   if (existing.phase !== expected.phase) return false;
   if (existing.terminalDescriptor != null) {
+    if (existing.terminalDescriptor.version === 1) {
+      return legacyTerminalEventMatches(existing, expected);
+    }
     return descriptorsMatch(existing.terminalDescriptor, expected.terminalDescriptor);
   }
   return legacyTerminalEventMatches(existing, expected);
@@ -5879,14 +7844,36 @@ function terminalPairMatches(existing, expected) {
   }
   const descriptorCount = existing.filter((event) => event.terminalDescriptor != null).length;
   if (descriptorCount !== 0 && descriptorCount !== existing.length) return false;
+  if (descriptorCount === existing.length && existing[0].terminalDescriptor?.version === 1) {
+    const legacyDescriptor = createLegacyTerminalLedgerDescriptor(expected);
+    if (!legacyDescriptor || existing.some((event) => !descriptorsMatch(event.terminalDescriptor, legacyDescriptor))) {
+      return false;
+    }
+  }
   return expected.every((expectedEvent) => existing.some((event) => terminalEventMatches(event, expectedEvent)));
 }
 function buildExpectedTerminalPair(events) {
   const rawExpected = events.map((event) => createRunLedgerEvent(event));
-  const descriptor = createTerminalLedgerDescriptor(rawExpected);
+  const currentDescriptor = createTerminalLedgerDescriptor(rawExpected);
   const supplied = rawExpected.map((event) => event.terminalDescriptor).filter((value) => value != null);
-  if (supplied.length > 0 && (supplied.length !== rawExpected.length || supplied.some((value) => !descriptorsMatch(value, descriptor)))) {
-    throw new Error("Terminal ledger descriptor does not match the terminal event pair");
+  let descriptor = currentDescriptor;
+  if (supplied.length > 0) {
+    if (supplied.length !== rawExpected.length) {
+      throw new Error("Terminal ledger descriptor does not match the terminal event pair");
+    }
+    if (supplied.every((value) => value?.version === 1)) {
+      const legacyDescriptor = createLegacyTerminalLedgerDescriptor(rawExpected);
+      if (!legacyDescriptor || supplied.some((value) => !descriptorsMatch(value, legacyDescriptor))) {
+        throw new Error("Terminal ledger descriptor does not match the terminal event pair");
+      }
+      descriptor = supplied[0];
+    } else {
+      const v2Descriptor = createV2TerminalLedgerDescriptor(rawExpected);
+      if (supplied.some((value) => !descriptorsMatch(value, v2Descriptor))) {
+        throw new Error("Terminal ledger descriptor does not match the terminal event pair");
+      }
+      descriptor = supplied[0];
+    }
   }
   return {
     descriptor,
@@ -5898,29 +7885,224 @@ function ensureRunLedgerTerminalPair(workspaceRoot, events) {
     throw new TypeError("terminal ledger pair must contain exactly two events");
   }
   const { expected, descriptor } = buildExpectedTerminalPair(events);
-  const { runId, jobId } = validateTerminalPair(expected);
-  const existing = readRunLedgerEvents(workspaceRoot).filter((event) => event.runId === runId && event.jobId === jobId && TERMINAL_LEDGER_PHASES.has(event.phase));
+  const identity = validateTerminalPair(expected);
+  const identityJson = JSON.stringify(identity.key);
+  const identityLabel = identity.kind === "job" ? `job ${identity.jobId}` : `attempt ${identity.attemptId}`;
+  const terminalEvents = readRunLedgerEvents(workspaceRoot).filter((event) => TERMINAL_LEDGER_PHASES.has(event.phase));
+  const existing = terminalEvents.filter((event) => {
+    return JSON.stringify(terminalPairIdentity(event)?.key ?? null) === identityJson;
+  });
+  const ambiguousLegacy = identity.kind === "job" && identity.attemptId != null ? terminalEvents.filter((event) => event.runId === identity.runId && event.jobId === identity.jobId && event.invocationId == null && event.attemptId == null) : [];
   if (existing.length === 0) {
+    if (ambiguousLegacy.length > 0) {
+      throw new Error(`Incomplete or conflicting terminal ledger pair for ${identityLabel}`);
+    }
     return appendRunLedgerEvents(workspaceRoot, expected);
   }
   if (existing.length === 1) {
     const [partial] = existing;
     const matchingExpected = expected.find((event) => event.phase === partial.phase);
     if (!matchingExpected || !terminalEventMatches(partial, matchingExpected)) {
-      throw new Error(`Incomplete or conflicting terminal ledger pair for job ${jobId}`);
+      throw new Error(`Incomplete or conflicting terminal ledger pair for ${identityLabel}`);
     }
     const missing = expected.find((event) => event.phase !== partial.phase);
-    const repair = partial.terminalDescriptor == null ? { ...missing, terminalDescriptor: null } : { ...missing, terminalDescriptor: descriptor };
+    let repairDescriptor = descriptor;
+    if (partial.terminalDescriptor == null) {
+      repairDescriptor = null;
+    } else if (partial.terminalDescriptor.version === 1) {
+      const legacyDescriptor = createLegacyTerminalLedgerDescriptor(expected);
+      if (!legacyDescriptor || !descriptorsMatch(partial.terminalDescriptor, legacyDescriptor)) {
+        throw new Error(`Incomplete or conflicting terminal ledger pair for ${identityLabel}`);
+      }
+      repairDescriptor = partial.terminalDescriptor;
+    }
+    const repair = {
+      ...missing,
+      terminalDescriptor: repairDescriptor
+    };
     return [...existing, ...appendRunLedgerEvents(workspaceRoot, [repair])];
   }
   if (!terminalPairMatches(existing, expected)) {
-    throw new Error(`Incomplete or conflicting terminal ledger pair for job ${jobId}`);
+    throw new Error(`Incomplete or conflicting terminal ledger pair for ${identityLabel}`);
   }
   return existing;
 }
-function readRunLedgerEvents(workspaceRoot) {
+function normalizeRunLedgerEvent(event) {
+  if (!event || typeof event !== "object" || Array.isArray(event)) return event;
+  const legacy = event.version !== 2;
+  const providerSessionId = Object.prototype.hasOwnProperty.call(event, "providerSessionId") ? event.providerSessionId ?? null : legacy ? event.sessionId ?? null : null;
+  return {
+    ...event,
+    invocationId: event.invocationId ?? null,
+    attemptId: event.attemptId ?? null,
+    providerSessionId,
+    sessionId: providerSessionId
+  };
+}
+function readRunLedgerEvents(workspaceRoot, { raw = false } = {}) {
   const file = resolveRunLedgerFile(workspaceRoot);
-  return readNdjson(file);
+  const events = readNdjson(file);
+  return raw ? events : events.map((event) => normalizeRunLedgerEvent(event));
+}
+function createRunLedgerTailError(code, message, data) {
+  const error = new Error(message);
+  error.code = code;
+  error.data = data;
+  return error;
+}
+function validateRunLedgerTailOptions(options) {
+  const limit = options.limit ?? DEFAULT_LEDGER_TAIL_LIMIT;
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LEDGER_TAIL_LIMIT) {
+    throw createRunLedgerTailError(
+      "invalid_argument",
+      `--limit must be an integer between 1 and ${MAX_LEDGER_TAIL_LIMIT}`,
+      { argument: "--limit", value: limit, minimum: 1, maximum: MAX_LEDGER_TAIL_LIMIT }
+    );
+  }
+  const wait = options.wait === true;
+  const after = options.after ?? null;
+  if (wait && !after) {
+    throw createRunLedgerTailError(
+      "invalid_argument",
+      "--wait requires --after",
+      { argument: "--wait", requires: ["--after"] }
+    );
+  }
+  if (options.timeoutMs != null && !wait) {
+    throw createRunLedgerTailError(
+      "invalid_argument",
+      "--timeout-ms requires --wait",
+      { argument: "--timeout-ms", requires: ["--wait"] }
+    );
+  }
+  const timeoutMs = options.timeoutMs ?? DEFAULT_LEDGER_WAIT_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw createRunLedgerTailError(
+      "invalid_argument",
+      "--timeout-ms must be a positive integer",
+      { argument: "--timeout-ms", value: timeoutMs, minimum: 1 }
+    );
+  }
+  const pollIntervalMs = options.pollIntervalMs ?? LEDGER_WAIT_POLL_INTERVAL_MS;
+  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
+    throw new TypeError("pollIntervalMs must be a positive number");
+  }
+  return {
+    runId: options.runId ?? null,
+    after,
+    limit,
+    wait,
+    timeoutMs,
+    pollIntervalMs
+  };
+}
+function isCursorLedgerEvent(event) {
+  return event != null && typeof event === "object" && !Array.isArray(event) && typeof event.eventId === "string" && event.eventId.length > 0 && typeof event.runId === "string" && event.runId.length > 0;
+}
+function cursorExpiredError(events, { runId, after }) {
+  const anchors = runId == null ? events : events.filter((event) => event.runId === runId);
+  throw createRunLedgerTailError(
+    "cursor_expired",
+    `Ledger cursor ${after} is not retained`,
+    {
+      reason: "not_retained",
+      runId,
+      requested: after,
+      oldest: anchors[0]?.eventId ?? null,
+      latest: anchors.at(-1)?.eventId ?? null
+    }
+  );
+}
+function selectRunLedgerTail(events, options = {}) {
+  const { runId: requestedRunId, after, limit } = validateRunLedgerTailOptions(options);
+  const validEvents = Array.isArray(events) ? events.filter(isCursorLedgerEvent) : [];
+  let runId = requestedRunId;
+  if (runId == null && after != null) {
+    const cursorEvent = validEvents.find((event) => event.eventId === after);
+    if (!cursorEvent) cursorExpiredError(validEvents, { runId: null, after });
+    runId = cursorEvent.runId;
+  } else if (runId == null) {
+    runId = validEvents.at(-1)?.runId ?? null;
+  }
+  const matching = runId == null ? [] : validEvents.filter((event) => event.runId === runId);
+  const oldest = matching[0]?.eventId ?? null;
+  const latest = matching.at(-1)?.eventId ?? null;
+  let selected;
+  let limited = false;
+  if (after != null) {
+    const cursorIndex = matching.findIndex((event) => event.eventId === after);
+    if (cursorIndex === -1) cursorExpiredError(validEvents, { runId, after });
+    const newer = matching.slice(cursorIndex + 1);
+    limited = newer.length > limit;
+    selected = newer.slice(0, limit);
+  } else {
+    limited = matching.length > limit;
+    selected = matching.slice(-limit);
+  }
+  return {
+    type: "ledger.tail",
+    runId,
+    events: selected,
+    cursor: {
+      requested: after,
+      oldest,
+      latest,
+      next: selected.at(-1)?.eventId ?? after ?? null
+    },
+    limited,
+    cursorExpired: false,
+    waitTimedOut: false
+  };
+}
+async function readRunLedgerFileState(file) {
+  try {
+    const current = await fsStat(file);
+    return { size: current.size, mtimeMs: current.mtimeMs };
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+function sameRunLedgerFileState(left, right) {
+  if (left == null || right == null) return left === right;
+  return left.size === right.size && left.mtimeMs === right.mtimeMs;
+}
+function defaultSleep(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+async function tailRunLedgerEvents(workspaceRoot, options = {}, dependencies = {}) {
+  const validated = validateRunLedgerTailOptions(options);
+  const selection = {
+    runId: validated.runId,
+    after: validated.after,
+    limit: validated.limit
+  };
+  const readEvents = dependencies.readEvents ?? readRunLedgerEvents;
+  const readFileState = dependencies.readFileState ?? readRunLedgerFileState;
+  const sleep = dependencies.sleep ?? defaultSleep;
+  const now = dependencies.now ?? Date.now;
+  const file = resolveRunLedgerFile(workspaceRoot);
+  let fileState = await readFileState(file);
+  let result = selectRunLedgerTail(await readEvents(workspaceRoot), selection);
+  if (selection.runId == null && result.runId != null) selection.runId = result.runId;
+  if (!validated.wait || result.events.length > 0) return result;
+  const deadline = now() + validated.timeoutMs;
+  while (now() < deadline) {
+    const remainingMs = Math.max(0, deadline - now());
+    await sleep(Math.min(validated.pollIntervalMs, remainingMs));
+    const nextFileState = await readFileState(file);
+    if (!sameRunLedgerFileState(fileState, nextFileState)) {
+      fileState = nextFileState;
+      result = selectRunLedgerTail(await readEvents(workspaceRoot), selection);
+      if (result.events.length > 0) return result;
+    }
+  }
+  const finalFileState = await readFileState(file);
+  if (!sameRunLedgerFileState(fileState, finalFileState)) {
+    result = selectRunLedgerTail(await readEvents(workspaceRoot), selection);
+    if (result.events.length > 0) return result;
+  }
+  return { ...result, waitTimedOut: true };
 }
 function groupRunLedgerEvents(events) {
   const groups = /* @__PURE__ */ new Map();
@@ -5934,9 +8116,87 @@ function groupRunLedgerEvents(events) {
     groups.set(event.runId, group);
   }
   for (const group of groups.values()) {
+    group.projectedEvents = projectNewestAttemptEvents(group.events);
     group.events.sort((a, b) => String(a.at).localeCompare(String(b.at)));
   }
   return groups;
+}
+function projectNewestAttemptEvents(events) {
+  const providers = /* @__PURE__ */ new Map();
+  const passthrough = [];
+  function createAttempt(index) {
+    return {
+      entries: [],
+      createdIndex: index,
+      startIndex: null,
+      started: false,
+      terminal: false
+    };
+  }
+  for (const [index, event] of events.entries()) {
+    if (!event?.provider) {
+      passthrough.push({ index, event });
+      continue;
+    }
+    const projection = providers.get(event.provider) || {
+      attempts: /* @__PURE__ */ new Map(),
+      legacyJobAttempts: /* @__PURE__ */ new Map(),
+      legacyAttempt: null
+    };
+    providers.set(event.provider, projection);
+    const isStarted = event.phase === "attempt_started" || event.phase === "job_started";
+    let key = event.attemptId ? `attempt:${event.attemptId}` : null;
+    let attempt;
+    if (event.attemptId) {
+      attempt = projection.attempts.get(key);
+      if (!attempt) {
+        attempt = createAttempt(index);
+        projection.attempts.set(key, attempt);
+      }
+    } else if (event.jobId) {
+      attempt = projection.legacyJobAttempts.get(event.jobId);
+      if (isStarted && attempt?.terminal) attempt = null;
+      if (!attempt) {
+        key = `job:${event.jobId}:epoch:${index}`;
+        attempt = createAttempt(index);
+        projection.attempts.set(key, attempt);
+        projection.legacyJobAttempts.set(event.jobId, attempt);
+      }
+    } else {
+      if (isStarted && projection.legacyAttempt?.terminal) {
+        projection.legacyAttempt = null;
+      }
+      attempt = projection.legacyAttempt;
+      if (!attempt) {
+        key = `legacy:${projection.attempts.size}`;
+        attempt = createAttempt(index);
+        projection.attempts.set(key, attempt);
+        projection.legacyAttempt = attempt;
+      }
+    }
+    attempt.entries.push({ index, event });
+    if (isStarted && !attempt.started) {
+      attempt.started = true;
+      attempt.startIndex = index;
+    }
+    if (TERMINAL_LEDGER_PHASES.has(event.phase)) {
+      attempt.terminal = true;
+    }
+  }
+  const projected = [...passthrough];
+  for (const projection of providers.values()) {
+    const attempts = [...projection.attempts.values()];
+    const startedAttempts = attempts.filter((attempt) => attempt.started);
+    const candidates = startedAttempts.length > 0 ? startedAttempts : attempts;
+    const newest = candidates.reduce((latest, attempt) => {
+      if (!latest) return attempt;
+      const latestIndex = latest.startIndex ?? latest.createdIndex;
+      const attemptIndex = attempt.startIndex ?? attempt.createdIndex;
+      return attemptIndex > latestIndex ? attempt : latest;
+    }, null);
+    if (newest) projected.push(...newest.entries);
+  }
+  return projected.sort((left, right) => left.index - right.index).map(({ event }) => event);
 }
 function incrementCount(counts, key) {
   if (!key) return;
@@ -5982,11 +8242,11 @@ function classifyRunFailure(event = {}) {
 }
 function summarizeRunLedger(events) {
   return [...groupRunLedgerEvents(events).values()].map((group) => {
-    const decisions = group.events.filter(
+    const decisions = group.projectedEvents.filter(
       (event) => event.phase === "provider_decision" && event.provider
     );
     const failureClassCounts = {};
-    for (const event of group.events) {
+    for (const event of group.projectedEvents) {
       if (event.phase !== "attempt_result") continue;
       incrementCount(failureClassCounts, classifyRunFailure(event));
     }
@@ -6008,13 +8268,17 @@ function buildRunExplanation(events, runId) {
   if (!group) {
     return { runId, found: false, text: `Run ${runId} was not found.`, events: [] };
   }
-  const decisions = group.events.filter((event) => event.phase === "provider_decision");
+  const decisions = group.projectedEvents.filter((event) => event.phase === "provider_decision");
   const lines = decisions.map(
     (event) => `${event.provider || "run"} ${event.status}${event.reason ? ` (${event.reason})` : ""}`
   );
-  for (const event of group.events.filter((item) => item.phase === "attempt_result" && item.status === "failed")) {
+  for (const event of group.projectedEvents.filter((item) => item.phase === "attempt_result" && item.status === "failed")) {
     const subject = event.provider || event.jobId || "run";
     lines.push(`attempt ${subject} failed (${classifyRunFailure(event)})`);
+  }
+  const terminalProviders = new Set(group.projectedEvents.filter((event) => TERMINAL_LEDGER_PHASES.has(event.phase) && event.provider).map((event) => event.provider));
+  for (const provider of new Set(group.projectedEvents.filter((event) => (event.phase === "attempt_started" || event.phase === "job_started") && event.provider).map((event) => event.provider))) {
+    if (!terminalProviders.has(provider)) lines.push(`${provider} unfinished`);
   }
   return { runId, found: true, text: lines.join("\n"), events: group.events };
 }
@@ -6038,6 +8302,14 @@ function isUnder(root, target) {
   if (!root) return false;
   const rel = path5.relative(root, target);
   return rel === "" || !rel.startsWith("..") && !path5.isAbsolute(rel);
+}
+function providerSessionIdFromEvent(event) {
+  if (!event || typeof event !== "object") return null;
+  if (Object.prototype.hasOwnProperty.call(event, "providerSessionId")) {
+    return typeof event.providerSessionId === "string" && event.providerSessionId.length > 0 ? event.providerSessionId : null;
+  }
+  if (event.version === 2) return null;
+  return typeof event.sessionId === "string" && event.sessionId.length > 0 ? event.sessionId : null;
 }
 function deriveSessionArtifactCandidate({ provider, sessionId, workspaceRoot, homedir } = {}) {
   if (typeof sessionId !== "string" || sessionId.length === 0) {
@@ -6111,34 +8383,52 @@ function collectRecordedArtifacts(events = []) {
     const sessionArtifactPath = event?.sessionArtifactPath;
     if (typeof sessionArtifactPath !== "string" || sessionArtifactPath.length === 0) continue;
     const provider = event.provider ?? null;
-    const sessionId = event.sessionId ?? null;
+    const providerSessionId = providerSessionIdFromEvent(event);
+    if (!providerSessionId) continue;
     const workspaceRoot = event.workspaceRoot ?? null;
-    const key = JSON.stringify([provider, sessionId, sessionArtifactPath, workspaceRoot]);
+    const key = JSON.stringify([provider, providerSessionId, sessionArtifactPath, workspaceRoot]);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ provider, sessionId, sessionArtifactPath, workspaceRoot });
+    out.push({
+      provider,
+      providerSessionId,
+      sessionId: providerSessionId,
+      sessionArtifactPath,
+      workspaceRoot
+    });
   }
   return out;
 }
 function collectNonPurgeableSessions(events = [], { homedir = os3.homedir() } = {}) {
   const withPath = /* @__PURE__ */ new Set();
   for (const event of events) {
-    if (typeof event?.sessionArtifactPath === "string" && event.sessionArtifactPath.length > 0 && typeof event?.sessionId === "string") {
-      withPath.add(JSON.stringify([event.provider ?? null, event.sessionId, event.workspaceRoot ?? null]));
+    const providerSessionId = providerSessionIdFromEvent(event);
+    if (typeof event?.sessionArtifactPath === "string" && event.sessionArtifactPath.length > 0 && providerSessionId) {
+      withPath.add(JSON.stringify([event.provider ?? null, providerSessionId, event.workspaceRoot ?? null]));
     }
   }
   const seen = /* @__PURE__ */ new Set();
   const out = [];
   for (const event of events) {
-    const sessionId = event?.sessionId;
-    if (typeof sessionId !== "string" || sessionId.length === 0) continue;
+    const providerSessionId = providerSessionIdFromEvent(event);
+    if (!providerSessionId) continue;
     const provider = event.provider ?? null;
     const workspaceRoot = event.workspaceRoot ?? null;
-    const key = JSON.stringify([provider, sessionId, workspaceRoot]);
+    const key = JSON.stringify([provider, providerSessionId, workspaceRoot]);
     if (withPath.has(key) || seen.has(key)) continue;
     seen.add(key);
-    const derived = deriveSessionArtifactCandidate({ provider, sessionId, workspaceRoot, homedir });
-    out.push({ provider, sessionId, reason: derived?.reason ?? "no recorded artifact path" });
+    const derived = deriveSessionArtifactCandidate({
+      provider,
+      sessionId: providerSessionId,
+      workspaceRoot,
+      homedir
+    });
+    out.push({
+      provider,
+      providerSessionId,
+      sessionId: providerSessionId,
+      reason: derived?.reason ?? "no recorded artifact path"
+    });
   }
   return out;
 }
@@ -6154,8 +8444,13 @@ function planPurge({ recorded = [], homedir, lstatFn = fs5.lstatSync, realpathFn
   };
   const resolveSize = typeof sizeFn === "function" ? sizeFn : defaultSizeFn;
   for (const rec of recorded) {
-    const { provider, sessionId } = rec;
+    const { provider } = rec;
+    const providerSessionId = Object.prototype.hasOwnProperty.call(rec, "providerSessionId") ? rec.providerSessionId : rec.sessionId;
     const candidatePath = rec.sessionArtifactPath;
+    if (typeof providerSessionId !== "string" || providerSessionId.length === 0) {
+      skipped.push({ provider, reason: "no provider session id" });
+      continue;
+    }
     if (typeof candidatePath !== "string" || candidatePath.length === 0) {
       skipped.push({ provider, reason: "no recorded artifact path" });
       continue;
@@ -6188,13 +8483,19 @@ function planPurge({ recorded = [], homedir, lstatFn = fs5.lstatSync, realpathFn
       continue;
     }
     const base = path5.basename(candidatePath);
-    const fileMatch = base === `${sessionId}.jsonl`;
-    const dirMatch = base === sessionId;
+    const fileMatch = base === `${providerSessionId}.jsonl`;
+    const dirMatch = base === providerSessionId;
     if (!fileMatch && !dirMatch) {
       skipped.push({ path: candidatePath, reason: "refused: basename no longer matches the recorded sessionId" });
       continue;
     }
-    deletable.push({ provider, sessionId, path: candidatePath, bytes: resolveSize(candidatePath) });
+    deletable.push({
+      provider,
+      providerSessionId,
+      sessionId: providerSessionId,
+      path: candidatePath,
+      bytes: resolveSize(candidatePath)
+    });
   }
   return { deletable, skipped };
 }
@@ -6217,8 +8518,10 @@ function defaultHomedir() {
 
 // plugins/polycli/scripts/lib/job-control.mjs
 var ACTIVE_STATUSES2 = /* @__PURE__ */ new Set(["queued", "running"]);
-var TERMINAL_STATUSES = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
+var TERMINAL_STATUSES2 = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
+var WAIT_TARGETS = /* @__PURE__ */ new Set(["terminal", "completed", "failed", "cancelled"]);
 var DEFAULT_STATUS_LIMIT = 8;
+var MAX_SELECTOR_CANDIDATES = 8;
 function isProcessAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -6268,7 +8571,7 @@ function enrichJob(workspaceRoot, job) {
   };
 }
 function isTerminalEnvelope(envelope) {
-  return Boolean(envelope?.job && TERMINAL_STATUSES.has(envelope.job.status));
+  return Boolean(envelope?.job && TERMINAL_STATUSES2.has(envelope.job.status));
 }
 function buildRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited", terminalDescriptor = null } = {}) {
   const command = runContext.command || config?.execution?.kind || job.kind || null;
@@ -6280,12 +8583,12 @@ function buildRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
   const decisionStatus = cancelled ? "cancelled" : succeeded ? "adopted" : "failed";
   const terminalReason = succeeded ? null : reason;
   const errorMessage = succeeded ? null : result?.error || job.error || "worker exited before writing a result envelope";
-  const recoveredSessionId = result?.sessionId ?? job.sessionId ?? null;
+  const recoveredProviderSessionId = result?.providerSessionId ?? job.providerSessionId ?? null;
   const recoveredCwd = config?.execution?.cwd ?? config?.workspaceRoot ?? workspaceRoot ?? null;
-  const sessionArtifactPath = recoveredSessionId && recoveredCwd ? recordArtifactPath(
+  const sessionArtifactPath = recoveredProviderSessionId && recoveredCwd ? recordArtifactPath(
     deriveSessionArtifactCandidate({
       provider,
-      sessionId: recoveredSessionId,
+      sessionId: recoveredProviderSessionId,
       workspaceRoot: recoveredCwd,
       homedir: os4.homedir()
     }),
@@ -6297,8 +8600,11 @@ function buildRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { 
     commands: command ? [command] : [],
     kind,
     provider,
+    invocationId: runContext.invocationId ?? job.invocationId ?? null,
     jobId: job.jobId,
-    sessionId: recoveredSessionId,
+    attemptId: runContext.attemptId ?? job.attemptId ?? null,
+    providerSessionId: recoveredProviderSessionId,
+    sessionId: recoveredProviderSessionId,
     sessionArtifactPath,
     // A descriptor-bearing envelope came from the worker finalizer, whose terminal event records
     // only upstream-returned model fields. Do not substitute configured defaults during recovery:
@@ -6351,7 +8657,10 @@ function applyTerminalDescriptor(events, terminalDescriptor) {
       kind: material.kind,
       hostSurface: material.hostSurface,
       attempt: material.attempt,
-      sessionId: material.sessionId,
+      invocationId: material.invocationId ?? event.invocationId ?? null,
+      attemptId: material.attemptId ?? event.attemptId ?? null,
+      providerSessionId: material.providerSessionId ?? material.sessionId ?? event.providerSessionId ?? null,
+      sessionId: material.providerSessionId ?? material.sessionId ?? event.providerSessionId ?? null,
       model: material.model,
       defaultModel: material.defaultModel,
       timingRef: material.timingRef,
@@ -6413,6 +8722,10 @@ function refreshJob(workspaceRoot, job) {
       const finalizedBase = hasStoredTerminalIntent ? {
         ...latest,
         ...storedEnvelope2.job,
+        hostSessionId: storedEnvelope2.job.hostSessionId ?? latest.hostSessionId ?? null,
+        invocationId: storedEnvelope2.job.invocationId ?? latest.invocationId ?? null,
+        attemptId: storedEnvelope2.job.attemptId ?? latest.attemptId ?? null,
+        providerSessionId: storedEnvelope2.job.providerSessionId ?? latest.providerSessionId ?? null,
         pid: null
       } : {
         ...latest,
@@ -6433,15 +8746,23 @@ function refreshJob(workspaceRoot, job) {
       const inferredReason = finalized.status === "cancelled" ? "cancelled" : result.ok ? null : result.error === "worker exited before writing a result envelope" ? "worker_exited" : `${finalized.kind || latest.kind}_failed`;
       const terminalReason = hasStoredTerminalIntent && Object.prototype.hasOwnProperty.call(storedEnvelope2, "terminalReason") ? storedEnvelope2.terminalReason : inferredReason;
       const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, latest.jobId));
-      const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalized, config, {
+      const providerSessionId = result?.providerSessionId ?? finalized.providerSessionId ?? null;
+      const finalizedWithIdentities = {
+        ...finalized,
+        invocationId: finalized.invocationId ?? config?.runContext?.invocationId ?? null,
+        attemptId: finalized.attemptId ?? config?.runContext?.attemptId ?? null,
+        providerSessionId,
+        sessionId: providerSessionId
+      };
+      const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalizedWithIdentities, config, {
         result,
         reason: terminalReason,
         terminalDescriptor: storedEnvelope2?.terminalDescriptor ?? null
       });
       return {
-        job: finalized,
+        job: finalizedWithIdentities,
         envelope: {
-          job: finalized,
+          job: finalizedWithIdentities,
           result,
           terminalReason,
           terminalDescriptor: terminal.terminalDescriptor
@@ -6470,44 +8791,185 @@ function buildStatusSnapshot(workspaceRoot, { showAll = false } = {}) {
   return {
     totalJobs: refreshed.length,
     running: limited.filter((job) => ACTIVE_STATUSES2.has(job.status)),
-    recent: limited.filter((job) => TERMINAL_STATUSES.has(job.status))
+    recent: limited.filter((job) => TERMINAL_STATUSES2.has(job.status))
   };
 }
 function refreshJobsForLedgerRecovery(workspaceRoot) {
   return sortJobsNewestFirst(listJobs(workspaceRoot)).map((job) => refreshJob(workspaceRoot, job));
 }
-function resolveJobReference(workspaceRoot, reference, predicate = () => true) {
+function selectorError(code, message, selector, data = {}) {
+  return new PolycliCliError({
+    code,
+    message,
+    data: {
+      selector,
+      ...data
+    }
+  });
+}
+function resolveUniquePrefix(candidates, prefix, selector) {
+  const matches = candidates.filter((job) => job.jobId.startsWith(prefix));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    throw selectorError(
+      "ambiguous_selector",
+      `Job selector '${selector}' matches more than one job.`,
+      selector,
+      { candidateIds: matches.slice(0, MAX_SELECTOR_CANDIDATES).map((job) => job.jobId) }
+    );
+  }
+  throw selectorError(
+    "job_not_found",
+    `Job selector '${selector}' did not match a job in this workspace.`,
+    selector
+  );
+}
+function resolveJobSelector(workspaceRoot, selector = "latest", {
+  predicate = () => true,
+  grammar = "compat"
+} = {}) {
+  if (grammar !== "compat" && grammar !== "explicit") {
+    throw new TypeError(`Unknown job selector grammar '${grammar}'.`);
+  }
+  const normalizedSelector = selector == null || selector === "" ? "latest" : String(selector);
   const candidates = sortJobsNewestFirst(listJobs(workspaceRoot)).filter(predicate);
-  if (!reference) return candidates[0] || null;
-  const exact = candidates.find((job) => job.jobId === reference);
+  if (normalizedSelector === "latest") {
+    const latest = candidates[0] || null;
+    if (latest) return latest;
+    throw selectorError(
+      "job_not_found",
+      "No job matches the selector in this workspace.",
+      normalizedSelector
+    );
+  }
+  if (normalizedSelector === "latest-active") {
+    const latest = candidates.find((job) => ACTIVE_STATUSES2.has(job.status)) || null;
+    if (latest) return latest;
+    throw selectorError(
+      "no_active_job",
+      "No active job exists in this workspace.",
+      normalizedSelector
+    );
+  }
+  if (normalizedSelector === "latest-terminal") {
+    const latest = candidates.find((job) => TERMINAL_STATUSES2.has(job.status)) || null;
+    if (latest) return latest;
+    throw selectorError(
+      "no_completed_job",
+      "No terminal job exists in this workspace.",
+      normalizedSelector
+    );
+  }
+  if (normalizedSelector.startsWith("id:")) {
+    const jobId = normalizedSelector.slice("id:".length);
+    if (!jobId) {
+      throw selectorError(
+        "invalid_argument",
+        "The id: selector requires a full job id.",
+        normalizedSelector
+      );
+    }
+    const exact2 = candidates.find((job) => job.jobId === jobId) || null;
+    if (exact2) return exact2;
+    throw selectorError(
+      "job_not_found",
+      `Job '${jobId}' was not found in this workspace.`,
+      normalizedSelector
+    );
+  }
+  if (normalizedSelector.startsWith("prefix:")) {
+    const prefix = normalizedSelector.slice("prefix:".length);
+    if (!prefix) {
+      throw selectorError(
+        "invalid_argument",
+        "The prefix: selector requires a non-empty job-id prefix.",
+        normalizedSelector
+      );
+    }
+    return resolveUniquePrefix(candidates, prefix, normalizedSelector);
+  }
+  if (grammar === "explicit") {
+    throw selectorError(
+      "invalid_argument",
+      `Job selector '${normalizedSelector}' must use id:, prefix:, latest, latest-active, or latest-terminal grammar.`,
+      normalizedSelector,
+      { grammar }
+    );
+  }
+  const exact = candidates.find((job) => job.jobId === normalizedSelector) || null;
   if (exact) return exact;
-  const prefixMatches = candidates.filter((job) => job.jobId.startsWith(reference));
-  if (prefixMatches.length === 1) {
-    return prefixMatches[0];
+  return resolveUniquePrefix(candidates, normalizedSelector, normalizedSelector);
+}
+function typedWaitResult(forStatus, {
+  satisfied = false,
+  timedOut = false,
+  terminalMismatch = false
+} = {}) {
+  return {
+    for: forStatus,
+    satisfied,
+    timedOut,
+    terminalMismatch
+  };
+}
+function evaluateWaitTarget(job, forStatus) {
+  if (!job) return null;
+  if (forStatus === "terminal" && TERMINAL_STATUSES2.has(job.status)) {
+    return typedWaitResult(forStatus, { satisfied: true });
+  }
+  if (job.status === forStatus) {
+    return typedWaitResult(forStatus, { satisfied: true });
+  }
+  if (forStatus !== "terminal" && TERMINAL_STATUSES2.has(job.status)) {
+    return typedWaitResult(forStatus, { terminalMismatch: true });
   }
   return null;
 }
-function resolveLatestActiveJob(workspaceRoot) {
-  return resolveJobReference(workspaceRoot, null, (job) => ACTIVE_STATUSES2.has(job.status));
-}
-function resolveLatestTerminalJob(workspaceRoot) {
-  return resolveJobReference(workspaceRoot, null, (job) => TERMINAL_STATUSES.has(job.status));
-}
-async function waitForJob(workspaceRoot, jobId, { timeoutMs = 24e4, pollIntervalMs = 500 } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+async function waitForJob(workspaceRoot, jobId, options = {}) {
+  const {
+    timeoutMs = 24e4,
+    pollIntervalMs = 500
+  } = options;
+  const forStatus = options.for ?? "terminal";
+  if (!WAIT_TARGETS.has(forStatus)) {
+    throw new PolycliCliError({
+      code: "invalid_argument",
+      message: `Unsupported job wait target '${forStatus}'.`,
+      data: {
+        argument: forStatus,
+        validValues: [...WAIT_TARGETS]
+      }
+    });
+  }
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (true) {
     const current = getJob(workspaceRoot, jobId);
     if (!current) {
-      return { error: "job_not_found", job: null, waitTimedOut: false };
+      return {
+        error: "job_not_found",
+        job: null,
+        waitTimedOut: false,
+        wait: typedWaitResult(forStatus)
+      };
     }
     const refreshed = refreshJob(workspaceRoot, current);
-    if (!ACTIVE_STATUSES2.has(refreshed.status)) {
-      return { job: refreshed, waitTimedOut: false };
+    const terminalResult = evaluateWaitTarget(refreshed, forStatus);
+    if (terminalResult) {
+      return {
+        job: refreshed,
+        waitTimedOut: false,
+        wait: terminalResult
+      };
+    }
+    if (Date.now() >= deadline) {
+      return {
+        job: refreshed,
+        waitTimedOut: true,
+        wait: typedWaitResult(forStatus, { timedOut: true })
+      };
     }
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
-  const timed = getJob(workspaceRoot, jobId);
-  return { job: timed ? refreshJob(workspaceRoot, timed) : null, waitTimedOut: true };
 }
 async function cancelJob(workspaceRoot, jobId, {
   terminate = terminateProcessTree,
@@ -7257,6 +9719,8 @@ function appendPreview(logFile, provider, event, { fsImpl = fs8, tailCache = PRE
 
 // plugins/polycli/scripts/polycli-companion.mjs
 var COMPANION_PATH = fileURLToPath(import.meta.url);
+var BUILD_VERSION = true ? "0.6.30" : "0.0.0-dev";
+var BUILD_VERSION_SOURCE = true ? "bundled-release" : "development";
 var JOB_PREFIXES = {
   ask: "pa",
   rescue: "pr",
@@ -7292,27 +9756,29 @@ function resolveTimeoutMs(provider, kind, { model = null, defaultModel = null } 
 }
 var HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
 var SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
-var RUN_TRACKED_COMMANDS = /* @__PURE__ */ new Set([
-  "health",
-  "ask",
-  "rescue",
-  "review",
-  "adversarial-review"
-]);
-var TERMINAL_JOB_STATUSES = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
-var ACTIVE_JOB_STATUSES = /* @__PURE__ */ new Set(["queued", "running"]);
+var TERMINAL_JOB_STATUSES2 = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
+var ACTIVE_JOB_STATUSES2 = /* @__PURE__ */ new Set(["queued", "running"]);
 var RUN_CONTEXT = {
+  invocationId: null,
   runId: null,
   command: null,
   hostSurface: "unknown",
-  rawArgs: []
+  rawArgs: [],
+  outputMode: "text",
+  background: false,
+  authoritativeJsonWritten: false,
+  workspaceSlug: null
 };
+function createAttemptId() {
+  return `att_${randomUUID3().replaceAll("-", "").slice(0, 20)}`;
+}
 function buildCurrentRunContext(overrides = {}) {
   if (!RUN_CONTEXT.runId) return null;
   const command = overrides.command || RUN_CONTEXT.command;
   return {
-    version: 1,
+    version: 2,
     runId: RUN_CONTEXT.runId,
+    invocationId: RUN_CONTEXT.invocationId,
     command,
     commands: [command].filter(Boolean),
     hostSurface: RUN_CONTEXT.hostSurface,
@@ -7330,6 +9796,9 @@ function buildRunEventForContext(runContext, base = {}) {
     runId: runContext.runId,
     hostSurface: runContext.hostSurface,
     argv: runContext.argv || [],
+    invocationId: runContext.invocationId ?? null,
+    attemptId: runContext.attemptId ?? null,
+    jobId: runContext.jobId ?? null,
     ...base,
     command,
     commands
@@ -7352,11 +9821,11 @@ function ensureTerminalRunEventsForContext(workspaceRoot, prepared) {
   return prepared.events.length > 0 ? ensureRunLedgerTerminalPair(workspaceRoot, prepared.events) : [];
 }
 function hasTerminalJobEnvelope(envelope) {
-  return TERMINAL_JOB_STATUSES.has(envelope?.job?.status);
+  return TERMINAL_JOB_STATUSES2.has(envelope?.job?.status);
 }
 function claimBackgroundWorker(workspaceRoot, jobId) {
   const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
-    if (!latest || !ACTIVE_JOB_STATUSES.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
+    if (!latest || !ACTIVE_JOB_STATUSES2.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
       return null;
     }
     if (latest.pid != null && latest.pid !== process5.pid) {
@@ -7381,7 +9850,7 @@ function recordBackgroundSpawnFailure(workspaceRoot, jobId, execution, runContex
   const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
   try {
     const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
-      if (!latest || !ACTIVE_JOB_STATUSES.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
+      if (!latest || !ACTIVE_JOB_STATUSES2.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
         return null;
       }
       const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -7454,34 +9923,54 @@ function resolveSessionArtifactPath(provider, sessionId, cwd) {
   if (!candidate.path) return null;
   return recordArtifactPath(candidate, { homedir });
 }
-function printUsage() {
-  console.log(
-    [
-      "Usage:",
-      "  polycli-companion.mjs setup [--provider <provider>] [--probe-auth] [--json]",
-      "    [--enable-review-gate|--disable-review-gate]",
-      "  polycli-companion.mjs health [--provider <provider>] [--model <model>] [--timeout-ms <ms>] [--json]",
-      "  polycli-companion.mjs ask --provider <provider> [--model <model>] [--background] [--json] <prompt>",
-      "  polycli-companion.mjs rescue --provider <provider> [--model <model>] [--background] [--json] <prompt>",
-      "  polycli-companion.mjs review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--max-diff-bytes <n>] [--json] [focus ...]",
-      "  polycli-companion.mjs adversarial-review --provider <provider> [--model <model>] [--background] [--base <ref>] [--scope <auto|staged|unstaged|working-tree|branch>] [--max-diff-bytes <n>] [--json] [focus ...]",
-      "  polycli-companion.mjs status [job-id] [--all] [--wait] [--timeout-ms <ms>] [--json]",
-      "  polycli-companion.mjs result [job-id] [--json]",
-      "  polycli-companion.mjs cancel [job-id] [--json]",
-      "  polycli-companion.mjs timing [--provider <provider>] [--history <count|all>] [--all] [--json]",
-      "  polycli-companion.mjs debug runs [--json]",
-      "  polycli-companion.mjs debug show <run-id> [--json]",
-      "  polycli-companion.mjs debug explain <run-id> [--json]",
-      "  polycli-companion.mjs sessions [list] [--json]",
-      "  polycli-companion.mjs sessions purge [--confirm] [--json]"
-    ].join("\n")
-  );
+function printUsage(hostSurface = "unknown") {
+  console.log(renderRootHelp({ hostSurface }));
 }
-function hasHelpFlag(args = []) {
-  return args.includes("--help") || args.includes("-h");
+function cliError(code, message, data = {}, exitCode = 1) {
+  const error = new Error(message);
+  error.code = code;
+  error.data = data;
+  error.exitCode = exitCode;
+  return error;
 }
-function wantsJson(args = []) {
-  return args.includes("--json");
+function scanOutputModes(args = []) {
+  let json = false;
+  let jsonV2 = false;
+  for (const argument of args) {
+    if (argument === "--") break;
+    if (argument === "--json" || argument === "--json=true") json = true;
+    if (argument === "--json-v2" || argument === "--json-v2=true") jsonV2 = true;
+  }
+  return { json, jsonV2, conflict: json && jsonV2 };
+}
+function adaptArgsForLegacyHandler(args = []) {
+  const v2Enabled = scanOutputModes(args).jsonV2;
+  const adapted = [];
+  let passthrough = false;
+  let legacyJsonInjected = false;
+  for (const argument of args) {
+    if (passthrough) {
+      adapted.push(argument);
+      continue;
+    }
+    if (argument === "--") {
+      if (v2Enabled && !legacyJsonInjected) {
+        adapted.push("--json");
+        legacyJsonInjected = true;
+      }
+      passthrough = true;
+      adapted.push(argument);
+      continue;
+    }
+    if (v2Enabled && (argument === "--json" || argument === "--json=true" || argument === "--json=false" || argument === "--json-v2" || argument === "--json-v2=true" || argument === "--json-v2=false")) {
+      continue;
+    }
+    if (argument === "--json-v2=false") continue;
+    if (argument === "--help=false" || argument === "-h=false") continue;
+    adapted.push(argument);
+  }
+  if (v2Enabled && !legacyJsonInjected) adapted.push("--json");
+  return adapted;
 }
 function classifyErrorCode(message = "") {
   if (message.startsWith("Missing provider.")) return "missing_provider";
@@ -7496,25 +9985,164 @@ function classifyErrorCode(message = "") {
   if (message === "--max-diff-bytes must be a non-negative integer.") return "invalid_max_diff_bytes";
   return "error";
 }
-function exitWithError({ message, code = classifyErrorCode(message), asJson = false, exitCode = 1 }) {
-  if (asJson) {
-    process5.stdout.write(`${JSON.stringify({ error: message, code }, null, 2)}
+function toTypedCliError(error) {
+  let candidate = error;
+  if (!(error instanceof PolycliCliError) && !error?.code) {
+    const classified = classifyErrorCode(error?.message || "");
+    if (classified !== "error") {
+      const typedCode = classified === "invalid_history" || classified === "invalid_max_diff_bytes" ? "invalid_argument" : classified;
+      candidate = cliError(typedCode, error.message, error.data || {}, error.exitCode || 1);
+    }
+  }
+  const typed = PolycliCliError.from(candidate);
+  if (typed.code === "internal_error" || typed.nextSteps.length > 0 || !RUN_CONTEXT.command) {
+    return typed;
+  }
+  const definition2 = getCommandDefinition(RUN_CONTEXT.command.split("."));
+  return new PolycliCliError({
+    code: typed.code,
+    message: typed.message,
+    exitCode: typed.exitCode,
+    data: typed.data,
+    nextSteps: definition2?.visibility === "public" ? [`Run \`polycli ${definition2.path.join(" ")} --help\`.`] : []
+  });
+}
+function assertPreDispatchReviewSafety(definition2, parsed) {
+  if (!definition2 || !["review", "adversarial-review"].includes(definition2.id)) return;
+  const explicitProvider = parsed.options.provider || (PROVIDER_IDS.includes(parsed.positionals[0]) ? parsed.positionals[0] : null);
+  if (!explicitProvider) return;
+  const descriptor = describeProviderRuntimes().find((entry) => entry.id === explicitProvider);
+  if (descriptor?.reviewSafety?.mode !== "unsupported") return;
+  let message = `Provider '${explicitProvider}' does not support review.`;
+  try {
+    assertReviewProviderSupported(explicitProvider);
+  } catch (error2) {
+    message = error2.message;
+  }
+  const error = cliError("invalid_argument", message, {
+    provider: explicitProvider,
+    reviewSafety: "unsupported"
+  });
+  error.legacyCode = "error";
+  throw error;
+}
+function exitWithError(error) {
+  const typed = toTypedCliError(error);
+  if (RUN_CONTEXT.outputMode === "json-v2") {
+    process5.stdout.write(`${JSON.stringify(createV2ErrorEnvelope(typed, {
+      invocationId: RUN_CONTEXT.invocationId,
+      command: RUN_CONTEXT.command || process5.argv[2] || "",
+      hostSurface: RUN_CONTEXT.hostSurface,
+      workspaceSlug: RUN_CONTEXT.workspaceSlug,
+      runId: RUN_CONTEXT.runId,
+      jobId: typeof typed.data?.jobId === "string" ? typed.data.jobId : null
+    }), null, 2)}
+`);
+  } else if (RUN_CONTEXT.outputMode === "legacy-json") {
+    const code = error?.legacyCode || error?.code || classifyErrorCode(error?.message || "");
+    const legacyCode = code === "unknown_command" ? "unknown_subcommand" : code;
+    process5.stdout.write(`${JSON.stringify({ error: typed.message, code: legacyCode }, null, 2)}
 `);
   } else {
-    process5.stderr.write(`Error: ${message}
+    process5.stderr.write(`Error: ${typed.message}
+`);
+    for (const suggestion of typed.data?.suggestions || []) {
+      process5.stderr.write(`Suggestion: ${suggestion}
+`);
+    }
+    for (const step of typed.nextSteps) process5.stderr.write(`${step}
 `);
   }
-  process5.exitCode = exitCode;
+  process5.exitCode = typed.exitCode || error?.exitCode || 1;
 }
 function output(value, asJson) {
+  if (RUN_CONTEXT.outputMode === "json-v2") {
+    const result = serializeV2Result(RUN_CONTEXT.command, value, {
+      background: RUN_CONTEXT.background,
+      wait: value?.wait ?? (Object.prototype.hasOwnProperty.call(value || {}, "waitTimedOut") ? true : null)
+    });
+    const envelope = createV2SuccessEnvelope(result, {
+      invocationId: RUN_CONTEXT.invocationId,
+      command: RUN_CONTEXT.command,
+      hostSurface: RUN_CONTEXT.hostSurface,
+      workspaceSlug: RUN_CONTEXT.workspaceSlug,
+      runId: RUN_CONTEXT.runId,
+      jobId: result.job?.jobId ?? result.jobId ?? null
+    });
+    process5.stdout.write(`${JSON.stringify(envelope, null, 2)}
+`);
+    RUN_CONTEXT.authoritativeJsonWritten = true;
+    return;
+  }
   if (asJson) {
     process5.stdout.write(`${JSON.stringify(value, null, 2)}
 `);
+    RUN_CONTEXT.authoritativeJsonWritten = true;
     return;
   }
   process5.stdout.write(typeof value === "string" ? `${value}
 ` : `${JSON.stringify(value, null, 2)}
 `);
+}
+function buildAgentContext(hostSurface) {
+  const commands = listCommandDefinitions({ hostSurface }).map((entry) => ({
+    ...entry,
+    options: entry.options.filter((option2) => option2.visibility !== "internal")
+  }));
+  const exitCodes = Array.from(/* @__PURE__ */ new Set([
+    0,
+    ...commands.flatMap((entry) => entry.exitCodes),
+    ...ERROR_DEFINITIONS.map((entry) => entry.exitCode)
+  ])).sort((left, right) => left - right);
+  return {
+    schemaVersion: 1,
+    commandSurfaceVersion: COMMAND_SURFACE_VERSION,
+    build: {
+      version: BUILD_VERSION,
+      versionSource: BUILD_VERSION_SOURCE,
+      nodeMinimum: "20"
+    },
+    hostSurface,
+    offline: true,
+    commands,
+    providers: describeProviderRuntimes(),
+    outputSchemas: OUTPUT_SCHEMA_DEFINITIONS,
+    errors: ERROR_DEFINITIONS,
+    exitCodes,
+    features: {
+      legacyJson: true,
+      jsonEnvelopeV2: true,
+      ledgerCursor: true,
+      skillsDiscovery: false,
+      workflowRuntime: false
+    },
+    compatibility: {
+      legacyJobSessionId: {
+        field: "sessionId",
+        semantics: "ambiguous",
+        deprecated: true,
+        replacements: ["hostSessionId", "providerSessionId"]
+      }
+    }
+  };
+}
+async function runAgentContext(rawArgs) {
+  const { options } = parseArgs(rawArgs, { booleanOptions: ["json"] });
+  const context = buildAgentContext(RUN_CONTEXT.hostSurface);
+  if (options.json) {
+    output(context, true);
+    return;
+  }
+  output(
+    [
+      `Polycli ${context.build.version} command surface v${context.commandSurfaceVersion}`,
+      `Host surface: ${context.hostSurface}`,
+      `Commands: ${context.commands.filter((entry) => entry.path.length === 1).length}`,
+      `Providers: ${context.providers.length}`,
+      "Run `polycli agent-context --json` for the complete offline contract."
+    ].join("\n"),
+    false
+  );
 }
 function resolveProviderModelCacheFile(workspaceRoot) {
   return path8.join(resolveStateDir(workspaceRoot), "provider-models.json");
@@ -7578,6 +10206,73 @@ async function inspectProvider(provider, { probeAuth = false } = {}) {
     capabilities: runtime.capabilities
   };
   cacheProviderModel(resolveWorkspaceRoot(process5.cwd()), provider, row.model);
+  return row;
+}
+async function inspectSetupProvider(provider, { probeAuth, workspaceRoot }) {
+  const attemptId = createAttemptId();
+  const runContext = buildCurrentRunContext({
+    command: "setup",
+    kind: "setup",
+    provider,
+    attemptId
+  });
+  await recordRunEventForContext(workspaceRoot, runContext, {
+    command: "setup",
+    kind: "setup",
+    provider,
+    phase: "attempt_started",
+    status: "started",
+    attempt: { ordinal: 1 }
+  });
+  let row = null;
+  let inspectionError = null;
+  try {
+    row = await inspectProvider(provider, { probeAuth });
+  } catch (error) {
+    inspectionError = error;
+  }
+  const reason = inspectionError ? "setup_probe_failed" : "setup_probe_completed";
+  const terminal = prepareTerminalRunEventsForContext(runContext, [
+    {
+      command: "setup",
+      kind: "setup",
+      provider,
+      phase: "attempt_result",
+      status: inspectionError ? "failed" : "completed",
+      reason,
+      attempt: { ordinal: 1 },
+      model: row?.model ?? null,
+      errorCode: inspectionError ? "provider_failed" : null,
+      failureClass: inspectionError ? "provider_failed" : null,
+      error: inspectionError ? { message: String(inspectionError.message || inspectionError).slice(0, 300) } : null
+    },
+    {
+      command: "setup",
+      kind: "setup",
+      provider,
+      phase: "provider_decision",
+      status: inspectionError ? "failed" : "adopted",
+      reason
+    }
+  ]);
+  try {
+    ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+  } catch {
+    throw cliError(
+      "ledger_persist_failed",
+      "Failed to persist setup attempt ledger events. Provider work may have occurred, but durable finalization is unverified.",
+      { runId: runContext?.runId ?? null, invocationId: runContext?.invocationId ?? null, attemptId }
+    );
+  }
+  if (inspectionError) {
+    const error = cliError(
+      "provider_failed",
+      String(inspectionError.message || inspectionError).slice(0, 500),
+      { provider, kind: "setup" }
+    );
+    error.legacyCode = "error";
+    throw error;
+  }
   return row;
 }
 async function inspectProviderAvailability(provider) {
@@ -7750,7 +10445,16 @@ function hydrateRuntimeOptions(runtimeOptions = {}) {
 }
 async function runForegroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
-  await recordRunEvent(workspaceRoot, {
+  const attemptId = createAttemptId();
+  const runContext = buildCurrentRunContext({
+    command: execution.kind,
+    kind: execution.kind,
+    provider: execution.provider,
+    attemptId,
+    model: execution.model || null,
+    defaultModel: execution.defaultModel || null
+  });
+  await recordRunEventForContext(workspaceRoot, runContext, {
     command: execution.kind,
     kind: execution.kind,
     provider: execution.provider,
@@ -7758,7 +10462,10 @@ async function runForegroundExecution(execution, asJson) {
     status: "started",
     attempt: { ordinal: 1 }
   });
-  let result;
+  const startedAt = Date.now();
+  let result = null;
+  let executionError = null;
+  let sessionArtifactPath = null;
   try {
     result = await runProviderPromptStreaming({
       provider: execution.provider,
@@ -7774,59 +10481,90 @@ async function runForegroundExecution(execution, asJson) {
       onEvent() {
       }
     });
+    emitRuntimeWarnings(result);
+    if (result.timing) {
+      appendTimingRecord(workspaceRoot, result.timing);
+    }
+    cacheProviderModel(workspaceRoot, execution.provider, result.model);
+    sessionArtifactPath = resolveSessionArtifactPath(
+      execution.provider,
+      result.sessionId,
+      execution.cwd
+    );
+  } catch (error) {
+    executionError = error;
   } finally {
     cleanupRuntimeOptions(execution.runtimeOptions);
   }
-  emitRuntimeWarnings(result);
-  if (result.timing) {
-    appendTimingRecord(workspaceRoot, result.timing);
+  const resultOk = Boolean(result?.ok) && !executionError;
+  const publicError = executionError?.message || result?.error || null;
+  const terminalReason = resultOk ? null : `${execution.kind}_failed`;
+  const terminalErrorCode = executionError ? "provider_failed" : result?.errorCode ?? result?.timing?.errorCode ?? null;
+  const terminal = prepareTerminalRunEventsForContext(runContext, [
+    {
+      command: execution.kind,
+      kind: execution.kind,
+      provider: execution.provider,
+      phase: "attempt_result",
+      status: resultOk ? "completed" : "failed",
+      reason: terminalReason,
+      attempt: { ordinal: 1 },
+      model: result?.model || null,
+      providerSessionId: result?.sessionId ?? null,
+      sessionArtifactPath,
+      defaultModel: result?.defaultModel || null,
+      preview: result?.response ? String(result.response).slice(0, 180) : null,
+      stdoutBytes: result?.stdoutBytes ?? null,
+      stderrBytes: result?.stderrBytes ?? null,
+      durationMs: Date.now() - startedAt,
+      errorCode: terminalErrorCode,
+      failureClass: terminalErrorCode,
+      timingRef: result?.timing ? {
+        provider: result.timing.provider,
+        kind: result.timing.kind,
+        completedAt: result.timing.completedAt
+      } : null,
+      error: publicError ? { message: String(publicError).slice(0, 300) } : null
+    },
+    {
+      command: execution.kind,
+      kind: execution.kind,
+      provider: execution.provider,
+      phase: "provider_decision",
+      status: resultOk ? "adopted" : "failed",
+      reason: terminalReason,
+      providerSessionId: result?.sessionId ?? null,
+      sessionArtifactPath
+    }
+  ]);
+  try {
+    ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+  } catch {
+    throw cliError(
+      "ledger_persist_failed",
+      "Failed to persist terminal ledger events. Provider work may have occurred, but durable finalization is unverified.",
+      { runId: runContext?.runId ?? null, invocationId: runContext?.invocationId ?? null, attemptId }
+    );
   }
-  cacheProviderModel(workspaceRoot, execution.provider, result.model);
-  const sessionArtifactPath = resolveSessionArtifactPath(
-    execution.provider,
-    result.sessionId,
-    execution.cwd
-  );
-  await recordRunEvent(workspaceRoot, {
-    command: execution.kind,
-    kind: execution.kind,
-    provider: execution.provider,
-    phase: "attempt_result",
-    status: result.ok ? "completed" : "failed",
-    attempt: { ordinal: 1 },
-    model: result.model || null,
-    sessionId: result.sessionId ?? null,
-    sessionArtifactPath,
-    defaultModel: result.defaultModel || null,
-    preview: result.response ? String(result.response).slice(0, 180) : null,
-    stdoutBytes: result.stdoutBytes ?? null,
-    stderrBytes: result.stderrBytes ?? null,
-    errorCode: result.errorCode ?? result.timing?.errorCode ?? null,
-    failureClass: result.errorCode ?? result.timing?.errorCode ?? null,
-    timingRef: result.timing ? {
-      provider: result.timing.provider,
-      kind: result.timing.kind,
-      completedAt: result.timing.completedAt
-    } : null,
-    error: result.ok || !result.error ? null : { message: String(result.error).slice(0, 300) }
-  });
-  await recordRunEvent(workspaceRoot, {
-    command: execution.kind,
-    kind: execution.kind,
-    provider: execution.provider,
-    phase: "provider_decision",
-    status: result.ok ? "adopted" : "failed",
-    reason: result.ok ? null : `${execution.kind}_failed`,
-    sessionId: result.sessionId ?? null,
-    sessionArtifactPath
-  });
+  if (executionError) {
+    const error = cliError(
+      terminalErrorCode === "ledger_persist_failed" ? terminalErrorCode : "provider_failed",
+      String(executionError.message || executionError).slice(0, 500),
+      { provider: execution.provider, kind: execution.kind }
+    );
+    error.legacyCode = "error";
+    throw error;
+  }
   const envelope = buildExecutionEnvelope(execution, result);
   if (asJson) {
     output(envelope, true);
     return;
   }
   if (!result.ok) {
-    throw new Error(result.error || `${execution.provider} ${execution.kind} failed`);
+    process5.stderr.write(`Error: ${String(result.error || `${execution.provider} ${execution.kind} failed`).slice(0, 500)}
+`);
+    process5.exitCode = 1;
+    return;
   }
   const lines = [];
   if (execution.meta?.truncationNotice) {
@@ -7835,7 +10573,7 @@ async function runForegroundExecution(execution, asJson) {
   lines.push(result.response);
   output(lines.join("\n\n"), false);
 }
-function buildQueuedJob(execution, workspaceRoot) {
+function buildQueuedJob(execution, workspaceRoot, attemptId) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const jobId = createJobId(execution.kind);
   return {
@@ -7850,7 +10588,10 @@ function buildQueuedJob(execution, workspaceRoot) {
     logFile: resolveJobLogFile(workspaceRoot, jobId),
     createdAt: now,
     updatedAt: now,
-    sessionId: process5.env[SESSION_ID_ENV] || null,
+    invocationId: RUN_CONTEXT.invocationId,
+    attemptId,
+    hostSessionId: process5.env[SESSION_ID_ENV] || null,
+    providerSessionId: null,
     ...execution.jobMeta
   };
 }
@@ -7874,7 +10615,8 @@ function renderJobDetail(job) {
   if (job.baseRef) lines.push(`Base Ref: ${job.baseRef}`);
   if (job.createdAt) lines.push(`Created: ${job.createdAt}`);
   if (job.finishedAt) lines.push(`Finished: ${job.finishedAt}`);
-  if (job.sessionId) lines.push(`Session: ${job.sessionId}`);
+  const visibleSessionId = job.providerSessionId || job.hostSessionId || job.sessionId;
+  if (visibleSessionId) lines.push(`Session: ${visibleSessionId}`);
   if (job.progressPreview) {
     lines.push("");
     lines.push("Progress:");
@@ -7935,7 +10677,8 @@ function renderResultEnvelope(envelope) {
     `Status: ${envelope.job.status}`
   ];
   if (envelope.job.finishedAt) lines.push(`Finished: ${envelope.job.finishedAt}`);
-  if (envelope.job.sessionId) lines.push(`Session: ${envelope.job.sessionId}`);
+  const visibleSessionId = envelope.job.providerSessionId || envelope.job.hostSessionId || envelope.job.sessionId;
+  if (visibleSessionId) lines.push(`Session: ${visibleSessionId}`);
   if (result?.response) {
     lines.push("");
     lines.push("Response:");
@@ -7969,6 +10712,10 @@ function buildResultPayload(envelope) {
       finishedAt: job.finishedAt ?? null,
       pid: job.pid ?? null,
       logFile: job.logFile ?? null,
+      invocationId: job.invocationId ?? null,
+      attemptId: job.attemptId ?? null,
+      hostSessionId: job.hostSessionId ?? null,
+      providerSessionId: job.providerSessionId ?? null,
       sessionId: job.sessionId ?? null,
       error: job.error ?? null
     }
@@ -7976,19 +10723,22 @@ function buildResultPayload(envelope) {
 }
 async function startBackgroundExecution(execution, asJson) {
   const workspaceRoot = resolveWorkspaceRoot(execution.cwd);
-  const job = buildQueuedJob(execution, workspaceRoot);
+  const attemptId = createAttemptId();
+  const job = buildQueuedJob(execution, workspaceRoot, attemptId);
   upsertJob(workspaceRoot, job);
   const runContext = buildCurrentRunContext({
     command: execution.kind,
     jobId: job.jobId,
     provider: execution.provider,
     kind: execution.kind,
+    attemptId,
     model: execution.model || null,
     defaultModel: execution.defaultModel || null,
     logFile: job.logFile
   });
   writeJobConfigFile(workspaceRoot, job.jobId, {
     workspaceRoot,
+    hostSessionId: job.hostSessionId,
     execution: {
       ...execution,
       measurementScope: "job",
@@ -8030,10 +10780,10 @@ async function startBackgroundExecution(execution, asJson) {
     };
   });
   const runningJob = runningWrite.written ? runningWrite.job : getJob(workspaceRoot, job.jobId) || job;
-  if (!ACTIVE_JOB_STATUSES.has(runningJob.status)) {
+  if (!ACTIVE_JOB_STATUSES2.has(runningJob.status)) {
     removeJobConfigFile(workspaceRoot, job.jobId);
   }
-  if (runContext && ACTIVE_JOB_STATUSES.has(runningJob.status)) {
+  if (runContext && ACTIVE_JOB_STATUSES2.has(runningJob.status)) {
     await recordRunEventForContext(workspaceRoot, runContext, {
       command: execution.kind,
       kind: execution.kind,
@@ -8079,7 +10829,10 @@ async function runSetup(rawArgs) {
   const results = [];
   for (const provider of providers) {
     results.push({
-      ...await inspectProvider(provider, { probeAuth: Boolean(options["probe-auth"]) }),
+      ...await inspectSetupProvider(provider, {
+        probeAuth: Boolean(options["probe-auth"]),
+        workspaceRoot
+      }),
       stopReviewGate: gateConfig.stopReviewGate === true,
       stopReviewGateWorkspace: workspaceRoot
     });
@@ -8110,7 +10863,26 @@ async function probeProviderHealth({
   timeout,
   workspaceRoot
 }) {
-  const inspection = await inspectProviderAvailability(provider);
+  let providerSessionId = null;
+  let inspection;
+  try {
+    inspection = await inspectProviderAvailability(provider);
+  } catch (error) {
+    const runtime = getProviderRuntime(provider);
+    const detail = String(error?.message || error).slice(0, 300);
+    inspection = {
+      provider,
+      available: false,
+      availabilityDetail: detail,
+      loggedIn: null,
+      authState: "unknown",
+      authChecked: false,
+      authProbeCost: normalizeAuthProbeCost(runtime),
+      authDetail: "not checked because the availability probe failed",
+      model: null,
+      capabilities: runtime.capabilities
+    };
+  }
   const report = {
     ...inspection,
     ok: false,
@@ -8167,6 +10939,7 @@ async function probeProviderHealth({
       if (result.timing) {
         appendTimingRecord(workspaceRoot, result.timing);
       }
+      providerSessionId = result.sessionId ?? null;
       const response = result.response || "";
       const responseMatched = response.trim() === HEALTH_SENTINEL;
       report.probe = {
@@ -8184,6 +10957,10 @@ async function probeProviderHealth({
       report.probe.error = error.message;
     }
   }
+  Object.defineProperty(report, "_providerSessionId", {
+    value: providerSessionId,
+    enumerable: false
+  });
   return report;
 }
 function renderHealthReport(report) {
@@ -8227,33 +11004,84 @@ async function runHealth(rawArgs) {
     throw new Error("--model requires --provider for health; provider model names are not portable.");
   }
   const providers = hasSingleProvider ? [resolveProvider({ provider: options.provider, positionals }).provider] : listProviderRuntimes().map((runtime) => runtime.id);
-  const results = await Promise.all(providers.map((provider) => probeProviderHealth({
-    provider,
-    model: options.model || null,
-    timeout,
-    workspaceRoot
-  })));
-  for (const report of results) {
-    await recordRunEvent(workspaceRoot, {
+  const results = await Promise.all(providers.map(async (provider) => {
+    const attemptId = createAttemptId();
+    const runContext = buildCurrentRunContext({
       command: "health",
       kind: "health",
-      provider: report.provider,
-      phase: "health_result",
-      status: report.ok ? "passed" : "failed",
-      reason: report.ok ? "health_passed" : "health_failed",
-      model: report.model || null,
-      preview: report.probe?.responsePreview || null,
-      error: report.probe?.error ? { message: String(report.probe.error).slice(0, 300) } : null
+      provider,
+      attemptId,
+      model: options.model || null
     });
-    await recordRunEvent(workspaceRoot, {
+    await recordRunEventForContext(workspaceRoot, runContext, {
       command: "health",
       kind: "health",
-      provider: report.provider,
-      phase: "provider_decision",
-      status: report.ok ? "passed" : "skipped",
-      reason: report.ok ? "health_passed" : "health_failed"
+      provider,
+      phase: "attempt_started",
+      status: "started",
+      attempt: { ordinal: 1 },
+      model: options.model || null
     });
-  }
+    const report = await probeProviderHealth({
+      provider,
+      model: options.model || null,
+      timeout,
+      workspaceRoot
+    });
+    const providerResultOk = report.probe?.ok === true;
+    const terminalReason = providerResultOk ? null : "health_probe_failed";
+    const terminal = prepareTerminalRunEventsForContext(runContext, [
+      {
+        command: "health",
+        kind: "health",
+        provider,
+        phase: "attempt_result",
+        status: providerResultOk ? "completed" : "failed",
+        reason: terminalReason,
+        attempt: { ordinal: 1 },
+        model: report.model || null,
+        providerSessionId: report._providerSessionId,
+        preview: report.probe?.responsePreview || null,
+        errorCode: providerResultOk ? null : "health_failed",
+        failureClass: providerResultOk ? null : "health_failed",
+        error: report.probe?.error ? { message: String(report.probe.error).slice(0, 300) } : null
+      },
+      {
+        command: "health",
+        kind: "health",
+        provider,
+        phase: "provider_decision",
+        status: report.ok ? "passed" : "skipped",
+        reason: report.ok ? "health_passed" : "health_failed",
+        providerSessionId: report._providerSessionId
+      }
+    ]);
+    try {
+      ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+    } catch {
+      throw cliError(
+        "ledger_persist_failed",
+        "Failed to persist health attempt ledger events. Provider work may have occurred, but durable finalization is unverified.",
+        { runId: runContext?.runId ?? null, invocationId: runContext?.invocationId ?? null, attemptId }
+      );
+    }
+    try {
+      await recordRunEventForContext(workspaceRoot, runContext, {
+        command: "health",
+        kind: "health",
+        provider,
+        phase: "health_result",
+        status: report.ok ? "passed" : "failed",
+        reason: report.ok ? "health_passed" : "health_failed",
+        model: report.model || null,
+        providerSessionId: report._providerSessionId,
+        preview: report.probe?.responsePreview || null,
+        error: report.probe?.error ? { message: String(report.probe.error).slice(0, 300) } : null
+      });
+    } catch {
+    }
+    return report;
+  }));
   const payload = buildHealthPayload(results);
   if (!payload.anyHealthy) {
     process5.exitCode = 2;
@@ -8397,7 +11225,18 @@ function buildReviewExecution(rawArgs, { adversarial }) {
     maxDiffBytes
   });
   if (!reviewContext.ok) {
-    throw new Error(reviewContext.error);
+    const argument = options.base ? "--base" : "--scope";
+    const error = cliError(
+      "invalid_argument",
+      options.base ? `Unable to resolve review base '${String(options.base).slice(0, 200)}'.` : "Unable to collect the requested review diff.",
+      {
+        argument,
+        value: options.base || options.scope || "auto",
+        scope: options.scope || "auto"
+      }
+    );
+    error.legacyCode = "error";
+    throw error;
   }
   return {
     options,
@@ -8479,10 +11318,11 @@ async function runReviewCommand(rawArgs, { adversarial }) {
 async function runStatus(rawArgs) {
   const { options, positionals } = parseArgs(rawArgs, {
     booleanOptions: ["json", "all", "wait"],
-    valueOptions: ["timeout-ms"]
+    valueOptions: ["job", "for", "timeout-ms"]
   });
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
-  const reference = positionals[0] || null;
+  const reference = options.job || positionals[0] || null;
+  const selectorOptions = options.job ? { grammar: "explicit" } : void 0;
   const timeoutMs = options.wait ? parseStatusTimeoutMs(options["timeout-ms"]) : void 0;
   if (options.wait && options.all && !reference) {
     const waited = await waitForAllJobs(workspaceRoot, {
@@ -8499,31 +11339,33 @@ async function runStatus(rawArgs) {
     return;
   }
   if (options.wait) {
-    const target = reference ? resolveJobReference(workspaceRoot, reference) : resolveLatestActiveJob(workspaceRoot);
-    if (!target) {
-      throw new Error(reference ? `Job '${reference}' not found.` : "No active job found.");
-    }
+    const target = resolveJobSelector(workspaceRoot, reference || "latest-active", selectorOptions);
     const waited = await waitForJob(workspaceRoot, target.jobId, {
-      timeoutMs
+      timeoutMs,
+      for: options.for || "terminal"
     });
     if (waited.waitTimedOut) {
       process5.exitCode = 2;
+    }
+    if (waited.error && RUN_CONTEXT.outputMode === "json-v2") {
+      throw cliError("job_not_found", `Job '${target.jobId}' was not found while waiting.`, {
+        jobId: target.jobId
+      });
     }
     if (options.json) {
       output(waited, true);
       return;
     }
     if (waited.error) {
-      throw new Error(waited.error);
+      throw cliError("job_not_found", `Job '${target.jobId}' was not found while waiting.`, {
+        jobId: target.jobId
+      });
     }
     output(renderJobDetail(waited.job), false);
     return;
   }
   if (reference) {
-    const job = resolveJobReference(workspaceRoot, reference);
-    if (!job) {
-      throw new Error(`Job '${reference}' not found.`);
-    }
+    const job = resolveJobSelector(workspaceRoot, reference, selectorOptions);
     const refreshed = refreshJob(workspaceRoot, job);
     if (options.json) {
       output({ job: refreshed }, true);
@@ -8541,16 +11383,24 @@ async function runStatus(rawArgs) {
 }
 async function runResult(rawArgs) {
   const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json"]
+    booleanOptions: ["json"],
+    valueOptions: ["job"]
   });
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
-  const job = positionals[0] ? resolveJobReference(workspaceRoot, positionals[0]) : resolveLatestTerminalJob(workspaceRoot);
-  if (!job) {
-    throw new Error(positionals[0] ? `Job '${positionals[0]}' not found.` : "No completed job found.");
-  }
+  const job = resolveJobSelector(
+    workspaceRoot,
+    options.job || positionals[0] || "latest-terminal",
+    options.job ? { grammar: "explicit" } : void 0
+  );
   const refreshed = refreshJob(workspaceRoot, job);
   if (refreshed.status === "queued" || refreshed.status === "running") {
-    throw new Error(`Job '${refreshed.jobId}' is still ${refreshed.status}. Use status first.`);
+    const error = cliError(
+      "no_completed_job",
+      `Job '${refreshed.jobId}' is still ${refreshed.status}. Use status first.`,
+      { jobId: refreshed.jobId, status: refreshed.status }
+    );
+    error.legacyCode = "error";
+    throw error;
   }
   const envelope = readJobFile(resolveJobFile(workspaceRoot, refreshed.jobId)) || { job: refreshed, result: refreshed.result };
   if (options.json) {
@@ -8561,11 +11411,16 @@ async function runResult(rawArgs) {
 }
 async function runCancel(rawArgs) {
   const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json"]
+    booleanOptions: ["json"],
+    valueOptions: ["job"]
   });
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
-  const job = positionals[0] ? resolveJobReference(workspaceRoot, positionals[0]) : resolveLatestActiveJob(workspaceRoot);
-  if (!job) {
+  const selector = options.job || positionals[0] || "latest-active";
+  let job;
+  try {
+    job = resolveJobSelector(workspaceRoot, selector, options.job ? { grammar: "explicit" } : void 0);
+  } catch (error) {
+    if (RUN_CONTEXT.outputMode === "json-v2" || error.code === "ambiguous_selector") throw error;
     if (options.json) {
       output({ cancelled: false, reason: "not_found", jobId: positionals[0] || null }, true);
       process5.exitCode = 1;
@@ -8576,6 +11431,23 @@ async function runCancel(rawArgs) {
     return;
   }
   const report = await cancelJob(workspaceRoot, job.jobId);
+  if (RUN_CONTEXT.outputMode === "json-v2") {
+    if (report.cancelled) {
+      output(report, true);
+      return;
+    }
+    if (report.reason === "not_cancellable") {
+      output(report, true);
+      process5.exitCode = 4;
+      return;
+    }
+    throw new PolycliCliError({
+      code: report.reason === "worker_identity_unverified" ? "worker_identity_unverified" : "cancel_failed",
+      message: `Failed to cancel ${report.jobId}: ${report.error || report.reason}`,
+      exitCode: 5,
+      data: { jobId: report.jobId, reason: report.reason }
+    });
+  }
   if (options.json) {
     output(report, true);
   } else if (report.cancelled) {
@@ -8740,7 +11612,7 @@ async function runJobWorker(rawArgs) {
         pid: null,
         finishedAt,
         updatedAt: finishedAt,
-        sessionId: result.sessionId ?? null,
+        providerSessionId: result.sessionId ?? null,
         error: result.error ?? null
       };
       const terminalReason = result.ok ? null : `${execution.kind}_failed`;
@@ -8755,7 +11627,7 @@ async function runJobWorker(rawArgs) {
           attempt: { ordinal: 1 },
           jobId,
           model: result.model || null,
-          sessionId: result.sessionId ?? null,
+          providerSessionId: result.sessionId ?? null,
           sessionArtifactPath,
           defaultModel: result.defaultModel || null,
           preview: result.response ? String(result.response).slice(0, 180) : null,
@@ -8780,7 +11652,7 @@ async function runJobWorker(rawArgs) {
           status: result.ok ? "adopted" : "failed",
           reason: terminalReason,
           jobId,
-          sessionId: result.sessionId ?? null,
+          providerSessionId: result.sessionId ?? null,
           sessionArtifactPath
         }
       ] : [];
@@ -8888,51 +11760,65 @@ function formatDebugRunsTable(runs) {
   }
   return lines.join("\n");
 }
-async function runDebugCommand(rawArgs) {
-  const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json"]
-  });
-  const subcommand = positionals[0] || "runs";
+async function readDebugLedger({ raw = false } = {}) {
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
   refreshJobsForLedgerRecovery(workspaceRoot);
-  const events = await readRunLedgerEvents(workspaceRoot);
-  const asJson = Boolean(options.json);
-  if (subcommand === "runs") {
-    const runs = summarizeRunLedger(events);
-    if (asJson) {
-      output({ ok: true, runs }, true);
-      return;
-    }
-    output(formatDebugRunsTable(runs), false);
+  const events = await readRunLedgerEvents(workspaceRoot, { raw });
+  return { workspaceRoot, events };
+}
+async function runDebugTail(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, {
+    booleanOptions: ["json", "wait"],
+    valueOptions: ["after", "limit", "timeout-ms"]
+  });
+  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const result = await tailRunLedgerEvents(workspaceRoot, {
+    runId: positionals[0] || null,
+    after: options.after || null,
+    limit: options.limit == null ? void 0 : Number(options.limit),
+    wait: Boolean(options.wait),
+    timeoutMs: options["timeout-ms"] == null ? void 0 : Number(options["timeout-ms"])
+  });
+  if (result.waitTimedOut) process5.exitCode = 2;
+  if (options.json) {
+    output(result, true);
     return;
   }
-  if (subcommand === "show") {
-    const runId = positionals[1];
-    if (!runId) {
-      throw new Error("Missing run id for debug show.");
-    }
-    const runEvents = events.filter((event) => event.runId === runId);
-    if (asJson) {
-      output({ ok: true, runId, events: runEvents }, true);
-      return;
-    }
-    output(JSON.stringify({ runId, events: runEvents }, null, 2), false);
+  output(JSON.stringify(result, null, 2), false);
+}
+async function runDebugRuns(rawArgs) {
+  const { options } = parseArgs(rawArgs, { booleanOptions: ["json"] });
+  const { events } = await readDebugLedger();
+  const runs = summarizeRunLedger(events);
+  if (options.json) {
+    output({ ok: true, runs }, true);
     return;
   }
-  if (subcommand === "explain") {
-    const runId = positionals[1];
-    if (!runId) {
-      throw new Error("Missing run id for debug explain.");
-    }
-    const explanation = buildRunExplanation(events, runId);
-    if (asJson) {
-      output({ ok: true, ...explanation }, true);
-      return;
-    }
-    output(explanation.text, false);
+  output(formatDebugRunsTable(runs), false);
+}
+async function runDebugShow(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, { booleanOptions: ["json"] });
+  const runId = positionals[0];
+  if (!runId) throw cliError("invalid_argument", "Missing run id for debug show.");
+  const { events } = await readDebugLedger({ raw: RUN_CONTEXT.outputMode !== "json-v2" });
+  const runEvents = events.filter((event) => event.runId === runId);
+  if (options.json) {
+    output({ ok: true, runId, events: runEvents }, true);
     return;
   }
-  throw new Error(`Unknown subcommand 'debug ${subcommand}'.`);
+  output(JSON.stringify({ runId, events: runEvents }, null, 2), false);
+}
+async function runDebugExplain(rawArgs) {
+  const { options, positionals } = parseArgs(rawArgs, { booleanOptions: ["json"] });
+  const runId = positionals[0];
+  if (!runId) throw cliError("invalid_argument", "Missing run id for debug explain.");
+  const { events } = await readDebugLedger();
+  const explanation = buildRunExplanation(events, runId);
+  if (options.json) {
+    output({ ok: true, ...explanation }, true);
+    return;
+  }
+  output(explanation.text, false);
 }
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return "?";
@@ -8988,97 +11874,178 @@ function renderPurgePlan(plan, summary, nonPurgeable = []) {
   }
   return lines.join("\n");
 }
-async function runSessionsCommand(rawArgs) {
-  const { options, positionals } = parseArgs(rawArgs, {
-    booleanOptions: ["json", "confirm"]
-  });
-  const subcommand = positionals[0] || "list";
+async function readSessionLedger() {
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
   const events = await readRunLedgerEvents(workspaceRoot);
   const recorded = collectRecordedArtifacts(events);
   const nonPurgeable = collectNonPurgeableSessions(events);
-  const asJson = Boolean(options.json);
-  if (subcommand === "list") {
-    if (asJson) {
-      output({ ok: true, recorded, nonPurgeable }, true);
-      return;
-    }
-    output(renderSessionsList(recorded, nonPurgeable), false);
-    return;
-  }
-  if (subcommand === "purge") {
-    const homedir = defaultHomedir();
-    const plan = planPurge({ recorded, homedir });
-    const confirm = Boolean(options.confirm);
-    const summary = executePurge(plan, { confirm });
-    if (asJson) {
-      output({ ok: true, confirmed: summary.confirmed, plan, nonPurgeable, summary }, true);
-      return;
-    }
-    output(renderPurgePlan(plan, summary, nonPurgeable), false);
-    return;
-  }
-  throw new Error(`Unknown subcommand 'sessions ${subcommand}'.`);
+  return { recorded, nonPurgeable };
 }
-async function dispatchCommand(command, rawArgs) {
-  if (command === "setup") return runSetup(rawArgs);
-  if (command === "health") return runHealth(rawArgs);
-  if (command === "ask") return runAsk(rawArgs);
-  if (command === "rescue") return runRescue(rawArgs);
-  if (command === "review") return runReviewCommand(rawArgs, { adversarial: false });
-  if (command === "adversarial-review") return runReviewCommand(rawArgs, { adversarial: true });
-  if (command === "status") return runStatus(rawArgs);
-  if (command === "result") return runResult(rawArgs);
-  if (command === "cancel") return runCancel(rawArgs);
-  if (command === "timing") return runTiming(rawArgs);
-  if (command === "debug") return runDebugCommand(rawArgs);
-  if (command === "sessions") return runSessionsCommand(rawArgs);
-  if (command === "_stop-review-gate") return runStopReviewGate(rawArgs);
-  if (command === "_job-worker") return runJobWorker(rawArgs);
-  throw new Error(`Unknown subcommand '${command}'.`);
+async function runSessionsList(rawArgs) {
+  const { options } = parseArgs(rawArgs, { booleanOptions: ["json"] });
+  const { recorded, nonPurgeable } = await readSessionLedger();
+  if (options.json) {
+    output({ ok: true, recorded, nonPurgeable }, true);
+    return;
+  }
+  output(renderSessionsList(recorded, nonPurgeable), false);
+}
+async function runSessionsPurge(rawArgs) {
+  const { options } = parseArgs(rawArgs, { booleanOptions: ["json", "confirm"] });
+  const { recorded, nonPurgeable } = await readSessionLedger();
+  const homedir = defaultHomedir();
+  const plan = planPurge({ recorded, homedir });
+  const confirm = Boolean(options.confirm);
+  const summary = executePurge(plan, { confirm });
+  if (options.json) {
+    output({ ok: true, confirmed: summary.confirmed, plan, nonPurgeable, summary }, true);
+    return;
+  }
+  output(renderPurgePlan(plan, summary, nonPurgeable), false);
+}
+var COMMAND_HANDLERS = Object.freeze({
+  setup: runSetup,
+  health: runHealth,
+  ask: runAsk,
+  rescue: runRescue,
+  review: (args) => runReviewCommand(args, { adversarial: false }),
+  "adversarial-review": (args) => runReviewCommand(args, { adversarial: true }),
+  status: runStatus,
+  result: runResult,
+  cancel: runCancel,
+  timing: runTiming,
+  "debug.runs": runDebugRuns,
+  "debug.show": runDebugShow,
+  "debug.explain": runDebugExplain,
+  "debug.tail": runDebugTail,
+  "sessions.list": runSessionsList,
+  "sessions.purge": runSessionsPurge,
+  "agent-context": runAgentContext,
+  "_stop-review-gate": runStopReviewGate,
+  "_job-worker": runJobWorker
+});
+assertCommandRegistry({ handlerIds: Object.keys(COMMAND_HANDLERS) });
+async function dispatchCommand(commandId, rawArgs) {
+  const handler = COMMAND_HANDLERS[commandId];
+  if (!handler) throw cliError("unknown_command", `Unknown command '${commandId}'.`);
+  return handler(rawArgs);
+}
+function commandResolutionError(fullArgs, resolution, hostSurface) {
+  if (!resolution) {
+    const argument2 = fullArgs[0] || "";
+    const validCommands = listCommandDefinitions({ hostSurface, topLevelOnly: true }).map((entry) => entry.path[0]);
+    const suggestions2 = suggestFromCandidates(argument2, validCommands);
+    return cliError(
+      "unknown_command",
+      `Unknown command '${argument2}'.${suggestions2.length ? ` Did you mean ${suggestions2.join(" or ")}?` : ""}`,
+      { argument: argument2, validCommands, suggestions: suggestions2 }
+    );
+  }
+  const { definition: definition2, args } = resolution;
+  if (definition2.executable) return null;
+  if (args[0] === "--help" || args[0] === "-h") return null;
+  const argument = args[0] || "";
+  const validSubcommands = listCommandDefinitions({ hostSurface }).filter((entry) => entry.path.length === definition2.path.length + 1 && definition2.path.every((part, index) => entry.path[index] === part)).map((entry) => entry.path.at(-1));
+  const suggestions = suggestFromCandidates(argument, validSubcommands);
+  return cliError(
+    "unknown_subcommand",
+    `Unknown subcommand '${[...definition2.path, argument].filter(Boolean).join(" ")}'.${suggestions.length ? ` Did you mean ${suggestions.join(" or ")}?` : ""}`,
+    { command: definition2.path, argument, validSubcommands, suggestions }
+  );
 }
 async function main() {
   const fullArgs = process5.argv.slice(2);
-  const { argv: normalizedArgs, runId: explicitRunId } = stripRunIdArgs(fullArgs);
-  const [command, ...rawArgs] = normalizedArgs;
-  if (!command || command === "--help" || command === "-h") {
-    printUsage();
-    return;
-  }
-  if (hasHelpFlag(rawArgs) && command !== "_job-worker") {
-    printUsage();
-    return;
-  }
-  RUN_CONTEXT.command = command;
+  RUN_CONTEXT.invocationId = `inv_${randomUUID3().replaceAll("-", "").slice(0, 20)}`;
+  RUN_CONTEXT.authoritativeJsonWritten = false;
   RUN_CONTEXT.hostSurface = resolveHostSurface(process5.env, import.meta.url);
   RUN_CONTEXT.rawArgs = fullArgs;
-  RUN_CONTEXT.runId = RUN_TRACKED_COMMANDS.has(command) ? resolveRunId({ runId: explicitRunId }, process5.env) : null;
+  const outputModes = scanOutputModes(fullArgs);
+  const command = fullArgs[0];
+  const implicitLegacyJson = command === "setup" && RUN_CONTEXT.hostSurface === "claude-plugin" && !outputModes.json && !outputModes.jsonV2;
+  RUN_CONTEXT.outputMode = outputModes.jsonV2 ? "json-v2" : outputModes.json || implicitLegacyJson ? "legacy-json" : "text";
+  RUN_CONTEXT.command = command || null;
+  if (outputModes.conflict) {
+    throw cliError(
+      "invalid_argument",
+      "Options --json and --json-v2 cannot be used together.",
+      { argument: "--json-v2", conflictsWith: "--json" }
+    );
+  }
+  if (!command || command === "--help" || command === "-h") {
+    printUsage(RUN_CONTEXT.hostSurface);
+    return;
+  }
+  const resolution = resolveCommandPath(fullArgs, {
+    hostSurface: RUN_CONTEXT.hostSurface,
+    includeInternal: true
+  });
+  const resolutionError = commandResolutionError(fullArgs, resolution, RUN_CONTEXT.hostSurface);
+  if (resolutionError) throw resolutionError;
+  const { definition: definition2 } = resolution;
+  RUN_CONTEXT.command = definition2.id;
+  const parsed = parseCommandArgs(definition2, resolution.args, {
+    enumSources: { providers: PROVIDER_IDS }
+  });
+  RUN_CONTEXT.background = parsed.options.background === true;
+  if (parsed.options.help && definition2.visibility !== "internal") {
+    console.log(renderCommandHelp(definition2));
+    return;
+  }
+  assertPreDispatchReviewSafety(definition2, parsed);
+  const adaptedArgs = adaptArgsForLegacyHandler(resolution.args);
+  if (implicitLegacyJson) adaptedArgs.push("--json");
+  const { argv: rawArgs, runId: explicitRunId } = stripRunIdArgs(adaptedArgs);
+  if (definition2.id === "agent-context") {
+    RUN_CONTEXT.runId = null;
+    RUN_CONTEXT.workspaceSlug = null;
+    return dispatchCommand(definition2.id, rawArgs);
+  }
+  if (definition2.runTracked) {
+    try {
+      RUN_CONTEXT.runId = resolveRunId({ runId: explicitRunId }, process5.env);
+    } catch (error) {
+      if (!/^Invalid run id:/.test(error?.message || "")) throw error;
+      const typed = cliError("invalid_argument", error.message, {
+        argument: "--run-id",
+        value: explicitRunId || process5.env.POLYCLI_RUN_ID || null
+      });
+      typed.legacyCode = "error";
+      throw typed;
+    }
+  } else {
+    RUN_CONTEXT.runId = null;
+  }
+  RUN_CONTEXT.workspaceSlug = computeWorkspaceSlug(resolveWorkspaceRoot(process5.cwd()));
   if (!RUN_CONTEXT.runId) {
-    return dispatchCommand(command, rawArgs);
+    return dispatchCommand(definition2.id, rawArgs);
   }
   const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
   await recordRunEvent(workspaceRoot, { phase: "run_started", status: "started" });
   try {
-    const result = await dispatchCommand(command, rawArgs);
+    const result = await dispatchCommand(definition2.id, rawArgs);
     const failed = process5.exitCode != null && process5.exitCode !== 0;
-    await recordRunEvent(workspaceRoot, {
-      phase: "run_summary",
-      status: failed ? "failed" : "completed"
-    });
+    try {
+      await recordRunEvent(workspaceRoot, {
+        phase: "run_summary",
+        status: failed ? "failed" : "completed"
+      });
+    } catch (summaryError) {
+      if (!RUN_CONTEXT.authoritativeJsonWritten) throw summaryError;
+    }
     return result;
   } catch (error) {
-    await recordRunEvent(workspaceRoot, {
-      phase: "run_summary",
-      status: "failed",
-      error: { message: String(error?.message || error).slice(0, 300) }
-    });
+    try {
+      await recordRunEvent(workspaceRoot, {
+        phase: "run_summary",
+        status: "failed",
+        error: { message: String(error?.message || error).slice(0, 300) }
+      });
+    } catch (summaryError) {
+      if (error?.code !== "ledger_persist_failed") throw summaryError;
+    }
     throw error;
   }
 }
 main().catch((error) => {
-  exitWithError({
-    message: error.message,
-    asJson: wantsJson(process5.argv.slice(2)),
-    exitCode: process5.exitCode || 1
-  });
+  exitWithError(error);
 });

@@ -1,13 +1,13 @@
 ---
 description: Check provider installation and status-only authentication; opt in to model auth probes with --probe-auth
-argument-hint: '[--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax|grok>] [--probe-auth] [--enable-review-gate|--disable-review-gate]'
+argument-hint: '[--provider <claude|copilot|opencode|pi|cmd|agy|gemini|kimi|qwen|minimax|grok>] [--probe-auth] [--enable-review-gate|--disable-review-gate] [--json|--json-v2]'
 allowed-tools: Bash(node:*)
 ---
 
 Run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/polycli-companion.bundle.mjs" setup --json "$ARGUMENTS"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/polycli-companion.bundle.mjs" setup "$ARGUMENTS"
 ```
 
 Render the JSON faithfully.

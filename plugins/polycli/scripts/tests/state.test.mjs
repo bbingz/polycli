@@ -9,6 +9,7 @@ import {
   listJobs,
   loadState,
   readJobFile,
+  readJobConfigFile,
   readLastUsedProvider,
   resolveJobsDir,
   resolveStateFile,
@@ -25,6 +26,7 @@ import {
   writeJobConfigFile,
   writeJobFile,
 } from "../lib/state.mjs";
+import { readStateWithPreGateBReader } from "./fixtures/pre-gate-b-readers.mjs";
 
 function fileMode(filePath) {
   return fs.statSync(filePath).mode & 0o777;
@@ -298,7 +300,12 @@ test("updateJobAtomically preserves a terminal envelope when its pre-state hook 
             assert.equal(hookCurrent?.status, "running");
             assert.equal(hookJob.status, "completed");
             assert.deepEqual(hookEnvelope, envelope);
-            assert.deepEqual(readJobFile(resolveJobFile(workspaceRoot, "job-recoverable")), envelope);
+            const persistedEnvelope = readJobFile(resolveJobFile(workspaceRoot, "job-recoverable"));
+            assert.equal(persistedEnvelope.job.status, "completed");
+            assert.equal(persistedEnvelope.job.hostSessionId, null);
+            assert.equal(persistedEnvelope.job.providerSessionId, null);
+            assert.equal(persistedEnvelope.result.response, "durable terminal intent");
+            assert.equal(persistedEnvelope.result.providerSessionId, null);
             assert.equal(loadState(workspaceRoot).jobs[0].status, "running");
             throw new Error("terminal ledger unavailable");
           },
@@ -358,5 +365,134 @@ test("updateJobAtomically can skip queued-to-running writes after terminal compl
 
     assert.equal(staleRunningWrite.written, false);
     assert.equal(listJobs(workspaceRoot)[0].status, "completed");
+  });
+});
+
+test("state v2 writes explicit host/provider identities while legacy jobs normalize conservatively", () => {
+  withPluginData(() => {
+    const workspaceRoot = "/tmp/polycli-state-v2-identities";
+    ensureStateDir(workspaceRoot);
+    fs.writeFileSync(resolveStateFile(workspaceRoot), `${JSON.stringify({
+      version: 1,
+      config: {},
+      jobs: [
+        { jobId: "legacy-active", status: "running", sessionId: "host-legacy" },
+        { jobId: "legacy-terminal", status: "completed", sessionId: "provider-legacy" },
+        {
+          jobId: "explicit-active",
+          status: "running",
+          sessionId: "stale-ambiguous-value",
+          hostSessionId: "host-explicit",
+          providerSessionId: "provider-explicit",
+          invocationId: "inv_11111111111111111111",
+          attemptId: "att_22222222222222222222",
+        },
+      ],
+    }, null, 2)}\n`, "utf8");
+
+    const loaded = loadState(workspaceRoot);
+    assert.equal(loaded.version, 1);
+    assert.deepEqual(
+      loaded.jobs.map((job) => ({
+        jobId: job.jobId,
+        hostSessionId: job.hostSessionId,
+        providerSessionId: job.providerSessionId,
+        sessionId: job.sessionId,
+        invocationId: job.invocationId,
+        attemptId: job.attemptId,
+      })),
+      [
+        {
+          jobId: "legacy-active",
+          hostSessionId: "host-legacy",
+          providerSessionId: null,
+          sessionId: "host-legacy",
+          invocationId: null,
+          attemptId: null,
+        },
+        {
+          jobId: "legacy-terminal",
+          hostSessionId: null,
+          providerSessionId: "provider-legacy",
+          sessionId: "provider-legacy",
+          invocationId: null,
+          attemptId: null,
+        },
+        {
+          jobId: "explicit-active",
+          hostSessionId: "host-explicit",
+          providerSessionId: "provider-explicit",
+          sessionId: "host-explicit",
+          invocationId: "inv_11111111111111111111",
+          attemptId: "att_22222222222222222222",
+        },
+      ],
+    );
+
+    const saved = saveState(workspaceRoot, loaded);
+    assert.equal(saved.version, 2);
+    assert.equal(JSON.parse(fs.readFileSync(resolveStateFile(workspaceRoot), "utf8")).version, 2);
+  });
+});
+
+test("the pre-Gate-B state reader tolerates additive v2 job identity fields", () => {
+  withPluginData(() => {
+    const workspaceRoot = "/tmp/polycli-pre-gate-b-state-reader";
+    saveState(workspaceRoot, {
+      version: 2,
+      config: {},
+      jobs: [{
+        jobId: "job-v2-additive",
+        status: "running",
+        hostSessionId: "host-v2",
+        providerSessionId: null,
+        invocationId: "inv_11111111111111111111",
+        attemptId: "att_22222222222222222222",
+      }],
+    });
+
+    const rolledBack = readStateWithPreGateBReader(resolveStateFile(workspaceRoot));
+    assert.equal(rolledBack.version, 2);
+    assert.equal(rolledBack.jobs[0].hostSessionId, "host-v2");
+    assert.equal(rolledBack.jobs[0].attemptId, "att_22222222222222222222");
+  });
+});
+
+test("upsertJob returns the same normalized v2 identity shape that it persists", () => {
+  withPluginData(() => {
+    const workspaceRoot = "/tmp/polycli-state-v2-upsert-return";
+    const saved = upsertJob(workspaceRoot, {
+      jobId: "job-upsert-v2",
+      status: "queued",
+      sessionId: "legacy-host-input",
+    });
+
+    assert.equal(saved.hostSessionId, "legacy-host-input");
+    assert.equal(saved.providerSessionId, null);
+    assert.equal(saved.invocationId, null);
+    assert.deepEqual(saved, listJobs(workspaceRoot)[0]);
+  });
+});
+
+test("job envelope and config readers tolerate missing v2 identity fields without inventing them", () => {
+  withPluginData(() => {
+    const workspaceRoot = "/tmp/polycli-state-v2-job-readers";
+    writeJobFile(workspaceRoot, "legacy-result", {
+      job: { jobId: "legacy-result", status: "completed", sessionId: "provider-from-job" },
+      result: { ok: true, sessionId: "provider-from-result" },
+    });
+    writeJobConfigFile(workspaceRoot, "legacy-result", {
+      runContext: { runId: "run-legacy" },
+    });
+
+    const envelope = readJobFile(resolveJobFile(workspaceRoot, "legacy-result"));
+    assert.equal(envelope.job.hostSessionId, null);
+    assert.equal(envelope.job.providerSessionId, "provider-from-job");
+    assert.equal(envelope.result.providerSessionId, "provider-from-result");
+    assert.equal(envelope.result.sessionId, "provider-from-result");
+
+    const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, "legacy-result"));
+    assert.equal(config.runContext.invocationId, null);
+    assert.equal(config.runContext.attemptId, null);
   });
 });

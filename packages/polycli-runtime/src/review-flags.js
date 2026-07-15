@@ -28,6 +28,8 @@
 //   forbidFlags        — flags that must NOT appear in a provider's supported
 //                        review-safety contract.
 //   reviewUnsupported  — true when the provider has no read-only mode.
+//   reviewSafety       — explicit ordinary review safety: enforced,
+//                        prompt_only, or unsupported.
 //   probes             — multi-step help probes (minimax: text-chat then root).
 //   stopReviewGateSafety — whether the automatic stop gate may issue its
 //                        custom prompt: enforced, prompt_only, or unsupported.
@@ -38,6 +40,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     extraArgTokens: Object.freeze(["--tools", "--mcp-config", "--strict-mcp-config"]),
     readOnlyOptionKey: "permissionMode",
     readOnlyValue: "plan",
+    reviewSafety: "enforced",
     stopReviewGateSafety: "enforced",
   }),
   gemini: Object.freeze({
@@ -45,6 +48,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     extraArgTokens: Object.freeze(["--extensions", "--allowed-mcp-server-names"]),
     readOnlyOptionKey: "approvalMode",
     readOnlyValue: "plan",
+    reviewSafety: "enforced",
     stopReviewGateSafety: "enforced",
   }),
   qwen: Object.freeze({
@@ -67,6 +71,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     extraArgTokens: Object.freeze(["--exclude-tools"]),
     readOnlyOptionKey: "approvalMode",
     readOnlyValue: "plan",
+    reviewSafety: "enforced",
     stopReviewGateSafety: "enforced",
   }),
   copilot: Object.freeze({
@@ -80,6 +85,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     extraArgTokens: Object.freeze(["--excluded-tools"]),
     readOnlyOptionKeys: Object.freeze(["allowAllTools", "allowAllPaths", "allowAllUrls"]),
     readOnlyValue: null,
+    reviewSafety: "enforced",
     stopReviewGateSafety: "enforced",
   }),
   opencode: Object.freeze({
@@ -87,6 +93,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     extraArgTokens: Object.freeze(["--agent"]),
     readOnlyOptionKey: "skipPermissions",
     readOnlyValue: null,
+    reviewSafety: "enforced",
     stopReviewGateSafety: "enforced",
   }),
   pi: Object.freeze({
@@ -105,6 +112,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     ]),
     readOnlyOptionKey: null,
     readOnlyValue: null,
+    reviewSafety: "enforced",
     stopReviewGateSafety: "enforced",
   }),
   cmd: Object.freeze({
@@ -112,6 +120,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     extraArgTokens: Object.freeze(["--permission-mode"]),
     readOnlyOptionKey: "yolo",
     readOnlyValue: null,
+    reviewSafety: "enforced",
     stopReviewGateSafety: "enforced",
   }),
   kimi: Object.freeze({
@@ -121,6 +130,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     // (-p/--prompt + --output-format), so the drift check warns if kimi-code renames or drops them.
     expectFlags: Object.freeze(["--prompt", "--output-format"]),
     extraArgTokens: Object.freeze([]),
+    reviewSafety: "prompt_only",
     stopReviewGateSafety: "prompt_only",
   }),
   agy: Object.freeze({
@@ -130,6 +140,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     expectFlags: Object.freeze(["--mode"]),
     extraArgTokens: Object.freeze([]),
     reviewUnsupported: true,
+    reviewSafety: "unsupported",
     stopReviewGateSafety: "unsupported",
   }),
   minimax: Object.freeze({
@@ -139,6 +150,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
       Object.freeze({ helpArgs: Object.freeze(["text", "chat", "--help"]), expect: Object.freeze(["--message"]) }),
       Object.freeze({ helpArgs: Object.freeze(["--help"]), expect: Object.freeze(["--output", "--non-interactive"]) }),
     ]),
+    reviewSafety: "prompt_only",
     stopReviewGateSafety: "prompt_only",
   }),
   grok: Object.freeze({
@@ -148,6 +160,7 @@ export const REVIEW_FLAG_EXPECTATIONS = Object.freeze({
     extraArgTokens: Object.freeze([]),
     readOnlyOptionKey: "permissionMode",
     readOnlyValue: "plan",
+    reviewSafety: "enforced",
     stopReviewGateSafety: "enforced",
   }),
 });

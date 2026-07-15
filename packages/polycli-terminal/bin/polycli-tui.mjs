@@ -5,26 +5,43 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 
+import { parseArgs as parseRegisteredArgs } from "@bbingz/polycli-utils/args";
+import { getTerminalCommandDefinition } from "../lib/command-surface.generated.mjs";
 import { applyKey, renderTuiFrame } from "../lib/tui/view-model.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const companionPath = path.join(__dirname, "polycli-companion.bundle.mjs");
 
 function parseArgs(argv) {
-  const options = { history: null, runId: null, smoke: false, fixtureDir: null, scriptKeys: [] };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === "--run-id") options.runId = argv[++i] || null;
-    else if (arg.startsWith("--run-id=")) options.runId = arg.slice("--run-id=".length);
-    else if (arg === "--history") options.history = argv[++i] || null;
-    else if (arg.startsWith("--history=")) options.history = arg.slice("--history=".length);
-    else if (arg === "--smoke") options.smoke = true;
-    else if (arg === "--fixture-dir") options.fixtureDir = argv[++i] || null;
-    else if (arg === "--script-keys") options.scriptKeys = parseScriptKeys(argv[++i]);
-    else if (arg.startsWith("--script-keys=")) options.scriptKeys = parseScriptKeys(arg.slice("--script-keys=".length));
-    else throw new Error(`Unknown tui option: ${arg}`);
-  }
-  return options;
+  const definition = getTerminalCommandDefinition(["tui"]);
+  const valueOptions = definition.options.filter((entry) => entry.type !== "boolean").map((entry) => entry.name);
+  const booleanOptions = definition.options.filter((entry) => entry.type === "boolean").map((entry) => entry.name);
+  const aliasMap = Object.fromEntries(
+    definition.options.flatMap((entry) => entry.aliases.map((alias) => [alias, entry.name])),
+  );
+  const parsed = parseRegisteredArgs(argv, {
+    valueOptions,
+    booleanOptions,
+    aliasMap,
+    unknownOptionMode: "error",
+    rejectDuplicateOptions: true,
+  });
+  return {
+    history: parsed.options.history ?? null,
+    runId: parsed.options["run-id"] ?? null,
+    smoke: Boolean(parsed.options.smoke),
+    fixtureDir: parsed.options["fixture-dir"] ?? null,
+    scriptKeys: parseScriptKeys(parsed.options["script-keys"]),
+    help: Boolean(parsed.options.help),
+  };
+}
+
+function renderTuiHelp() {
+  const definition = getTerminalCommandDefinition(["tui"]);
+  const options = definition.options
+    .filter((entry) => entry.visibility !== "internal")
+    .map((entry) => `  ${entry.forms.join(", ").padEnd(30)} ${entry.description}`.trimEnd());
+  return ["Usage:", `  ${definition.usage}`, "", definition.summary, "", "Options:", ...options].join("\n");
 }
 
 function parseScriptKeys(value) {
@@ -205,7 +222,9 @@ async function interactive(options) {
 
 try {
   const options = parseArgs(process.argv.slice(2));
-  if (options.smoke) {
+  if (options.help) {
+    process.stdout.write(`${renderTuiHelp()}\n`);
+  } else if (options.smoke) {
     let state = buildInitialState(options);
     for (const keyId of options.scriptKeys) {
       state = dispatchKey(state, keyId, options);

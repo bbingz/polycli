@@ -31,6 +31,21 @@ function isUnder(root, target) {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
+function providerSessionIdFromEvent(event) {
+  if (!event || typeof event !== "object") return null;
+  if (Object.prototype.hasOwnProperty.call(event, "providerSessionId")) {
+    return typeof event.providerSessionId === "string" && event.providerSessionId.length > 0
+      ? event.providerSessionId
+      : null;
+  }
+  // Ledger schema v1 (and pre-version fixtures) used sessionId exclusively for the
+  // upstream provider identity. Schema v2 never falls back from an explicit null.
+  if (event.version === 2) return null;
+  return typeof event.sessionId === "string" && event.sessionId.length > 0
+    ? event.sessionId
+    : null;
+}
+
 /**
  * Returns at most ONE candidate artifact path for the provider, or
  * {path:null, reason}. The implementer verified each per-provider derivation
@@ -124,7 +139,7 @@ export function recordArtifactPath(candidate, { homedir, lstatFn = fs.lstatSync,
 }
 
 /**
- * Distinct {provider, sessionId, sessionArtifactPath, workspaceRoot} where
+ * Distinct {provider, providerSessionId, sessionId, sessionArtifactPath, workspaceRoot} where
  * sessionArtifactPath != null. Events without a recorded path are not purgeable.
  */
 export function collectRecordedArtifacts(events = []) {
@@ -134,12 +149,19 @@ export function collectRecordedArtifacts(events = []) {
     const sessionArtifactPath = event?.sessionArtifactPath;
     if (typeof sessionArtifactPath !== "string" || sessionArtifactPath.length === 0) continue;
     const provider = event.provider ?? null;
-    const sessionId = event.sessionId ?? null;
+    const providerSessionId = providerSessionIdFromEvent(event);
+    if (!providerSessionId) continue;
     const workspaceRoot = event.workspaceRoot ?? null;
-    const key = JSON.stringify([provider, sessionId, sessionArtifactPath, workspaceRoot]);
+    const key = JSON.stringify([provider, providerSessionId, sessionArtifactPath, workspaceRoot]);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ provider, sessionId, sessionArtifactPath, workspaceRoot });
+    out.push({
+      provider,
+      providerSessionId,
+      sessionId: providerSessionId,
+      sessionArtifactPath,
+      workspaceRoot,
+    });
   }
   return out;
 }
@@ -155,26 +177,37 @@ export function collectRecordedArtifacts(events = []) {
 export function collectNonPurgeableSessions(events = [], { homedir = os.homedir() } = {}) {
   const withPath = new Set();
   for (const event of events) {
+    const providerSessionId = providerSessionIdFromEvent(event);
     if (
       typeof event?.sessionArtifactPath === "string"
       && event.sessionArtifactPath.length > 0
-      && typeof event?.sessionId === "string"
+      && providerSessionId
     ) {
-      withPath.add(JSON.stringify([event.provider ?? null, event.sessionId, event.workspaceRoot ?? null]));
+      withPath.add(JSON.stringify([event.provider ?? null, providerSessionId, event.workspaceRoot ?? null]));
     }
   }
   const seen = new Set();
   const out = [];
   for (const event of events) {
-    const sessionId = event?.sessionId;
-    if (typeof sessionId !== "string" || sessionId.length === 0) continue;
+    const providerSessionId = providerSessionIdFromEvent(event);
+    if (!providerSessionId) continue;
     const provider = event.provider ?? null;
     const workspaceRoot = event.workspaceRoot ?? null;
-    const key = JSON.stringify([provider, sessionId, workspaceRoot]);
+    const key = JSON.stringify([provider, providerSessionId, workspaceRoot]);
     if (withPath.has(key) || seen.has(key)) continue;
     seen.add(key);
-    const derived = deriveSessionArtifactCandidate({ provider, sessionId, workspaceRoot, homedir });
-    out.push({ provider, sessionId, reason: derived?.reason ?? "no recorded artifact path" });
+    const derived = deriveSessionArtifactCandidate({
+      provider,
+      sessionId: providerSessionId,
+      workspaceRoot,
+      homedir,
+    });
+    out.push({
+      provider,
+      providerSessionId,
+      sessionId: providerSessionId,
+      reason: derived?.reason ?? "no recorded artifact path",
+    });
   }
   return out;
 }
@@ -200,8 +233,15 @@ export function planPurge({ recorded = [], homedir, lstatFn = fs.lstatSync, real
   const resolveSize = typeof sizeFn === "function" ? sizeFn : defaultSizeFn;
 
   for (const rec of recorded) {
-    const { provider, sessionId } = rec;
+    const { provider } = rec;
+    const providerSessionId = Object.prototype.hasOwnProperty.call(rec, "providerSessionId")
+      ? rec.providerSessionId
+      : rec.sessionId;
     const candidatePath = rec.sessionArtifactPath;
+    if (typeof providerSessionId !== "string" || providerSessionId.length === 0) {
+      skipped.push({ provider, reason: "no provider session id" });
+      continue;
+    }
     if (typeof candidatePath !== "string" || candidatePath.length === 0) {
       skipped.push({ provider, reason: "no recorded artifact path" });
       continue;
@@ -237,13 +277,19 @@ export function planPurge({ recorded = [], homedir, lstatFn = fs.lstatSync, real
     // artifacts the basename is <sessionId>.jsonl; for the kimi dir-type the dir
     // basename equals <sessionId>.
     const base = path.basename(candidatePath);
-    const fileMatch = base === `${sessionId}.jsonl`;
-    const dirMatch = base === sessionId;
+    const fileMatch = base === `${providerSessionId}.jsonl`;
+    const dirMatch = base === providerSessionId;
     if (!fileMatch && !dirMatch) {
       skipped.push({ path: candidatePath, reason: "refused: basename no longer matches the recorded sessionId" });
       continue;
     }
-    deletable.push({ provider, sessionId, path: candidatePath, bytes: resolveSize(candidatePath) });
+    deletable.push({
+      provider,
+      providerSessionId,
+      sessionId: providerSessionId,
+      path: candidatePath,
+      bytes: resolveSize(candidatePath),
+    });
   }
   return { deletable, skipped };
 }

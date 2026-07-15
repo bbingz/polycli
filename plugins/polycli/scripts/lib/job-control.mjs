@@ -22,10 +22,13 @@ import {
   deriveSessionArtifactCandidate,
   recordArtifactPath,
 } from "./sessions.mjs";
+import { PolycliCliError } from "./cli-contract.mjs";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const WAIT_TARGETS = new Set(["terminal", "completed", "failed", "cancelled"]);
 const DEFAULT_STATUS_LIMIT = 8;
+const MAX_SELECTOR_CANDIDATES = 8;
 
 function isProcessAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -37,7 +40,7 @@ function isProcessAlive(pid) {
   }
 }
 
-function isExpectedWorkerProcess(pid, configFile) {
+export function isExpectedWorkerProcess(pid, configFile) {
   if (!Number.isInteger(pid) || pid <= 0 || !configFile) return null;
   try {
     const result = process.platform === "win32"
@@ -112,13 +115,13 @@ function buildRecoveredTerminalEvents(
   // (Q9a) so worker-recovered runs are purgeable too — same honest rules as the
   // companion run site: derive ONE candidate, record only if it exists + is not a
   // symlink + realpath stays under the provider store root, else null.
-  const recoveredSessionId = result?.sessionId ?? job.sessionId ?? null;
+  const recoveredProviderSessionId = result?.providerSessionId ?? job.providerSessionId ?? null;
   const recoveredCwd = config?.execution?.cwd ?? config?.workspaceRoot ?? workspaceRoot ?? null;
-  const sessionArtifactPath = recoveredSessionId && recoveredCwd
+  const sessionArtifactPath = recoveredProviderSessionId && recoveredCwd
     ? recordArtifactPath(
         deriveSessionArtifactCandidate({
           provider,
-          sessionId: recoveredSessionId,
+          sessionId: recoveredProviderSessionId,
           workspaceRoot: recoveredCwd,
           homedir: os.homedir(),
         }),
@@ -132,8 +135,11 @@ function buildRecoveredTerminalEvents(
     commands: command ? [command] : [],
     kind,
     provider,
+    invocationId: runContext.invocationId ?? job.invocationId ?? null,
     jobId: job.jobId,
-    sessionId: recoveredSessionId,
+    attemptId: runContext.attemptId ?? job.attemptId ?? null,
+    providerSessionId: recoveredProviderSessionId,
+    sessionId: recoveredProviderSessionId,
     sessionArtifactPath,
     // A descriptor-bearing envelope came from the worker finalizer, whose terminal event records
     // only upstream-returned model fields. Do not substitute configured defaults during recovery:
@@ -190,7 +196,10 @@ function applyTerminalDescriptor(events, terminalDescriptor) {
       kind: material.kind,
       hostSurface: material.hostSurface,
       attempt: material.attempt,
-      sessionId: material.sessionId,
+      invocationId: material.invocationId ?? event.invocationId ?? null,
+      attemptId: material.attemptId ?? event.attemptId ?? null,
+      providerSessionId: material.providerSessionId ?? material.sessionId ?? event.providerSessionId ?? null,
+      sessionId: material.providerSessionId ?? material.sessionId ?? event.providerSessionId ?? null,
       model: material.model,
       defaultModel: material.defaultModel,
       timingRef: material.timingRef,
@@ -271,6 +280,10 @@ export function refreshJob(workspaceRoot, job) {
         ? {
           ...latest,
           ...storedEnvelope.job,
+          hostSessionId: storedEnvelope.job.hostSessionId ?? latest.hostSessionId ?? null,
+          invocationId: storedEnvelope.job.invocationId ?? latest.invocationId ?? null,
+          attemptId: storedEnvelope.job.attemptId ?? latest.attemptId ?? null,
+          providerSessionId: storedEnvelope.job.providerSessionId ?? latest.providerSessionId ?? null,
           pid: null,
         }
         : {
@@ -303,16 +316,24 @@ export function refreshJob(workspaceRoot, job) {
         ? storedEnvelope.terminalReason
         : inferredReason;
       const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, latest.jobId));
-      const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalized, config, {
+      const providerSessionId = result?.providerSessionId ?? finalized.providerSessionId ?? null;
+      const finalizedWithIdentities = {
+        ...finalized,
+        invocationId: finalized.invocationId ?? config?.runContext?.invocationId ?? null,
+        attemptId: finalized.attemptId ?? config?.runContext?.attemptId ?? null,
+        providerSessionId,
+        sessionId: providerSessionId,
+      };
+      const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalizedWithIdentities, config, {
         result,
         reason: terminalReason,
         terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null,
       });
 
       return {
-        job: finalized,
+        job: finalizedWithIdentities,
         envelope: {
-          job: finalized,
+          job: finalizedWithIdentities,
           result,
           terminalReason,
           terminalDescriptor: terminal.terminalDescriptor,
@@ -367,6 +388,127 @@ export function resolveJobReference(workspaceRoot, reference, predicate = () => 
   return null;
 }
 
+function selectorError(code, message, selector, data = {}) {
+  return new PolycliCliError({
+    code,
+    message,
+    data: {
+      selector,
+      ...data,
+    },
+  });
+}
+
+function resolveUniquePrefix(candidates, prefix, selector) {
+  const matches = candidates.filter((job) => job.jobId.startsWith(prefix));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    throw selectorError(
+      "ambiguous_selector",
+      `Job selector '${selector}' matches more than one job.`,
+      selector,
+      { candidateIds: matches.slice(0, MAX_SELECTOR_CANDIDATES).map((job) => job.jobId) },
+    );
+  }
+  throw selectorError(
+    "job_not_found",
+    `Job selector '${selector}' did not match a job in this workspace.`,
+    selector,
+  );
+}
+
+/**
+ * Resolve one job from the current workspace's persisted state only.
+ *
+ * The optional predicate narrows the candidate set before selector semantics are
+ * applied. Callers can therefore make `latest` mean the newest job acceptable
+ * to that command without weakening the explicit active/terminal selectors.
+ */
+export function resolveJobSelector(workspaceRoot, selector = "latest", {
+  predicate = () => true,
+  grammar = "compat",
+} = {}) {
+  if (grammar !== "compat" && grammar !== "explicit") {
+    throw new TypeError(`Unknown job selector grammar '${grammar}'.`);
+  }
+  const normalizedSelector = selector == null || selector === "" ? "latest" : String(selector);
+  const candidates = sortJobsNewestFirst(listJobs(workspaceRoot)).filter(predicate);
+
+  if (normalizedSelector === "latest") {
+    const latest = candidates[0] || null;
+    if (latest) return latest;
+    throw selectorError(
+      "job_not_found",
+      "No job matches the selector in this workspace.",
+      normalizedSelector,
+    );
+  }
+
+  if (normalizedSelector === "latest-active") {
+    const latest = candidates.find((job) => ACTIVE_STATUSES.has(job.status)) || null;
+    if (latest) return latest;
+    throw selectorError(
+      "no_active_job",
+      "No active job exists in this workspace.",
+      normalizedSelector,
+    );
+  }
+
+  if (normalizedSelector === "latest-terminal") {
+    const latest = candidates.find((job) => TERMINAL_STATUSES.has(job.status)) || null;
+    if (latest) return latest;
+    throw selectorError(
+      "no_completed_job",
+      "No terminal job exists in this workspace.",
+      normalizedSelector,
+    );
+  }
+
+  if (normalizedSelector.startsWith("id:")) {
+    const jobId = normalizedSelector.slice("id:".length);
+    if (!jobId) {
+      throw selectorError(
+        "invalid_argument",
+        "The id: selector requires a full job id.",
+        normalizedSelector,
+      );
+    }
+    const exact = candidates.find((job) => job.jobId === jobId) || null;
+    if (exact) return exact;
+    throw selectorError(
+      "job_not_found",
+      `Job '${jobId}' was not found in this workspace.`,
+      normalizedSelector,
+    );
+  }
+
+  if (normalizedSelector.startsWith("prefix:")) {
+    const prefix = normalizedSelector.slice("prefix:".length);
+    if (!prefix) {
+      throw selectorError(
+        "invalid_argument",
+        "The prefix: selector requires a non-empty job-id prefix.",
+        normalizedSelector,
+      );
+    }
+    return resolveUniquePrefix(candidates, prefix, normalizedSelector);
+  }
+
+  if (grammar === "explicit") {
+    throw selectorError(
+      "invalid_argument",
+      `Job selector '${normalizedSelector}' must use id:, prefix:, latest, latest-active, or latest-terminal grammar.`,
+      normalizedSelector,
+      { grammar },
+    );
+  }
+
+  // Compatibility: a bare reference is exact first, then a unique prefix.
+  const exact = candidates.find((job) => job.jobId === normalizedSelector) || null;
+  if (exact) return exact;
+  return resolveUniquePrefix(candidates, normalizedSelector, normalizedSelector);
+}
+
 export function resolveLatestActiveJob(workspaceRoot) {
   return resolveJobReference(workspaceRoot, null, (job) => ACTIVE_STATUSES.has(job.status));
 }
@@ -375,21 +517,80 @@ export function resolveLatestTerminalJob(workspaceRoot) {
   return resolveJobReference(workspaceRoot, null, (job) => TERMINAL_STATUSES.has(job.status));
 }
 
-export async function waitForJob(workspaceRoot, jobId, { timeoutMs = 240_000, pollIntervalMs = 500 } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+function typedWaitResult(forStatus, {
+  satisfied = false,
+  timedOut = false,
+  terminalMismatch = false,
+} = {}) {
+  return {
+    for: forStatus,
+    satisfied,
+    timedOut,
+    terminalMismatch,
+  };
+}
+
+function evaluateWaitTarget(job, forStatus) {
+  if (!job) return null;
+  if (forStatus === "terminal" && TERMINAL_STATUSES.has(job.status)) {
+    return typedWaitResult(forStatus, { satisfied: true });
+  }
+  if (job.status === forStatus) {
+    return typedWaitResult(forStatus, { satisfied: true });
+  }
+  if (forStatus !== "terminal" && TERMINAL_STATUSES.has(job.status)) {
+    return typedWaitResult(forStatus, { terminalMismatch: true });
+  }
+  return null;
+}
+
+export async function waitForJob(workspaceRoot, jobId, options = {}) {
+  const {
+    timeoutMs = 240_000,
+    pollIntervalMs = 500,
+  } = options;
+  const forStatus = options.for ?? "terminal";
+  if (!WAIT_TARGETS.has(forStatus)) {
+    throw new PolycliCliError({
+      code: "invalid_argument",
+      message: `Unsupported job wait target '${forStatus}'.`,
+      data: {
+        argument: forStatus,
+        validValues: [...WAIT_TARGETS],
+      },
+    });
+  }
+
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (true) {
     const current = getJob(workspaceRoot, jobId);
     if (!current) {
-      return { error: "job_not_found", job: null, waitTimedOut: false };
+      return {
+        error: "job_not_found",
+        job: null,
+        waitTimedOut: false,
+        wait: typedWaitResult(forStatus),
+      };
     }
     const refreshed = refreshJob(workspaceRoot, current);
-    if (!ACTIVE_STATUSES.has(refreshed.status)) {
-      return { job: refreshed, waitTimedOut: false };
+    const terminalResult = evaluateWaitTarget(refreshed, forStatus);
+    if (terminalResult) {
+      return {
+        job: refreshed,
+        waitTimedOut: false,
+        wait: terminalResult,
+      };
     }
+    if (Date.now() >= deadline) {
+      return {
+        job: refreshed,
+        waitTimedOut: true,
+        wait: typedWaitResult(forStatus, { timedOut: true }),
+      };
+    }
+
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
-  const timed = getJob(workspaceRoot, jobId);
-  return { job: timed ? refreshJob(workspaceRoot, timed) : null, waitTimedOut: true };
 }
 
 export async function cancelJob(

@@ -5,11 +5,81 @@ import { EventEmitter } from "node:events";
 import {
   PROVIDER_IDS,
   PROVIDER_OPERATION_NAMES,
+  describeProviderRuntimes,
   getProviderRuntime,
   listProviderRuntimes,
   runProviderPrompt,
   runProviderPromptStreaming,
 } from "../src/index.js";
+
+test("describeProviderRuntimes returns static JSON-safe discovery descriptors", () => {
+  const descriptors = describeProviderRuntimes();
+
+  assert.deepEqual(descriptors.map(({ id }) => id), PROVIDER_IDS);
+  assert.deepEqual(JSON.parse(JSON.stringify(descriptors)), descriptors);
+  assert.deepEqual(descriptors.find(({ id }) => id === "qwen"), {
+    id: "qwen",
+    runtimeOperations: ["prompt"],
+    commandSupport: {
+      setup: true,
+      health: true,
+      ask: true,
+      rescue: true,
+      review: true,
+      adversarialReview: true,
+    },
+    capabilities: {
+      streaming: true,
+      sessionResume: true,
+      structuredOutput: true,
+      authProbeCost: "model",
+      runtimePersistence: "session",
+      timing: {
+        ttft: true,
+        gen: true,
+        tail: true,
+        tool: true,
+      },
+    },
+    reviewSafety: {
+      mode: "enforced",
+      stopReviewGate: "enforced",
+    },
+  });
+
+  assert.deepEqual(descriptors.find(({ id }) => id === "agy")?.commandSupport, {
+    setup: true,
+    health: true,
+    ask: true,
+    rescue: true,
+    review: false,
+    adversarialReview: false,
+  });
+
+  const serialized = JSON.stringify(descriptors);
+  for (const forbiddenKey of [
+    "expectFlags",
+    "extraArgTokens",
+    "readOnlyOptionKey",
+    "readOnlyOptionKeys",
+    "credentials",
+    "authState",
+    "availability",
+    "version",
+  ]) {
+    assert.doesNotMatch(serialized, new RegExp(`\\"${forbiddenKey}\\"`));
+  }
+});
+
+test("describeProviderRuntimes returns detached data that cannot mutate runtime metadata", () => {
+  const first = describeProviderRuntimes();
+  first[0].runtimeOperations.push("mutated");
+  first[0].capabilities.timing.ttft = "mutated";
+
+  const second = describeProviderRuntimes();
+  assert.deepEqual(second[0].runtimeOperations, PROVIDER_OPERATION_NAMES);
+  assert.equal(typeof second[0].capabilities.timing.ttft, "boolean");
+});
 
 test("provider registry exposes the eleven integrated runtimes", () => {
   assert.deepEqual(PROVIDER_IDS, ["gemini", "kimi", "qwen", "minimax", "claude", "copilot", "opencode", "pi", "cmd", "agy", "grok"]);
