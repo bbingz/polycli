@@ -27,9 +27,9 @@
 
 これは **ユーティリティ専用の Path B モノレポ** です。プロバイダ間の差異を偽の抽象化で覆い隠したり、ランタイム基底クラスを発明したりはしません。公式の上流 CLI をサブプロセスとして組み合わせ、単一のコマンド面を公開し、4 状態の timing スキーマで能力の違いを正直に表現します。
 
-## 最新リリース: v0.6.29
+## 最新リリース: v0.6.30
 
-このパッチは Path B の境界を変えずに、現在の provider と host の表面を強化します。バックグラウンド job の cancellation・result envelope・timing・対になった run-ledger 記録は worker 異常や cancellation race でも回復可能です。fixture capture lifecycle は active、Gemini 個人ログイン経路の `retired`、parser replay 用に保持する Copilot の一時 `archived` を明示します。OpenCode は現在の `--auto` 実行面と `session.error` を扱い、OpenCode2 preview は fixture 互換チャネルとして覆います（安定 runtime は引き続き `opencode`）。`@bbingz/polycli-utils` は atomic NDJSON batch、`@bbingz/polycli-timing` は互換性のある cohort ごとの集計を提供します。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.29.md`](./docs/release-notes-v0.6.29.md)。
+このリリースは Path B の境界を維持したまま、PolyCLI を agent-native control plane として完成させます。単一の宣言的 registry が strict parsing・help・host validation・typed schema/error・オフライン `agent-context --json` を駆動し、host/provider/invocation/attempt identity を明示的に分離します。全 operational command は opt-in `--json-v2`、明示的な job selector、typed wait を備え、redacted `debug tail --after --limit --wait` は raw log をポインタのまま保持して bounded cursor observation を提供します。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.30.md`](./docs/release-notes-v0.6.30.md)。
 
 ## なぜ polycli を使うのか？
 

@@ -27,9 +27,9 @@
 
 这是一个 **utility-only 的 Path B monorepo**：不假装能抹平 provider 之间的差异，也不引入 runtime 基类。它把官方上游 CLI 作为子进程组合起来，统一命令面，并通过四态 timing schema 如实暴露能力差异。
 
-## 最新版本：v0.6.29
+## 最新版本：v0.6.30
 
-本次补丁加固当前 provider 与 host 表面，不改变 Path B 边界：后台 job 的取消、结果 envelope、timing 与成对 run-ledger 记录在 worker 异常或取消竞态下仍可恢复；fixture capture lifecycle 明确区分 active、Gemini 个体登录路线的 `retired`，以及为 parser replay 保留的 Copilot 暂时 `archived` 路线；OpenCode 改用当前 `--auto` 执行面并保留 `session.error`，同时以 fixture 兼容通道覆盖 OpenCode2 preview（稳定 runtime 仍为 `opencode`）；`@bbingz/polycli-utils` 增加原子 NDJSON batch 写入，`@bbingz/polycli-timing` 按可比较 cohort 输出而不混合不兼容时序。详情见英文 release notes：[`docs/release-notes-v0.6.29.md`](./docs/release-notes-v0.6.29.md)。
+本次发布把 PolyCLI 完善为 agent-native control plane，同时保持 Path B 边界：单一声明式注册表统一严格解析、help、host 校验、typed schema/error 与离线 `agent-context --json`；host/provider/invocation/attempt 身份显式拆分，前台和后台 terminal ledger 按 attempt 完整恢复；全部 operational command 支持 opt-in `--json-v2`、显式 job selector 与类型化等待；脱敏的 `debug tail --after --limit --wait` 提供有界游标观测，原始日志仍只保留指针。详情见英文 release notes：[`docs/release-notes-v0.6.30.md`](./docs/release-notes-v0.6.30.md)。
 
 ## 为什么要用 polycli？
 

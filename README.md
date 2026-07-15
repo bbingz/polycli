@@ -29,16 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.29
+## Latest release: v0.6.30
 
-The latest patch hardens the current provider and host surface without changing the Path B boundary:
+The latest release makes Polycli an agent-native control plane without changing the Path B boundary:
 
-- Background jobs now keep cancellation, result envelopes, timing, and paired run-ledger records recoverable under worker exits and cancellation races.
-- Fixture capture lifecycle is explicit: active fixtures are freshness-checked, the Gemini individual sign-in route is retained as `retired`, and the temporarily unavailable Copilot subscription route is retained as `archived` for parser replay.
-- OpenCode uses its current `--auto` execution surface and preserves `session.error` messages; `opencode2` is covered as a preview fixture compatibility channel while stable `opencode` remains the runtime route.
-- `@bbingz/polycli-utils` gains atomic NDJSON batch publication, while `@bbingz/polycli-timing` emits comparable cohorts instead of pooling incompatible timings.
+- One declarative registry now drives strict parsing, generated help, host validation, terminal metadata, typed schemas/errors, and deterministic offline `agent-context --json` discovery.
+- Host, provider, invocation, and attempt identities are explicit; foreground/background terminal ledger pairs remain recoverable and projections are attempt-correct.
+- Every operational command has opt-in `--json-v2`; explicit job selectors and typed waits distinguish missing, ambiguous, timed-out, and terminal-mismatch outcomes.
+- Redacted `debug tail --after --limit --wait` provides bounded cursor observation while raw logs remain pointers only.
 
-See [`docs/release-notes-v0.6.29.md`](./docs/release-notes-v0.6.29.md).
+See [`docs/release-notes-v0.6.30.md`](./docs/release-notes-v0.6.30.md).
 
 ## Why polycli?
 

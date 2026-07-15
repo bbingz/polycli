@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-07-15 — Codex — release: v0.6.30 published
+
+- Published and registry-verified `@bbingz/polycli@0.6.30` (`latest`, registry time `2026-07-15T08:55:13.583Z`, shasum `882e134363d70545c15e060a8da6c1274a2aa1e7`), `@bbingz/polycli-utils@1.0.4` (`2026-07-15T08:51:16.560Z`, `f89c94947199f4d9d61ec6eddca889bb83a95ec4`), and `@bbingz/polycli-opencode@0.6.30` (`2026-07-15T08:55:44.359Z`, `9f71767156d2278f3f9bbe0cadc3fd1c90ae289f`). `@bbingz/polycli-timing@1.0.2` was unchanged and not republished.
+- Created annotated tag `v0.6.30` at `c7e6a278542e9761f55c964ef15236417ed81a25` and published https://github.com/bbingz/polycli/releases/tag/v0.6.30 (`publishedAt` `2026-07-15T09:02:11Z`; non-draft, non-prerelease).
+- Pre-publication `npm run release:check` passed (771/771 tests plus strict fixture freshness, bundle/manifest/host/Codex/review-drift/Claude-plugin checks and npm dry-runs); tag-target CI run `29402849982` passed; post-publication registry hashes matched dry-run artifacts, and clean registry installs exercised terminal `agent-context` plus the OpenCode `PolycliPlugin`. See `docs/release-notes-v0.6.30.md`.
+
 ## 2026-07-15 — Codex — release: v0.6.30 candidate (agent-native CLI control plane)
 
 - Added one declarative command registry as the source for strict parsing, generated help, host-map validation, terminal metadata, typed errors/output schemas, and the offline `agent-context --json` discovery contract. Unknown option-looking tokens on registered commands now fail with bounded suggestions; pass `--` before prompt text that intentionally begins with an option-like token.

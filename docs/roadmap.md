@@ -1,6 +1,6 @@
 # Roadmap
 
-Snapshot: 2026-07-15 (v0.6.29 is the latest public release; it hardens background-job terminal durability, fixture capture freshness/lifecycle, current provider CLI contracts, and timing comparability while keeping Claude ask/review on headless `claude -p` defaults).
+Snapshot: 2026-07-15 (v0.6.30 is the latest public release; it adds the agent-native declarative command contract, offline discovery, explicit run identities, JSON v2 automation, typed job control, and cursor-based redacted observation while preserving Path B).
 
 This file lives next to `docs/release.md` (what's shipped) and `CHANGELOG.md` (what happened). It answers the complementary question: **what's open, how it's prioritized, and what we're deliberately not doing.**
 
@@ -10,9 +10,9 @@ Living document — update when items land, when priorities shift, or when a def
 
 ## Current state
 
-- Latest public release: **v0.6.29** — see `docs/release-notes-v0.6.29.md`. It keeps default Claude ask/review on `claude -p` and extends the post-v0.6.24 patch line with durable background-job terminal handling, fixture lifecycle/freshness, and current provider contract updates.
+- Latest public release: **v0.6.30** — see `docs/release-notes-v0.6.30.md`. It makes Polycli self-describing and agent-safe through one declarative command registry, explicit invocation/attempt/session identities, opt-in JSON v2, typed selectors/waits, and redacted ledger cursors.
 - 11 stable providers ship in the latest release (claude / gemini / kimi / qwen / minimax / copilot / opencode / pi / cmd / agy / grok); `opencode2` is a separately captured preview compatibility channel, not a replacement for stable `opencode`. See `docs/provider-paths.md`.
-- Everything through v0.6.29 (status-wait compatibility, the re-verified remediation, the cc-X endpoint recipes, the Grok nested-error fix, review residual cleanup, provider-state re-verification, and the current background/fixture/timing hardening) is published.
+- Everything through v0.6.30, including the agent-native CLI control plane and the earlier background/fixture/timing hardening, is published.
 - 4 host plugins (polycli / polycli-codex / polycli-copilot / polycli-opencode) plus the optional `@bbingz/polycli` terminal CLI, each with an independent release manifest.
 - Path B architectural stance is intact: `@bbingz/polycli-utils` / `@bbingz/polycli-timing` are public v1 npm packages; `@bbingz/polycli` is the public terminal CLI surface; `@bbingz/polycli-runtime` remains an internal bundler input (`private: true`); provider modules are flat, not inherited; timing four-state semantics preserved.
 

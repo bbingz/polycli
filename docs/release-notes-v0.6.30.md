@@ -33,7 +33,7 @@ The Path B architecture remains unchanged: provider adapters stay flat and expli
 
 ## Release artifacts
 
-- GitHub release `v0.6.30`: https://github.com/bbingz/polycli/releases/tag/v0.6.30
+- GitHub release `v0.6.30`: https://github.com/bbingz/polycli/releases/tag/v0.6.30 (`publishedAt` `2026-07-15T09:02:11Z`; tag commit `c7e6a278542e9761f55c964ef15236417ed81a25`).
 - npm `@bbingz/polycli@0.6.30` (`latest`, registry time `2026-07-15T08:55:13.583Z`, shasum `882e134363d70545c15e060a8da6c1274a2aa1e7`).
 - npm `@bbingz/polycli-utils@1.0.4` (`latest`, registry time `2026-07-15T08:51:16.560Z`, shasum `f89c94947199f4d9d61ec6eddca889bb83a95ec4`).
 - npm `@bbingz/polycli-opencode@0.6.30` (`latest`, registry time `2026-07-15T08:55:44.359Z`, shasum `9f71767156d2278f3f9bbe0cadc3fd1c90ae289f`).
