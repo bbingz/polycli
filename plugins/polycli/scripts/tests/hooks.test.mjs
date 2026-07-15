@@ -6,7 +6,16 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { ensureStateDir, resolveStateFile } from "../lib/state.mjs";
+import {
+  ensureStateDir,
+  listJobs,
+  readJobFile,
+  resolveJobConfigFile,
+  resolveJobFile,
+  resolveStateFile,
+  writeJobConfigFile,
+} from "../lib/state.mjs";
+import { readRunLedgerEvents } from "../lib/run-ledger.mjs";
 import { cleanupSessionJobs, handleLifecycleHook } from "../session-lifecycle-hook.mjs";
 import {
   parseStopReviewOutput,
@@ -126,8 +135,8 @@ test("SessionStart exports the Claude session id for later companion jobs", asyn
   }
 });
 
-test("SessionEnd removes only running jobs from the ended session and preserves terminal results", () => {
-  withPluginData(() => {
+test("SessionEnd cancels only active jobs from the ended session and preserves terminal results", async () => {
+  await withPluginData(async () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
     try {
       writeWorkspaceState(workspaceRoot, {
@@ -139,18 +148,21 @@ test("SessionEnd removes only running jobs from the ended session and preserves 
         ],
       });
 
-      handleLifecycleHook("SessionEnd", { cwd: workspaceRoot, session_id: "cc-session-1" });
+      await handleLifecycleHook("SessionEnd", { cwd: workspaceRoot, session_id: "cc-session-1" });
 
       const state = JSON.parse(fs.readFileSync(resolveStateFile(workspaceRoot), "utf8"));
-      assert.deepEqual(state.jobs.map((job) => job.jobId).sort(), ["pa-done", "pa-other"]);
+      assert.deepEqual(
+        state.jobs.map((job) => [job.jobId, job.status]).sort(),
+        [["pa-done", "completed"], ["pa-other", "running"], ["pa-running", "cancelled"]],
+      );
     } finally {
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
   });
 });
 
-test("SessionEnd matches explicit hostSessionId and never matches providerSessionId", () => {
-  withPluginData(() => {
+test("SessionEnd matches explicit hostSessionId and never matches providerSessionId", async () => {
+  await withPluginData(async () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
     try {
       writeWorkspaceState(workspaceRoot, {
@@ -175,18 +187,21 @@ test("SessionEnd matches explicit hostSessionId and never matches providerSessio
         ],
       });
 
-      handleLifecycleHook("SessionEnd", { cwd: workspaceRoot, session_id: "ended-host" });
+      await handleLifecycleHook("SessionEnd", { cwd: workspaceRoot, session_id: "ended-host" });
 
       const state = JSON.parse(fs.readFileSync(resolveStateFile(workspaceRoot), "utf8"));
-      assert.deepEqual(state.jobs.map((job) => job.jobId), ["provider-only-match"]);
+      assert.deepEqual(
+        state.jobs.map((job) => [job.jobId, job.status]).sort(),
+        [["host-match", "cancelled"], ["provider-only-match", "running"]],
+      );
     } finally {
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
   });
 });
 
-test("SessionEnd does not try to terminate unsafe pid values", (t) => {
-  withPluginData(() => {
+test("SessionEnd does not try to terminate unsafe pid values", async (t) => {
+  await withPluginData(async () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
     const kill = t.mock.method(process, "kill", () => {
       throw new Error("process.kill should not be called for unsafe pid values");
@@ -202,7 +217,7 @@ test("SessionEnd does not try to terminate unsafe pid values", (t) => {
         ],
       });
 
-      handleLifecycleHook("SessionEnd", { cwd: workspaceRoot, session_id: "cc-session-1" });
+      await handleLifecycleHook("SessionEnd", { cwd: workspaceRoot, session_id: "cc-session-1" });
 
       assert.equal(kill.mock.callCount(), 0);
     } finally {
@@ -211,8 +226,8 @@ test("SessionEnd does not try to terminate unsafe pid values", (t) => {
   });
 });
 
-test("SessionEnd signals only a worker whose command line matches its retained config", (t) => {
-  withPluginData(() => {
+test("SessionEnd signals only a worker whose command line matches its retained config", async () => {
+  await withPluginData(async () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
     const terminated = [];
     try {
@@ -227,30 +242,144 @@ test("SessionEnd signals only a worker whose command line matches its retained c
       fs.mkdirSync(jobsDir, { recursive: true });
       fs.writeFileSync(path.join(jobsDir, "verified-worker.config.json"), "{}\n", "utf8");
 
-      cleanupSessionJobs(workspaceRoot, "ended", {
+      const alive = new Map([[4242, true], [4343, true]]);
+      await cleanupSessionJobs(workspaceRoot, "ended", {
         isExpectedWorkerProcess(pid) {
           return pid === 4343;
         },
-        terminateProcess(pid) {
+        isWorkerAlive(pid) {
+          return alive.get(pid) === true;
+        },
+        async terminateProcess(pid) {
           terminated.push(pid);
+          alive.set(pid, false);
         },
       });
 
       assert.deepEqual(terminated, [4343]);
       const state = JSON.parse(fs.readFileSync(resolveStateFile(workspaceRoot), "utf8"));
-      assert.deepEqual(state.jobs, []);
+      assert.deepEqual(
+        state.jobs.map((job) => [job.jobId, job.status]).sort(),
+        [["mismatched-worker", "running"], ["verified-worker", "cancelled"]],
+      );
+      assert.equal(readJobFile(resolveJobFile(workspaceRoot, "mismatched-worker"))?.cancellationIntent?.status, "requested");
     } finally {
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
   });
 });
 
-test("SessionEnd state cleanup uses the locked state updater", () => {
+test("SessionEnd delegates lifecycle ownership to cancelJob", () => {
   const source = fs.readFileSync(lifecycleHookPath, "utf8");
 
-  assert.match(source, /\bupdateState\b/);
+  assert.match(source, /\bcancelJob\b/);
+  assert.doesNotMatch(source, /\bupdateState\b/);
   assert.doesNotMatch(source, /\bloadState\b/);
   assert.doesNotMatch(source, /\bsaveState\b/);
+});
+
+test("SessionEnd preserves unverifiable workers while cancelling other matching jobs", async () => {
+  await withPluginData(async () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
+    const jobs = [
+      { jobId: "identity-false", pid: 4201 },
+      { jobId: "identity-null", pid: 4202 },
+      { jobId: "missing-config", pid: 4203 },
+      { jobId: "terminate-throws", pid: 4204 },
+      { jobId: "verified-success", pid: 4205 },
+    ];
+    try {
+      writeWorkspaceState(workspaceRoot, {
+        version: 2,
+        jobs: [
+          ...jobs.map((job) => ({ ...job, hostSessionId: "ended", provider: "qwen", kind: "rescue", status: "running" })),
+          { jobId: "other-session", hostSessionId: "other", status: "running", pid: null },
+          { jobId: "already-done", hostSessionId: "ended", status: "completed", pid: null },
+        ],
+      });
+      for (const job of jobs.filter((entry) => entry.jobId !== "missing-config")) {
+        writeJobConfigFile(workspaceRoot, job.jobId, {
+          workspaceRoot,
+          jobId: job.jobId,
+          execution: { provider: "qwen", kind: "rescue" },
+          runContext: {
+            runId: `run-${job.jobId}`,
+            command: "rescue",
+            hostSurface: "terminal",
+            jobId: job.jobId,
+            provider: "qwen",
+            kind: "rescue",
+          },
+        });
+      }
+      const alive = new Map(jobs.map((job) => [job.pid, true]));
+      const terminated = [];
+
+      await cleanupSessionJobs(workspaceRoot, "ended", {
+        isWorkerAlive(pid) {
+          return alive.get(pid) === true;
+        },
+        isExpectedWorkerProcess(pid) {
+          if (pid === 4201) return false;
+          if (pid === 4202) return null;
+          return true;
+        },
+        async terminateProcess(pid) {
+          terminated.push(pid);
+          if (pid === 4204) throw new Error("injected terminate failure");
+          alive.set(pid, false);
+        },
+      });
+
+      assert.deepEqual(terminated.sort(), [4204, 4205]);
+      const byId = new Map(listJobs(workspaceRoot).map((job) => [job.jobId, job]));
+      for (const jobId of ["identity-false", "identity-null", "missing-config", "terminate-throws"]) {
+        assert.equal(byId.get(jobId)?.status, "running", jobId);
+        assert.equal(readJobFile(resolveJobFile(workspaceRoot, jobId))?.cancellationIntent?.status, "requested", jobId);
+      }
+      assert.equal(byId.get("verified-success")?.status, "cancelled");
+      assert.equal(byId.get("other-session")?.status, "running");
+      assert.equal(byId.get("already-done")?.status, "completed");
+      assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "identity-false")), true);
+      assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "identity-null")), true);
+      assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "terminate-throws")), true);
+      assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "verified-success")), false);
+
+      const terminal = (await readRunLedgerEvents(workspaceRoot)).filter((event) =>
+        ["attempt_result", "provider_decision"].includes(event.phase)
+      );
+      assert.deepEqual(terminal.map((event) => [event.runId, event.phase, event.status]), [
+        ["run-verified-success", "attempt_result", "cancelled"],
+        ["run-verified-success", "provider_decision", "cancelled"],
+      ]);
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test("SessionEnd CLI awaits authoritative cancellation before exiting", async () => {
+  await withPluginData(async () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
+    try {
+      writeWorkspaceState(workspaceRoot, {
+        version: 2,
+        jobs: [
+          { jobId: "cli-session-end", hostSessionId: "ended-cli", provider: "qwen", kind: "rescue", status: "queued", pid: null },
+        ],
+      });
+
+      const result = await runNode(lifecycleHookPath, ["SessionEnd"], {
+        cwd: workspaceRoot,
+        input: JSON.stringify({ cwd: workspaceRoot, session_id: "ended-cli" }),
+      });
+
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(listJobs(workspaceRoot).find((job) => job.jobId === "cli-session-end")?.status, "cancelled");
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 test("parseStopReviewOutput scans all lines for a prose-prefixed BLOCK sentinel", () => {
