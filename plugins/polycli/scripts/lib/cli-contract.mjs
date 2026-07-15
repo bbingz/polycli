@@ -375,8 +375,8 @@ function normalizeSessionEntries(entries) {
   return clonePublicResult(Array.isArray(entries) ? entries : []);
 }
 
-function serializeProviderCommand(commandId, payload, context) {
-  if (context.background === true || (payload?.job && context.background !== false)) {
+function serializeProviderCommand(commandId, payload) {
+  if (payload?.job) {
     return {
       type: "job.started",
       job: normalizeV2Job(payload.job),
@@ -411,7 +411,7 @@ export function serializeV2Result(commandId, legacyPayload, context = {}) {
   }
 
   if (PROVIDER_COMMANDS.has(id)) {
-    return serializeProviderCommand(id, payload, context);
+    return serializeProviderCommand(id, payload);
   }
 
   if (id === "status") {

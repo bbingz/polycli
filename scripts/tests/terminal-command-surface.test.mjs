@@ -11,6 +11,8 @@ test("generated terminal command metadata includes shared commands and delegated
   assert.equal(COMMAND_SURFACE_VERSION, 1);
   assert.ok(TERMINAL_COMMAND_DEFINITIONS.some((entry) => entry.id === "agent-context"));
   assert.equal(getTerminalCommandDefinition(["tui"]).dispatchTarget, "terminal-wrapper");
+  assert.equal(getTerminalCommandDefinition(["tui"]).effects.writesLocalState, true);
+  assert.doesNotMatch(getTerminalCommandDefinition(["tui"]).summary, /read-only/i);
   assert.equal(getTerminalCommandDefinition(["_job-worker"]), null);
 });
 

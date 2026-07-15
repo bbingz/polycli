@@ -991,6 +991,48 @@ test('run ledger redacts private absolute paths from terminal error material and
   assert.match(event.error.message, /<path:redacted>/);
 });
 
+test('run ledger sanitizes every preview at the persistence boundary', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const rawPreviews = [
+      'TOKEN=foreground-preview-secret /private/foreground-preview-path',
+      'PASSWORD=background-preview-secret /private/background-preview-path',
+      'API_KEY=recovery-preview-secret /private/recovery-preview-path',
+    ];
+    await appendRunLedgerEvent(workspaceRoot, {
+      runId: 'run-preview-foreground',
+      phase: 'attempt_result',
+      preview: rawPreviews[0],
+    });
+    await appendRunLedgerEvents(workspaceRoot, [
+      {
+        runId: 'run-preview-background',
+        jobId: 'job-preview-background',
+        phase: 'attempt_result',
+        preview: rawPreviews[1],
+      },
+      {
+        runId: 'run-preview-recovery',
+        jobId: 'job-preview-recovery',
+        phase: 'provider_decision',
+        preview: rawPreviews[2],
+      },
+    ]);
+
+    const persisted = await readFile(resolveRunLedgerFile(workspaceRoot), 'utf8');
+    for (const marker of ['foreground-preview-secret', 'background-preview-secret', 'recovery-preview-secret']) {
+      assert.doesNotMatch(persisted, new RegExp(marker));
+    }
+    assert.doesNotMatch(persisted, /private\/(?:foreground|background|recovery)-preview-path/);
+
+    const events = await readRunLedgerEvents(workspaceRoot);
+    assert.equal(events.length, 3);
+    for (const event of events) {
+      assert.match(event.preview, /<secret:redacted>/);
+      assert.match(event.preview, /<path:redacted>/);
+    }
+  });
+});
+
 test('tailRunLedgerEvents returns the latest run last-N events in chronological ledger order', async () => {
   await withTempWorkspace(async (workspaceRoot) => {
     await appendRunLedgerEvent(workspaceRoot, { runId: 'run-old', phase: 'run_started' });

@@ -3847,14 +3847,14 @@ export const TERMINAL_COMMAND_DEFINITIONS = deepFreeze([
     "dispatchTarget": "terminal-wrapper",
     "executable": true,
     "defaultSubcommand": null,
-    "summary": "Open the read-only terminal run inspector.",
+    "summary": "Open the terminal run inspector; loading may update local recovery state.",
     "usage": "polycli tui [--run-id <id>] [--history <n>]",
     "argumentMode": "options",
     "runTracked": false,
     "effects": {
       "providerInvocation": false,
       "readsWorkspace": true,
-      "writesLocalState": false,
+      "writesLocalState": true,
       "destructive": false
     },
     "options": [

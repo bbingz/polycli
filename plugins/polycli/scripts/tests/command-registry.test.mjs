@@ -144,6 +144,9 @@ test("agent-facing effects describe provider and recovery side effects honestly"
     );
   }
   assert.equal(getCommandDefinition(["debug", "tail"]).effects.writesLocalState, false);
+  const tui = getCommandDefinition(["tui"]);
+  assert.equal(tui.effects.writesLocalState, true, "normal TUI loading may recover stale jobs");
+  assert.doesNotMatch(tui.summary, /read-only/i);
 });
 
 test("registry validation covers every declared uniqueness and safety invariant", () => {
@@ -213,4 +216,25 @@ test("registered strict parsing preserves literal option-looking prompt tokens a
   );
   assert.equal(parsed.options.provider, "qwen");
   assert.deepEqual(parsed.positionals, ["--modle", "is", "literal"]);
+});
+
+test("setup and health reject positional plus explicit provider targets even when identical", () => {
+  for (const command of ["setup", "health"]) {
+    for (const positional of ["qwen", "claude"]) {
+      assert.throws(
+        () => parseCommandArgs(
+          getCommandDefinition([command]),
+          [positional, "--provider", "qwen"],
+          { enumSources: { providers: ["claude", "qwen"] } },
+        ),
+        (error) => {
+          assert.equal(error.code, "invalid_argument");
+          assert.equal(error.data.positionalProvider, positional);
+          assert.equal(error.data.explicitProvider, "qwen");
+          assert.match(error.message, /positional provider.*--provider/i);
+          return true;
+        },
+      );
+    }
+  }
 });

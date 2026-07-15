@@ -458,11 +458,11 @@ export const COMMAND_DEFINITIONS = deepFreeze([
   definition({
     id: "tui",
     path: ["tui"],
-    summary: "Open the read-only terminal run inspector.",
+    summary: "Open the terminal run inspector; loading may update local recovery state.",
     usage: "polycli tui [--run-id <id>] [--history <n>]",
     surfaces: TERMINAL_SURFACE,
     dispatchTarget: "terminal-wrapper",
-    effects: { readsWorkspace: true },
+    effects: { readsWorkspace: true, writesLocalState: true },
     options: [
       option("run-id", "string", "Select an initial run.", { valueName: "id" }),
       option("history", "integer", "Limit the run list.", { valueName: "n" }),
@@ -890,6 +890,18 @@ function validateCommandPositionals(definition, parsed, enumSources) {
       throw commandArgumentError(definition, "Too many positional arguments.", { arguments: positionals });
     }
     const positionalProvider = positionals[0] ?? null;
+    if (positionalProvider && explicitProvider) {
+      throw commandArgumentError(
+        definition,
+        `Provider target cannot be supplied as positional provider '${positionalProvider}' together with --provider '${explicitProvider}'.`,
+        {
+          argument: positionalProvider,
+          positionalProvider,
+          explicitProvider,
+          conflictsWith: "--provider",
+        },
+      );
+    }
     if (positionalProvider && !providers.includes(positionalProvider)) {
       throw commandArgumentError(
         definition,

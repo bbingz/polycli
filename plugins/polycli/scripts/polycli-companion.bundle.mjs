@@ -5653,11 +5653,11 @@ var COMMAND_DEFINITIONS = deepFreeze([
   definition({
     id: "tui",
     path: ["tui"],
-    summary: "Open the read-only terminal run inspector.",
+    summary: "Open the terminal run inspector; loading may update local recovery state.",
     usage: "polycli tui [--run-id <id>] [--history <n>]",
     surfaces: TERMINAL_SURFACE,
     dispatchTarget: "terminal-wrapper",
-    effects: { readsWorkspace: true },
+    effects: { readsWorkspace: true, writesLocalState: true },
     options: [
       option("run-id", "string", "Select an initial run.", { valueName: "id" }),
       option("history", "integer", "Limit the run list.", { valueName: "n" }),
@@ -6077,6 +6077,18 @@ function validateCommandPositionals(definition2, parsed, enumSources) {
       throw commandArgumentError(definition2, "Too many positional arguments.", { arguments: positionals });
     }
     const positionalProvider = positionals[0] ?? null;
+    if (positionalProvider && explicitProvider) {
+      throw commandArgumentError(
+        definition2,
+        `Provider target cannot be supplied as positional provider '${positionalProvider}' together with --provider '${explicitProvider}'.`,
+        {
+          argument: positionalProvider,
+          positionalProvider,
+          explicitProvider,
+          conflictsWith: "--provider"
+        }
+      );
+    }
     if (positionalProvider && !providers.includes(positionalProvider)) {
       throw commandArgumentError(
         definition2,
@@ -7250,8 +7262,8 @@ function normalizeStatusListWait(wait, payload) {
 function normalizeSessionEntries(entries) {
   return clonePublicResult(Array.isArray(entries) ? entries : []);
 }
-function serializeProviderCommand(commandId, payload, context) {
-  if (context.background === true || payload?.job && context.background !== false) {
+function serializeProviderCommand(commandId, payload) {
+  if (payload?.job) {
     return {
       type: "job.started",
       job: normalizeV2Job(payload.job)
@@ -7282,7 +7294,7 @@ function serializeV2Result(commandId, legacyPayload, context = {}) {
     };
   }
   if (PROVIDER_COMMANDS.has(id)) {
-    return serializeProviderCommand(id, payload, context);
+    return serializeProviderCommand(id, payload);
   }
   if (id === "status") {
     if (payload.job) {
@@ -7610,11 +7622,20 @@ function redactLedgerError(error) {
   if (message == null || message === "") return null;
   return { message: sanitizePublicErrorMessage(message, 300) };
 }
+function sanitizeLedgerPreview(preview) {
+  if (preview == null) return null;
+  const text = String(preview);
+  return sanitizePublicErrorMessage(text, text.length);
+}
 function redactTerminalDescriptor(descriptor) {
   if (!descriptor || typeof descriptor !== "object") return descriptor ?? null;
   return {
     ...descriptor,
-    events: Array.isArray(descriptor.events) ? descriptor.events.map((event) => ({ ...event, error: redactLedgerError(event.error) })) : descriptor.events
+    events: Array.isArray(descriptor.events) ? descriptor.events.map((event) => ({
+      ...event,
+      error: redactLedgerError(event.error),
+      ...Object.prototype.hasOwnProperty.call(event, "preview") ? { preview: sanitizeLedgerPreview(event.preview) } : {}
+    })) : descriptor.events
   };
 }
 function createRunLedgerEvent(event = {}) {
@@ -7643,7 +7664,7 @@ function createRunLedgerEvent(event = {}) {
     providerSessionId,
     timingRef: event.timingRef ?? null,
     error: redactLedgerError(event.error),
-    preview: event.preview ?? null,
+    preview: sanitizeLedgerPreview(event.preview),
     stdoutBytes: event.stdoutBytes ?? null,
     stderrBytes: event.stderrBytes ?? null,
     durationMs: event.durationMs ?? null,
@@ -8787,11 +8808,11 @@ function refreshJob(workspaceRoot, job) {
 }
 function buildStatusSnapshot(workspaceRoot, { showAll = false } = {}) {
   const refreshed = sortJobsNewestFirst(listJobs(workspaceRoot)).map((job) => refreshJob(workspaceRoot, job));
-  const limited = showAll ? refreshed : refreshed.slice(0, DEFAULT_STATUS_LIMIT);
+  const recent = refreshed.filter((job) => TERMINAL_STATUSES2.has(job.status));
   return {
     totalJobs: refreshed.length,
-    running: limited.filter((job) => ACTIVE_STATUSES2.has(job.status)),
-    recent: limited.filter((job) => TERMINAL_STATUSES2.has(job.status))
+    running: refreshed.filter((job) => ACTIVE_STATUSES2.has(job.status)),
+    recent: showAll ? recent : recent.slice(0, DEFAULT_STATUS_LIMIT)
   };
 }
 function refreshJobsForLedgerRecovery(workspaceRoot) {

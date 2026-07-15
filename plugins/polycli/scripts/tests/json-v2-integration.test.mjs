@@ -62,6 +62,34 @@ test("--json-v2 serializes typed parse failures and suggestions", () => {
   }
 });
 
+test("setup and health reject positional plus explicit providers before state or provider access", () => {
+  for (const command of ["setup", "health"]) {
+    for (const positional of ["qwen", "claude"]) {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), `polycli-v2-provider-conflict-${command}-`));
+      const marker = path.join(cwd, "provider-accessed");
+      const fakeProvider = path.join(cwd, "provider-must-not-run");
+      fs.writeFileSync(fakeProvider, `#!/bin/sh\ntouch '${marker}'\nexit 0\n`, { mode: 0o755 });
+      try {
+        const result = run(
+          [command, positional, "--provider", "qwen", "--json-v2"],
+          cwd,
+          { QWEN_CLI_BIN: fakeProvider, CLAUDE_CLI_BIN: fakeProvider },
+        );
+        assert.equal(result.status, 1, `${command} ${positional}: ${result.stderr}`);
+        assert.equal(result.stderr, "");
+        const payload = JSON.parse(result.stdout);
+        assert.equal(payload.error.code, "invalid_argument");
+        assert.equal(payload.error.data.positionalProvider, positional);
+        assert.equal(payload.error.data.explicitProvider, "qwen");
+        assert.equal(fs.existsSync(path.join(cwd, ".state")), false);
+        assert.equal(fs.existsSync(marker), false);
+      } finally {
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
 test("legacy --json remains unwrapped and conflicting output modes are rejected", () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-v2-compat-"));
   try {
