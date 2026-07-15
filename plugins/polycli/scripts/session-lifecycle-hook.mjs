@@ -11,6 +11,7 @@ import {
 } from "./lib/state.mjs";
 
 export const SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
+export const SESSION_END_BUDGET_MS = 4_000;
 
 function readHookInput() {
   try {
@@ -53,8 +54,12 @@ export async function cleanupSessionJobs(cwd, sessionId, {
   isExpectedWorkerProcess: verifyWorker,
   terminateProcess: terminateWorker,
   isWorkerAlive,
+  budgetMs = SESSION_END_BUDGET_MS,
 } = {}) {
   if (!cwd || !sessionId) return [];
+  if (!Number.isFinite(budgetMs) || budgetMs <= 0) {
+    throw new TypeError("budgetMs must be a positive number");
+  }
 
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const stateFile = resolveStateFile(workspaceRoot);
@@ -68,6 +73,7 @@ export async function cleanupSessionJobs(cwd, sessionId, {
       && jobHostSessionId(job) === sessionId
   );
   const cancelOptions = {
+    deadlineAt: Date.now() + budgetMs,
     ...(verifyWorker ? { isExpectedWorker: verifyWorker } : {}),
     ...(terminateWorker ? { terminate: terminateWorker } : {}),
     ...(isWorkerAlive ? { isWorkerAlive } : {}),

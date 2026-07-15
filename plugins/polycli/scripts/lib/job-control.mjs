@@ -10,10 +10,12 @@ import {
   readJobFile,
   readJobConfigFile,
   removeJobConfigFile,
+  removeJobStartFailureFile,
   resolveJobConfigFile,
   resolveJobFile,
   updateJobAtomically,
 } from "./state.mjs";
+import { recoverBackgroundStartFailure } from "./background-start.mjs";
 import {
   createTerminalLedgerDescriptor,
   ensureRunLedgerTerminalPair,
@@ -29,6 +31,51 @@ const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const WAIT_TARGETS = new Set(["terminal", "completed", "failed", "cancelled"]);
 const DEFAULT_STATUS_LIMIT = 8;
 const MAX_SELECTOR_CANDIDATES = 8;
+
+function createDeadlineError() {
+  const error = new Error("cancellation deadline exceeded");
+  error.code = "EDEADLINE";
+  return error;
+}
+
+function remainingDeadlineMs(deadlineAt) {
+  return Number.isFinite(deadlineAt) ? deadlineAt - Date.now() : null;
+}
+
+function deadlineLockOptions(deadlineAt) {
+  const remainingMs = remainingDeadlineMs(deadlineAt);
+  if (remainingMs == null) return {};
+  if (remainingMs <= 0) throw createDeadlineError();
+  return {
+    timeoutMs: Math.max(1, Math.ceil(remainingMs)),
+    pollMs: Math.max(1, Math.min(25, Math.ceil(remainingMs))),
+  };
+}
+
+function isDeadlineFailure(error, deadlineAt) {
+  return Number.isFinite(deadlineAt)
+    && (error?.code === "EDEADLINE" || error?.code === "ELOCKTIMEOUT");
+}
+
+async function awaitWithinDeadline(promise, deadlineAt) {
+  const remainingMs = remainingDeadlineMs(deadlineAt);
+  if (remainingMs == null) {
+    await promise;
+    return true;
+  }
+  if (remainingMs <= 0) return false;
+  let timer = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).then(() => true),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), remainingMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function isProcessAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -249,11 +296,11 @@ function prepareRecoveredTerminalEvents(
   };
 }
 
-function ensureRecoveredTerminalEvents(workspaceRoot, prepared) {
+function ensureRecoveredTerminalEvents(workspaceRoot, prepared, { lockOptions = {} } = {}) {
   // The state lock serializes worker finalization, cancellation, and recovery for this job.
   // The shared helper publishes a missing pair atomically and refuses conflicting data.
   if (prepared.events.length > 0) {
-    ensureRunLedgerTerminalPair(workspaceRoot, prepared.events);
+    ensureRunLedgerTerminalPair(workspaceRoot, prepared.events, { lockOptions });
   }
 }
 
@@ -277,6 +324,10 @@ export function refreshJob(workspaceRoot, job) {
   const storedEnvelope = readJobFile(resolveJobFile(workspaceRoot, job.jobId));
   if (hasPendingCancellationIntent(storedEnvelope)) {
     return enrichJob(workspaceRoot, job);
+  }
+  const startFailureRecovery = recoverBackgroundStartFailure(workspaceRoot, job.jobId);
+  if (startFailureRecovery.written) {
+    return enrichJob(workspaceRoot, getJob(workspaceRoot, job.jobId) || job);
   }
   if (!job.pid && !isTerminalEnvelope(storedEnvelope)) {
     return enrichJob(workspaceRoot, job);
@@ -620,6 +671,7 @@ export async function cancelJob(
     terminate = terminateProcessTree,
     isWorkerAlive = isProcessAlive,
     isExpectedWorker = isExpectedWorkerProcess,
+    deadlineAt = null,
   } = {},
 ) {
   // Keep the public job active until a validated worker has been stopped. A distinct, non-terminal
@@ -629,39 +681,47 @@ export async function cancelJob(
   let cancellationEnvelope = null;
   let reason = null;
   const requestedAt = new Date().toISOString();
-  const intentWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
-    if (!current) {
-      reason = "not_found";
-      return null;
-    }
-    if (!ACTIVE_STATUSES.has(current.status)) {
-      reason = "not_cancellable";
-      return null;
-    }
-    const resumingCancellation = hasPendingCancellationIntent(storedEnvelope);
-    if (isTerminalEnvelope(storedEnvelope) && !resumingCancellation) {
-      reason = "not_cancellable";
-      return null;
-    }
+  let intentWrite;
+  try {
+    intentWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
+      if (!current) {
+        reason = "not_found";
+        return null;
+      }
+      if (!ACTIVE_STATUSES.has(current.status)) {
+        reason = "not_cancellable";
+        return null;
+      }
+      const resumingCancellation = hasPendingCancellationIntent(storedEnvelope);
+      if (isTerminalEnvelope(storedEnvelope) && !resumingCancellation) {
+        reason = "not_cancellable";
+        return null;
+      }
 
-    pidToKill = current.pid ?? null;
-    configForCleanup = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
-    cancellationEnvelope = resumingCancellation
-      ? storedEnvelope
-      : {
+      pidToKill = current.pid ?? null;
+      configForCleanup = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
+      cancellationEnvelope = resumingCancellation
+        ? storedEnvelope
+        : {
+          job: current,
+          cancellationIntent: {
+            status: "requested",
+            requestedAt,
+          },
+        };
+      return {
+        // Do not make the state or envelope terminal yet. Both remain recovery points if this
+        // process exits after persisting the intent but before the worker receives its signal.
         job: current,
-        cancellationIntent: {
-          status: "requested",
-          requestedAt,
-        },
+        envelope: cancellationEnvelope,
       };
-    return {
-      // Do not make the state or envelope terminal yet. Both remain recovery points if this
-      // process exits after persisting the intent but before the worker receives its signal.
-      job: current,
-      envelope: cancellationEnvelope,
-    };
-  });
+    }, { lockOptions: deadlineLockOptions(deadlineAt) });
+  } catch (error) {
+    if (isDeadlineFailure(error, deadlineAt)) {
+      return { cancelled: false, reason: "deadline_exceeded", jobId };
+    }
+    throw error;
+  }
   if (!intentWrite.written) {
     return { cancelled: false, reason: reason || "not_cancellable", jobId };
   }
@@ -672,11 +732,20 @@ export async function cancelJob(
       return { cancelled: false, reason: "worker_identity_unverified", jobId };
     }
     try {
-      await terminate(pidToKill, {
+      const remainingMs = remainingDeadlineMs(deadlineAt);
+      if (remainingMs != null && remainingMs <= 0) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
+      const terminatedWithinDeadline = await awaitWithinDeadline(terminate(pidToKill, {
         signal: "SIGINT",
         forceSignal: "SIGKILL",
-        forceAfterMs: 2_000,
-      });
+        forceAfterMs: remainingMs == null
+          ? 2_000
+          : Math.max(1, Math.min(2_000, Math.floor(remainingMs))),
+      }), deadlineAt);
+      if (!terminatedWithinDeadline) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
     } catch (error) {
       return { cancelled: false, reason: "kill_failed", jobId, killWarning: error.message };
     }
@@ -692,53 +761,64 @@ export async function cancelJob(
   }
 
   let finalConfig = configForCleanup;
-  const finalWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
-    if (!current) {
-      reason = "not_found";
-      return null;
-    }
-    if (current.status === "cancelled") return null;
-    if (!ACTIVE_STATUSES.has(current.status) || !hasPendingCancellationIntent(storedEnvelope)) {
-      reason = "cancellation_finalization_pending";
-      return null;
-    }
-    finalConfig = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId)) || finalConfig;
-    const finishedAt = new Date().toISOString();
-    const storedCancelledJob = storedEnvelope?.job?.status === "cancelled"
-      ? storedEnvelope.job
-      : null;
-    const finalJob = {
-      ...current,
-      ...(storedCancelledJob || {}),
-      status: "cancelled",
-      pid: null,
-      finishedAt: storedCancelledJob?.finishedAt || finishedAt,
-      updatedAt: finishedAt,
-    };
-    const result = storedEnvelope.result || cancellationEnvelope?.result || { ok: false, error: "cancelled" };
-    const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalJob, finalConfig, {
-      result,
-      reason: "cancelled",
-      terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null,
-    });
-    return {
-      job: finalJob,
-      envelope: {
-        ...storedEnvelope,
-        job: finalJob,
+  let finalWrite;
+  try {
+    finalWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
+      if (!current) {
+        reason = "not_found";
+        return null;
+      }
+      if (current.status === "cancelled") return null;
+      if (!ACTIVE_STATUSES.has(current.status) || !hasPendingCancellationIntent(storedEnvelope)) {
+        reason = "cancellation_finalization_pending";
+        return null;
+      }
+      finalConfig = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId)) || finalConfig;
+      const finishedAt = new Date().toISOString();
+      const storedCancelledJob = storedEnvelope?.job?.status === "cancelled"
+        ? storedEnvelope.job
+        : null;
+      const finalJob = {
+        ...current,
+        ...(storedCancelledJob || {}),
+        status: "cancelled",
+        pid: null,
+        finishedAt: storedCancelledJob?.finishedAt || finishedAt,
+        updatedAt: finishedAt,
+      };
+      const result = storedEnvelope.result || cancellationEnvelope?.result || { ok: false, error: "cancelled" };
+      const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalJob, finalConfig, {
         result,
-        terminalReason: "cancelled",
-        terminalDescriptor: terminal.terminalDescriptor,
-        cancellationIntent: storedEnvelope.cancellationIntent,
-      },
-      beforeStateCommit() {
-        ensureRecoveredTerminalEvents(workspaceRoot, terminal);
-      },
-    };
-  });
+        reason: "cancelled",
+        terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null,
+      });
+      return {
+        job: finalJob,
+        envelope: {
+          ...storedEnvelope,
+          job: finalJob,
+          result,
+          terminalReason: "cancelled",
+          terminalDescriptor: terminal.terminalDescriptor,
+          cancellationIntent: storedEnvelope.cancellationIntent,
+        },
+        beforeStateCommit() {
+          ensureRecoveredTerminalEvents(workspaceRoot, terminal, {
+            lockOptions: deadlineLockOptions(deadlineAt),
+          });
+        },
+      };
+    }, { lockOptions: deadlineLockOptions(deadlineAt) });
+  } catch (error) {
+    if (isDeadlineFailure(error, deadlineAt)) {
+      return { cancelled: false, reason: "deadline_exceeded", jobId };
+    }
+    throw error;
+  }
   if (!finalWrite.written) {
     const current = getJob(workspaceRoot, jobId);
     if (current?.status === "cancelled") {
+      removeJobStartFailureFile(workspaceRoot, jobId);
       return { cancelled: true, jobId };
     }
     return { cancelled: false, reason: reason || "cancellation_finalization_pending", jobId };
@@ -748,5 +828,6 @@ export async function cancelJob(
   // and the terminal state commit. The config remains available for any retry before this point.
   cleanupRuntimePaths(finalConfig);
   removeJobConfigFile(workspaceRoot, jobId);
+  removeJobStartFailureFile(workspaceRoot, jobId);
   return { cancelled: true, jobId };
 }

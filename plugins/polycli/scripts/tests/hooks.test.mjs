@@ -16,7 +16,11 @@ import {
   writeJobConfigFile,
 } from "../lib/state.mjs";
 import { readRunLedgerEvents } from "../lib/run-ledger.mjs";
-import { cleanupSessionJobs, handleLifecycleHook } from "../session-lifecycle-hook.mjs";
+import {
+  cleanupSessionJobs,
+  handleLifecycleHook,
+  SESSION_END_BUDGET_MS,
+} from "../session-lifecycle-hook.mjs";
 import {
   parseStopReviewOutput,
   resolveReviewProvider,
@@ -113,6 +117,10 @@ test("hooks.json registers SessionStart, SessionEnd, and Stop hooks with legacy 
     'node "${CLAUDE_PLUGIN_ROOT}/scripts/session-lifecycle-hook.mjs" SessionEnd'
   );
   assert.equal(hooks.hooks.SessionEnd[0].hooks[0].timeout, 5);
+  assert.ok(
+    SESSION_END_BUDGET_MS < hooks.hooks.SessionEnd[0].hooks[0].timeout * 1_000,
+    "the in-process cancellation deadline must leave time for hook startup and exit",
+  );
   assert.equal(
     hooks.hooks.Stop[0].hooks[0].command,
     'node "${CLAUDE_PLUGIN_ROOT}/scripts/stop-review-gate-hook.mjs"'
@@ -376,6 +384,135 @@ test("SessionEnd CLI awaits authoritative cancellation before exiting", async ()
 
       assert.equal(result.code, 0, result.stderr);
       assert.equal(listJobs(workspaceRoot).find((job) => job.jobId === "cli-session-end")?.status, "cancelled");
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test("SessionEnd bounds state-lock contention by one shared deadline without publishing terminal state", async () => {
+  await withPluginData(async () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
+    const lockFile = `${resolveStateFile(workspaceRoot)}.lock`;
+    try {
+      writeWorkspaceState(workspaceRoot, {
+        version: 2,
+        jobs: [
+          { jobId: "locked-one", hostSessionId: "ended", provider: "qwen", kind: "rescue", status: "queued", pid: null },
+          { jobId: "locked-two", hostSessionId: "ended", provider: "qwen", kind: "rescue", status: "queued", pid: null },
+        ],
+      });
+      fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), { mode: 0o600 });
+
+      const startedAt = Date.now();
+      await cleanupSessionJobs(workspaceRoot, "ended", { budgetMs: 60 });
+      const elapsedMs = Date.now() - startedAt;
+
+      assert.ok(elapsedMs < 300, `cleanup exceeded its shared budget: ${elapsedMs}ms`);
+      assert.deepEqual(listJobs(workspaceRoot).map((job) => [job.jobId, job.status]).sort(), [
+        ["locked-one", "queued"],
+        ["locked-two", "queued"],
+      ]);
+      assert.equal(readJobFile(resolveJobFile(workspaceRoot, "locked-one")), null);
+      assert.equal(readJobFile(resolveJobFile(workspaceRoot, "locked-two")), null);
+      assert.equal((await readRunLedgerEvents(workspaceRoot)).length, 0);
+    } finally {
+      fs.rmSync(lockFile, { force: true });
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test("SessionEnd bounds ledger-lock contention and leaves cancellation retryable", async () => {
+  await withPluginData(async () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
+    try {
+      writeWorkspaceState(workspaceRoot, {
+        version: 2,
+        jobs: [{
+          jobId: "ledger-locked",
+          hostSessionId: "ended",
+          provider: "qwen",
+          kind: "rescue",
+          status: "queued",
+          pid: null,
+        }],
+      });
+      writeJobConfigFile(workspaceRoot, "ledger-locked", {
+        workspaceRoot,
+        jobId: "ledger-locked",
+        execution: { provider: "qwen", kind: "rescue" },
+        runContext: {
+          runId: "run-ledger-locked",
+          command: "rescue",
+          hostSurface: "terminal",
+          jobId: "ledger-locked",
+          provider: "qwen",
+          kind: "rescue",
+        },
+      });
+      const ledgerFile = path.join(path.dirname(resolveStateFile(workspaceRoot)), "run-ledger.ndjson");
+      const ledgerLock = `${ledgerFile}.lock`;
+      fs.writeFileSync(ledgerLock, JSON.stringify({ pid: process.pid, acquiredAt: Date.now() }), { mode: 0o600 });
+
+      const startedAt = Date.now();
+      await cleanupSessionJobs(workspaceRoot, "ended", { budgetMs: 60 });
+      assert.ok(Date.now() - startedAt < 300);
+      assert.equal(listJobs(workspaceRoot)[0]?.status, "queued");
+      assert.equal((await readRunLedgerEvents(workspaceRoot)).length, 0);
+      assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "ledger-locked")), true);
+
+      fs.rmSync(ledgerLock, { force: true });
+      await cleanupSessionJobs(workspaceRoot, "ended", { budgetMs: 500 });
+      assert.equal(listJobs(workspaceRoot)[0]?.status, "cancelled");
+      const terminal = (await readRunLedgerEvents(workspaceRoot)).filter((event) =>
+        ["attempt_result", "provider_decision"].includes(event.phase)
+      );
+      assert.deepEqual(terminal.map((event) => event.phase), ["attempt_result", "provider_decision"]);
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+test("SessionEnd applies one deadline to multiple slow terminations and keeps every job active", async () => {
+  await withPluginData(async () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
+    const jobs = [4601, 4602, 4603].map((pid) => ({
+      jobId: `slow-${pid}`,
+      hostSessionId: "ended",
+      provider: "qwen",
+      kind: "rescue",
+      status: "running",
+      pid,
+    }));
+    try {
+      writeWorkspaceState(workspaceRoot, { version: 2, jobs });
+      for (const job of jobs) {
+        writeJobConfigFile(workspaceRoot, job.jobId, {
+          workspaceRoot,
+          jobId: job.jobId,
+          execution: { provider: "qwen", kind: "rescue" },
+          runContext: { runId: `run-${job.jobId}`, command: "rescue", jobId: job.jobId },
+        });
+      }
+
+      const startedAt = Date.now();
+      await cleanupSessionJobs(workspaceRoot, "ended", {
+        budgetMs: 500,
+        isWorkerAlive: () => true,
+        isExpectedWorkerProcess: () => true,
+        terminateProcess: () => new Promise(() => {}),
+      });
+      const elapsedMs = Date.now() - startedAt;
+
+      assert.ok(elapsedMs < 1_000, `multiple termination waits exceeded one budget: ${elapsedMs}ms`);
+      for (const job of listJobs(workspaceRoot)) {
+        assert.equal(job.status, "running", job.jobId);
+        assert.equal(readJobFile(resolveJobFile(workspaceRoot, job.jobId))?.cancellationIntent?.status, "requested");
+        assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, job.jobId)), true);
+      }
+      assert.equal((await readRunLedgerEvents(workspaceRoot)).length, 0);
     } finally {
       fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
