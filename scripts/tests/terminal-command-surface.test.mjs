@@ -19,6 +19,6 @@ test("generated terminal command metadata includes shared commands and delegated
 test("terminal package declares the parser utility used by generated metadata consumers", async () => {
   const pkg = (await import("../../packages/polycli-terminal/package.json", { with: { type: "json" } })).default;
   const utils = (await import("../../packages/polycli-utils/package.json", { with: { type: "json" } })).default;
-  assert.equal(utils.version, "1.0.4", "strict parser extension requires a new publishable utils version");
+  assert.equal(utils.version, "1.0.5", "process lifecycle and argv safety extensions require a new publishable utils version");
   assert.equal(pkg.dependencies?.["@bbingz/polycli-utils"], utils.version);
 });

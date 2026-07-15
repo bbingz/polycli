@@ -10607,7 +10607,7 @@ function appendPreview(logFile, provider, event, { fsImpl = fs9, tailCache = PRE
 
 // plugins/polycli/scripts/polycli-companion.mjs
 var COMPANION_PATH = fileURLToPath(import.meta.url);
-var BUILD_VERSION = true ? "0.6.30" : "0.0.0-dev";
+var BUILD_VERSION = true ? "0.6.31" : "0.0.0-dev";
 var BUILD_VERSION_SOURCE = true ? "bundled-release" : "development";
 var JOB_PREFIXES = {
   ask: "pa",

@@ -1,6 +1,6 @@
 {
   "name": "@bbingz/polycli",
-  "version": "0.6.30",
+  "version": "0.6.31",
   "description": "Terminal CLI for Polycli provider diagnostics and host-compatible commands.",
   "type": "module",
   "bin": {
@@ -18,7 +18,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@bbingz/polycli-utils": "1.0.4"
+    "@bbingz/polycli-utils": "1.0.5"
   },
   "license": "MIT"
 }
