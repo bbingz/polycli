@@ -8,15 +8,16 @@ This repository publishes in three different ways:
 
 ## Current Release State
 
-As of `2026-06-26`, the current public release is **v0.6.28**:
+As of `2026-07-15`, the current public release is **v0.6.29**:
 
 - GitHub repo: `https://github.com/bbingz/polycli`
-- GitHub release: `v0.6.28` — https://github.com/bbingz/polycli/releases/tag/v0.6.28 (`publishedAt` `2026-06-26T15:21:35Z`)
+- GitHub release: `v0.6.29` — https://github.com/bbingz/polycli/releases/tag/v0.6.29 (`publishedAt` `2026-07-15T02:12:20Z`; tag commit `8f9603480c036b910bc9942195a897037006a6f8`)
 - Published npm packages:
-  - `@bbingz/polycli-opencode@0.6.28` (`latest`, `time.modified` `2026-06-26T15:21:17.991Z`, shasum `0cb4db0ee36d9463122533bf1906ceea954222df`)
-  - `@bbingz/polycli@0.6.28` (`latest`, `time.modified` `2026-06-26T15:18:36.741Z`, shasum `6ab1bc8e4f8f241ac529058ef325c41f80983e6f`)
-- Utility packages remain unchanged: `@bbingz/polycli-utils@1.0.2` and `@bbingz/polycli-timing@1.0.1`.
-- `@bbingz/polycli-timing@1.0.1` unchanged (already on the registry; not republished).
+  - `@bbingz/polycli@0.6.29` (`latest`, registry time `2026-07-15T02:09:46.979Z`, shasum `c63a5135d77417da46e0b16ef9592d4e74ca5e5b`)
+  - `@bbingz/polycli-utils@1.0.3` (`latest`, registry time `2026-07-15T02:10:38.964Z`, shasum `94791ca68cb00f1740f5af540da0f8e29541cb5c`)
+  - `@bbingz/polycli-timing@1.0.2` (`latest`, registry time `2026-07-15T02:10:59.440Z`, shasum `bd305c872ecd50e0abef6b6bd4abefcc1240e15a`)
+  - `@bbingz/polycli-opencode@0.6.29` (`latest`, registry time `2026-07-15T02:11:18.658Z`, shasum `cdf927ecc557602800e18b5feb5f0d3d2e88c0bb`)
+- `@bbingz/polycli-runtime` remains an internal/private package.
 
 Verified release paths:
 

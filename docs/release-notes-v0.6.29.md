@@ -30,10 +30,14 @@ The Path B architecture remains unchanged. Provider modules stay flat, `@bbingz/
 
 ## Verification
 
-- `npm run release:check` passes before publication.
+- `npm run release:check` passed before publication (618/618 tests).
 - Release verification includes the full test suite, regenerated bundle equality, fixture metadata plus strict freshness, manifest/host/Codex adapter validation, review-drift probes, Claude plugin validation, and npm publish dry-runs.
+- Registry read-after-write confirmed every published version is the `latest` tag and its tarball shasum matches the pre-publish dry-run.
 
 ## Release artifacts
 
-- GitHub release `v0.6.29`: https://github.com/bbingz/polycli/releases/tag/v0.6.29
-- npm `@bbingz/polycli-opencode@0.6.29`, `@bbingz/polycli@0.6.29`, `@bbingz/polycli-utils@1.0.3`, and `@bbingz/polycli-timing@1.0.2` (`latest`).
+- GitHub release `v0.6.29`: https://github.com/bbingz/polycli/releases/tag/v0.6.29 (`publishedAt` `2026-07-15T02:12:20Z`; tag commit `8f9603480c036b910bc9942195a897037006a6f8`).
+- npm `@bbingz/polycli@0.6.29` (`latest`, registry time `2026-07-15T02:09:46.979Z`, shasum `c63a5135d77417da46e0b16ef9592d4e74ca5e5b`).
+- npm `@bbingz/polycli-utils@1.0.3` (`latest`, registry time `2026-07-15T02:10:38.964Z`, shasum `94791ca68cb00f1740f5af540da0f8e29541cb5c`).
+- npm `@bbingz/polycli-timing@1.0.2` (`latest`, registry time `2026-07-15T02:10:59.440Z`, shasum `bd305c872ecd50e0abef6b6bd4abefcc1240e15a`).
+- npm `@bbingz/polycli-opencode@0.6.29` (`latest`, registry time `2026-07-15T02:11:18.658Z`, shasum `cdf927ecc557602800e18b5feb5f0d3d2e88c0bb`).

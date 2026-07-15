@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-07-15 — Codex — release: v0.6.29 published
+
+- Published and registry-verified all four public packages as `latest`: `@bbingz/polycli@0.6.29` (registry time `2026-07-15T02:09:46.979Z`, shasum `c63a5135d77417da46e0b16ef9592d4e74ca5e5b`), `@bbingz/polycli-utils@1.0.3` (`2026-07-15T02:10:38.964Z`, `94791ca68cb00f1740f5af540da0f8e29541cb5c`), `@bbingz/polycli-timing@1.0.2` (`2026-07-15T02:10:59.440Z`, `bd305c872ecd50e0abef6b6bd4abefcc1240e15a`), and `@bbingz/polycli-opencode@0.6.29` (`2026-07-15T02:11:18.658Z`, `cdf927ecc557602800e18b5feb5f0d3d2e88c0bb`).
+- Created annotated tag `v0.6.29` at `8f9603480c036b910bc9942195a897037006a6f8` and published https://github.com/bbingz/polycli/releases/tag/v0.6.29 (`publishedAt` `2026-07-15T02:12:20Z`).
+- Pre-publication `npm run release:check` passed (618/618 tests, strict fixture freshness, bundle/manifest/host/Codex/review-drift/Claude-plugin checks, and all npm dry-runs); post-publication registry tarball hashes matched those dry-runs. See `docs/release-notes-v0.6.29.md`.
+
 ## 2026-07-15 — Codex — release: v0.6.29 candidate (provider and lifecycle hardening)
 
 - Prepared the full current release batch: durable background-job terminal transactions and session-artifact handling, status-only default setup auth probes, current provider invocation/parser contracts, and review-safety drift checks. The release keeps the runtime flat and `@bbingz/polycli-runtime` private.
