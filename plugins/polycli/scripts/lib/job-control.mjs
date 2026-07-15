@@ -362,11 +362,11 @@ export function refreshJob(workspaceRoot, job) {
 
 export function buildStatusSnapshot(workspaceRoot, { showAll = false } = {}) {
   const refreshed = sortJobsNewestFirst(listJobs(workspaceRoot)).map((job) => refreshJob(workspaceRoot, job));
-  const limited = showAll ? refreshed : refreshed.slice(0, DEFAULT_STATUS_LIMIT);
+  const recent = refreshed.filter((job) => TERMINAL_STATUSES.has(job.status));
   return {
     totalJobs: refreshed.length,
-    running: limited.filter((job) => ACTIVE_STATUSES.has(job.status)),
-    recent: limited.filter((job) => TERMINAL_STATUSES.has(job.status)),
+    running: refreshed.filter((job) => ACTIVE_STATUSES.has(job.status)),
+    recent: showAll ? recent : recent.slice(0, DEFAULT_STATUS_LIMIT),
   };
 }
 

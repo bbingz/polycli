@@ -688,6 +688,34 @@ test("buildStatusSnapshot returns progress preview and recent jobs", () => {
   });
 });
 
+test("buildStatusSnapshot retains every active job while bounding terminal history", () => {
+  withWorkspace((workspaceRoot) => {
+    upsertJob(workspaceRoot, {
+      jobId: "job-active-oldest",
+      provider: "qwen",
+      kind: "review",
+      status: "queued",
+      updatedAt: "2026-04-22T00:00:00.000Z",
+    });
+    for (let index = 0; index < 9; index += 1) {
+      upsertJob(workspaceRoot, {
+        jobId: `job-terminal-${index}`,
+        provider: "qwen",
+        kind: "review",
+        status: "completed",
+        updatedAt: `2026-04-22T00:00:${String(index + 1).padStart(2, "0")}.000Z`,
+        finishedAt: `2026-04-22T00:00:${String(index + 1).padStart(2, "0")}.000Z`,
+      });
+    }
+
+    const snapshot = buildStatusSnapshot(workspaceRoot);
+    assert.equal(snapshot.totalJobs, 10);
+    assert.deepEqual(snapshot.running.map((job) => job.jobId), ["job-active-oldest"]);
+    assert.equal(snapshot.recent.length, 8);
+    assert.equal(snapshot.recent.some((job) => job.jobId === "job-terminal-0"), false);
+  });
+});
+
 test("resolveLatestActiveJob and resolveLatestTerminalJob prefer newest matching jobs", () => {
   withWorkspace((workspaceRoot) => {
     upsertJob(workspaceRoot, {

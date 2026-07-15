@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   ensureStateDir,
+  listJobs,
   readLastUsedProvider,
   readJobFile,
   resolveJobConfigFile,
@@ -2600,6 +2601,30 @@ test("integration: review with no changes writes no_changes skipped decision", a
     ),
     `expected no_changes skipped decision for run-clean; got ${JSON.stringify(events)}`,
   );
+});
+
+test("integration: background JSON v2 review with no changes reports the skipped result and creates no job", async (t) => {
+  const context = createLedgerContext(t);
+  gitInitSync(context.cwd);
+  const result = await runCompanion(
+    ["review", "--provider", "cmd", "--background", "--json-v2", "--run-id", "run-clean-background"],
+    context,
+  );
+  assert.equal(result.code, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.result.type, "provider.execution");
+  assert.equal(payload.result.execution.provider, "cmd");
+  assert.equal(payload.result.providerResult.verdict, "no_changes");
+  assert.equal("job" in payload.result, false);
+  assert.deepEqual(listJobs(context.cwd), []);
+
+  const events = (await readRunLedgerEvents(context.cwd))
+    .filter((event) => event.runId === "run-clean-background");
+  const decisions = events.filter((event) => event.phase === "provider_decision");
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0].status, "skipped");
+  assert.equal(decisions[0].reason, "no_changes");
 });
 
 test("integration: gemini no-changes review cleans up isolated cwd", async (t) => {

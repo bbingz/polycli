@@ -217,6 +217,22 @@ test("serializeV2Result covers provider setup, health, execution, and background
   assert.equal("pid" in started.job, false);
 });
 
+test("background provider commands without a created job serialize their actual provider result", () => {
+  const skipped = serializeV2Result("review", {
+    ok: true,
+    provider: "cmd",
+    verdict: "no_changes",
+    diff: { scope: "auto", source: "none", bytes: 0 },
+  }, { background: true });
+
+  assert.equal(skipped.type, "provider.execution");
+  assert.equal(skipped.execution.provider, "cmd");
+  assert.equal(skipped.execution.kind, "review");
+  assert.equal(skipped.providerResult.ok, true);
+  assert.equal(skipped.providerResult.verdict, "no_changes");
+  assert.equal("job" in skipped, false);
+});
+
 test("a normal provider result with inner ok false remains a successful v2 envelope", () => {
   const result = serializeV2Result("rescue", {
     provider: "qwen",

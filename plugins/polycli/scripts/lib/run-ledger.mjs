@@ -182,12 +182,24 @@ function redactLedgerError(error) {
   return { message: sanitizePublicErrorMessage(message, 300) };
 }
 
+function sanitizeLedgerPreview(preview) {
+  if (preview == null) return null;
+  const text = String(preview);
+  return sanitizePublicErrorMessage(text, text.length);
+}
+
 function redactTerminalDescriptor(descriptor) {
   if (!descriptor || typeof descriptor !== 'object') return descriptor ?? null;
   return {
     ...descriptor,
     events: Array.isArray(descriptor.events)
-      ? descriptor.events.map((event) => ({ ...event, error: redactLedgerError(event.error) }))
+      ? descriptor.events.map((event) => ({
+        ...event,
+        error: redactLedgerError(event.error),
+        ...(Object.prototype.hasOwnProperty.call(event, 'preview')
+          ? { preview: sanitizeLedgerPreview(event.preview) }
+          : {}),
+      }))
       : descriptor.events,
   };
 }
@@ -222,7 +234,7 @@ export function createRunLedgerEvent(event = {}) {
     providerSessionId,
     timingRef: event.timingRef ?? null,
     error: redactLedgerError(event.error),
-    preview: event.preview ?? null,
+    preview: sanitizeLedgerPreview(event.preview),
     stdoutBytes: event.stdoutBytes ?? null,
     stderrBytes: event.stderrBytes ?? null,
     durationMs: event.durationMs ?? null,
