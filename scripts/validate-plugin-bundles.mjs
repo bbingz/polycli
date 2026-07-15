@@ -1,69 +1,50 @@
 #!/usr/bin/env node
 
-import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { renderTerminalCommandSurface } from "./build-plugin-bundles.mjs";
+import { renderExpectedPluginArtifacts } from "./build-plugin-bundles.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
-const DEFAULT_TARGETS = [
-  "plugins/polycli/scripts/polycli-companion.bundle.mjs",
-  "plugins/polycli-codex/scripts/polycli-companion.bundle.mjs",
-  "plugins/polycli-copilot/scripts/polycli-companion.bundle.mjs",
-  "plugins/polycli-opencode/scripts/polycli-companion.bundle.mjs",
-  "packages/polycli-terminal/bin/polycli-companion.bundle.mjs",
-];
-const GENERATED_SURFACE = "packages/polycli-terminal/lib/command-surface.generated.mjs";
 
 function readTarget(root, relativePath) {
   const filePath = path.join(root, relativePath);
-  assert.ok(fs.existsSync(filePath), `missing bundle target: ${relativePath}`);
+  if (!fs.existsSync(filePath)) throw new Error(`missing generated artifact: ${relativePath}`);
   return fs.readFileSync(filePath);
 }
 
-export function validatePluginBundles({
+export async function validatePluginBundles({
   root = REPO_ROOT,
-  targets = DEFAULT_TARGETS,
-  generatedSurface = root === REPO_ROOT
-    ? { relativePath: GENERATED_SURFACE, expected: renderTerminalCommandSurface() }
-    : null,
+  renderOptions = {},
+  renderArtifacts = renderExpectedPluginArtifacts,
 } = {}) {
-  assert.ok(Array.isArray(targets) && targets.length > 1, "at least two bundle targets are required");
-
-  const [referenceTarget, ...otherTargets] = targets;
-  const referenceBytes = readTarget(root, referenceTarget);
-  for (const target of otherTargets) {
-    const bytes = readTarget(root, target);
-    if (!bytes.equals(referenceBytes)) {
-      throw new Error(`bundle drift detected: ${target} differs from ${referenceTarget}`);
-    }
+  const expectedArtifacts = await renderArtifacts({ ...renderOptions, root });
+  if (!(expectedArtifacts instanceof Map) || expectedArtifacts.size === 0) {
+    throw new Error("artifact renderer returned no expected outputs");
   }
 
-  if (generatedSurface) {
-    const actual = readTarget(root, generatedSurface.relativePath).toString("utf8");
-    if (actual !== generatedSurface.expected) {
-      throw new Error(`generated command surface drift detected: ${generatedSurface.relativePath}`);
+  for (const [relativePath, expectedBytes] of expectedArtifacts) {
+    const actualBytes = readTarget(root, relativePath);
+    if (!actualBytes.equals(expectedBytes)) {
+      throw new Error(`stale generated artifact: ${relativePath}`);
     }
   }
 
   return {
     ok: true,
-    checked: targets,
+    checked: [...expectedArtifacts.keys()],
   };
 }
 
-function main() {
-  const result = validatePluginBundles();
+async function main() {
+  const result = await validatePluginBundles();
   console.log(`plugin bundles ok: ${result.checked.length} checked`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
-  }
+  });
 }

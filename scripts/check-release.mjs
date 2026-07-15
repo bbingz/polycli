@@ -49,15 +49,17 @@ function checkPublishable(packageDir) {
   }
 }
 
-// Ordered release-gate steps. Deterministic validators run first; strict fixture
+// Ordered release-gate steps. Source-derived generated-artifact freshness must
+// run before npm test because the test command rebuilds tracked bundles in
+// place. The remaining deterministic validators follow; strict fixture
 // freshness then prevents publishing against an installed CLI whose recorded
 // parser fixture is stale. Unavailable CLIs remain explicit skips in that
 // checker. check:review-drift runs afterward and self-skips absent CLIs (exit
 // 0), only exit-2ing on a real installed-CLI flag drift. Exported so the gate
 // composition is testable.
 export const RELEASE_STEPS = [
-  ["npm", ["test"]],
   ["npm", ["run", "validate:bundles"]],
+  ["npm", ["test"]],
   ["npm", ["run", "validate:fixtures"]],
   ["npm", ["run", "check:fixture-freshness", "--", "--strict"]],
   ["npm", ["run", "validate:manifests"]],

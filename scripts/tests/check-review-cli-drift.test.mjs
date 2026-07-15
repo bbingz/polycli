@@ -169,3 +169,15 @@ test("RELEASE_STEPS requires strict fixture freshness before publishing checks",
   assert.ok(freshnessIdx >= 0, "release gate must invoke check:fixture-freshness -- --strict");
   assert.ok(freshnessIdx < driftIdx, "strict fixture freshness must run before installed-CLI drift review");
 });
+
+test("RELEASE_STEPS validates source-derived bundles before npm test can rebuild them", () => {
+  const freshnessIdx = RELEASE_STEPS.findIndex(
+    ([cmd, args]) => cmd === "npm" && args[0] === "run" && args[1] === "validate:bundles",
+  );
+  const testIdx = RELEASE_STEPS.findIndex(
+    ([cmd, args]) => cmd === "npm" && args[0] === "test",
+  );
+
+  assert.ok(freshnessIdx >= 0, "release gate must invoke validate:bundles");
+  assert.ok(testIdx > freshnessIdx, "source-derived bundle freshness must be checked before npm test");
+});
