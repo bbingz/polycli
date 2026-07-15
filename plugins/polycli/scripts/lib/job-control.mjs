@@ -94,6 +94,10 @@ function isTerminalEnvelope(envelope) {
   return Boolean(envelope?.job && TERMINAL_STATUSES.has(envelope.job.status));
 }
 
+export function hasPendingCancellationIntent(envelope) {
+  return envelope?.cancellationIntent?.status === "requested";
+}
+
 function buildRecoveredTerminalEvents(
   workspaceRoot,
   job,
@@ -216,7 +220,20 @@ function prepareRecoveredTerminalEvents(
   config,
   { result = null, reason = "worker_exited", terminalDescriptor = null } = {},
 ) {
-  const runContext = config?.runContext;
+  const descriptorEvent = terminalDescriptor?.events?.[0] ?? null;
+  const runContext = config?.runContext || (terminalDescriptor?.runId
+    ? {
+      runId: terminalDescriptor.runId,
+      command: descriptorEvent?.command ?? job.kind ?? null,
+      kind: descriptorEvent?.kind ?? job.kind ?? null,
+      provider: descriptorEvent?.provider ?? job.provider ?? null,
+      hostSurface: descriptorEvent?.hostSurface || "unknown",
+      invocationId: terminalDescriptor.invocationId ?? job.invocationId ?? null,
+      attemptId: terminalDescriptor.attemptId ?? job.attemptId ?? null,
+      jobId: terminalDescriptor.jobId ?? job.jobId ?? null,
+      logFile: job.logFile ?? null,
+    }
+    : null);
   if (!runContext?.runId) return { events: [], terminalDescriptor };
 
   const events = buildRecoveredTerminalEvents(workspaceRoot, job, config, runContext, {
@@ -258,6 +275,9 @@ export function refreshJob(workspaceRoot, job) {
     return job ? enrichJob(workspaceRoot, job) : null;
   }
   const storedEnvelope = readJobFile(resolveJobFile(workspaceRoot, job.jobId));
+  if (hasPendingCancellationIntent(storedEnvelope)) {
+    return enrichJob(workspaceRoot, job);
+  }
   if (!job.pid && !isTerminalEnvelope(storedEnvelope)) {
     return enrichJob(workspaceRoot, job);
   }
@@ -602,9 +622,8 @@ export async function cancelJob(
     isExpectedWorker = isExpectedWorkerProcess,
   } = {},
 ) {
-  // Keep the public job active until a validated worker has been stopped. The envelope and ledger
-  // are a durable cancellation intent, so a crash before the signal can be retried safely instead
-  // of publishing "cancelled" while the worker still runs.
+  // Keep the public job active until a validated worker has been stopped. A distinct, non-terminal
+  // envelope intent makes that request durable without publishing a result or terminal ledger pair.
   let pidToKill = null;
   let configForCleanup = null;
   let cancellationEnvelope = null;
@@ -619,7 +638,7 @@ export async function cancelJob(
       reason = "not_cancellable";
       return null;
     }
-    const resumingCancellation = storedEnvelope?.job?.status === "cancelled";
+    const resumingCancellation = hasPendingCancellationIntent(storedEnvelope);
     if (isTerminalEnvelope(storedEnvelope) && !resumingCancellation) {
       reason = "not_cancellable";
       return null;
@@ -627,44 +646,20 @@ export async function cancelJob(
 
     pidToKill = current.pid ?? null;
     configForCleanup = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
-    const intentJob = resumingCancellation
-      ? {
-        ...current,
-        ...storedEnvelope.job,
-        status: "cancelled",
-        pid: null,
-        finishedAt: storedEnvelope.job.finishedAt || requestedAt,
-        updatedAt: requestedAt,
-      }
+    cancellationEnvelope = resumingCancellation
+      ? storedEnvelope
       : {
-        ...current,
-        status: "cancelled",
-        pid: null,
-        finishedAt: requestedAt,
-        updatedAt: requestedAt,
+        job: current,
+        cancellationIntent: {
+          status: "requested",
+          requestedAt,
+        },
       };
-    const cancellationResult = resumingCancellation
-      ? (storedEnvelope.result || { ok: false, error: "cancelled" })
-      : { ok: false, error: "cancelled" };
-    const terminal = prepareRecoveredTerminalEvents(workspaceRoot, intentJob, configForCleanup, {
-      result: cancellationResult,
-      reason: "cancelled",
-      terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null,
-    });
-    cancellationEnvelope = {
-      job: intentJob,
-      result: cancellationResult,
-      terminalReason: "cancelled",
-      terminalDescriptor: terminal.terminalDescriptor,
-    };
     return {
-      // Do not make the state terminal yet. It remains the recovery point if this process exits
-      // after persisting the intent but before the worker receives its signal.
+      // Do not make the state or envelope terminal yet. Both remain recovery points if this
+      // process exits after persisting the intent but before the worker receives its signal.
       job: current,
       envelope: cancellationEnvelope,
-      beforeStateCommit() {
-        ensureRecoveredTerminalEvents(workspaceRoot, terminal);
-      },
     };
   });
   if (!intentWrite.written) {
@@ -672,8 +667,8 @@ export async function cancelJob(
   }
 
   const configFile = resolveJobConfigFile(workspaceRoot, jobId);
-  if (pidToKill && isWorkerAlive(pidToKill)) {
-    if (!isExpectedWorker(pidToKill, configFile)) {
+  if (Number.isInteger(pidToKill) && pidToKill > 1 && isWorkerAlive(pidToKill)) {
+    if (!configForCleanup || isExpectedWorker(pidToKill, configFile) !== true) {
       return { cancelled: false, reason: "worker_identity_unverified", jobId };
     }
     try {
@@ -703,18 +698,21 @@ export async function cancelJob(
       return null;
     }
     if (current.status === "cancelled") return null;
-    if (!ACTIVE_STATUSES.has(current.status) || storedEnvelope?.job?.status !== "cancelled") {
+    if (!ACTIVE_STATUSES.has(current.status) || !hasPendingCancellationIntent(storedEnvelope)) {
       reason = "cancellation_finalization_pending";
       return null;
     }
     finalConfig = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId)) || finalConfig;
     const finishedAt = new Date().toISOString();
+    const storedCancelledJob = storedEnvelope?.job?.status === "cancelled"
+      ? storedEnvelope.job
+      : null;
     const finalJob = {
       ...current,
-      ...storedEnvelope.job,
+      ...(storedCancelledJob || {}),
       status: "cancelled",
       pid: null,
-      finishedAt: storedEnvelope.job.finishedAt || finishedAt,
+      finishedAt: storedCancelledJob?.finishedAt || finishedAt,
       updatedAt: finishedAt,
     };
     const result = storedEnvelope.result || cancellationEnvelope?.result || { ok: false, error: "cancelled" };
@@ -731,6 +729,7 @@ export async function cancelJob(
         result,
         terminalReason: "cancelled",
         terminalDescriptor: terminal.terminalDescriptor,
+        cancellationIntent: storedEnvelope.cancellationIntent,
       },
       beforeStateCommit() {
         ensureRecoveredTerminalEvents(workspaceRoot, terminal);

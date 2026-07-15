@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { parseArgs } from "@bbingz/polycli-utils/args";
@@ -33,11 +32,13 @@ import {
 import {
   buildStatusSnapshot,
   cancelJob,
+  hasPendingCancellationIntent,
   refreshJob,
   refreshJobsForLedgerRecovery,
   resolveJobSelector,
   waitForJob,
 } from "./lib/job-control.mjs";
+import { startBackgroundWorker } from "./lib/background-start.mjs";
 import { buildPromptRuntimeOptions } from "./lib/prompt-runtime.mjs";
 import { PROVIDER_IDS, resolveProvider } from "./lib/providers.mjs";
 import {
@@ -63,7 +64,6 @@ import {
   setConfig,
   updateJobAtomically,
   upsertJob,
-  writeJobConfigFile,
   writeJobFile,
 } from "./lib/state.mjs";
 import {
@@ -222,12 +222,16 @@ function hasTerminalJobEnvelope(envelope) {
   return TERMINAL_JOB_STATUSES.has(envelope?.job?.status);
 }
 
+function blocksBackgroundWorkerCommit(envelope) {
+  return hasTerminalJobEnvelope(envelope) || hasPendingCancellationIntent(envelope);
+}
+
 function claimBackgroundWorker(workspaceRoot, jobId) {
   const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
     // The worker claims its own PID before it records any provider-facing event or invokes a
     // provider. This closes the parent spawn -> state-PID crash window: if cancellation won that
     // race, its terminal envelope makes this worker exit without doing work.
-    if (!latest || !ACTIVE_JOB_STATUSES.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
+    if (!latest || !ACTIVE_JOB_STATUSES.has(latest.status) || blocksBackgroundWorkerCommit(storedEnvelope)) {
       return null;
     }
     if (latest.pid != null && latest.pid !== process.pid) {
@@ -248,71 +252,6 @@ function claimBackgroundWorker(workspaceRoot, jobId) {
 function shouldRetainJobConfig(workspaceRoot, jobId) {
   const current = getJob(workspaceRoot, jobId);
   return current?.status === "queued" || current?.status === "running";
-}
-
-function recordBackgroundSpawnFailure(workspaceRoot, jobId, execution, runContext, error) {
-  const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
-  try {
-    const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
-      if (!latest || !ACTIVE_JOB_STATUSES.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
-        return null;
-      }
-      const finishedAt = new Date().toISOString();
-      const failedJob = {
-        ...latest,
-        ...execution.jobMeta,
-        status: "failed",
-        pid: null,
-        finishedAt,
-        updatedAt: finishedAt,
-        error: error.message,
-      };
-      const terminalReason = `${execution.kind}_failed`;
-      const terminalEvents = [
-        {
-          command: runContext?.command || execution.kind,
-          kind: execution.kind,
-          provider: execution.provider,
-          phase: "attempt_result",
-          status: "failed",
-          reason: terminalReason,
-          attempt: { ordinal: 1 },
-          jobId,
-          error: { message: String(error.message || error).slice(0, 300) },
-          logFile: failedJob.logFile || null,
-        },
-        {
-          command: runContext?.command || execution.kind,
-          kind: execution.kind,
-          provider: execution.provider,
-          phase: "provider_decision",
-          status: "failed",
-          reason: terminalReason,
-          jobId,
-        },
-      ];
-      const terminal = prepareTerminalRunEventsForContext(runContext, terminalEvents);
-      return {
-        job: failedJob,
-        envelope: {
-          job: failedJob,
-          result: { ok: false, error: error.message },
-          terminalReason,
-          terminalDescriptor: terminal.terminalDescriptor,
-        },
-        beforeStateCommit() {
-          ensureTerminalRunEventsForContext(workspaceRoot, terminal);
-        },
-      };
-    });
-    if (write.written) {
-      cleanupRuntimeOptions(config?.execution?.runtimeOptions);
-      removeJobConfigFile(workspaceRoot, jobId);
-    }
-  } catch {
-    // A failed state/ledger write leaves the active job and, when the envelope write succeeded,
-    // a recoverable terminal intent. The next status refresh owns the retry.
-  }
 }
 
 async function recordRunEvent(workspaceRoot, base = {}) {
@@ -1215,7 +1154,7 @@ async function startBackgroundExecution(execution, asJson) {
     defaultModel: execution.defaultModel || null,
     logFile: job.logFile,
   });
-  writeJobConfigFile(workspaceRoot, job.jobId, {
+  const config = {
     workspaceRoot,
     hostSessionId: job.hostSessionId,
     execution: {
@@ -1229,24 +1168,16 @@ async function startBackgroundExecution(execution, asJson) {
     },
     jobId: job.jobId,
     runContext,
+  };
+  const { child } = await startBackgroundWorker({
+    workspaceRoot,
+    job,
+    execution,
+    runContext,
+    config,
+    companionPath: COMPANION_PATH,
+    env: process.env,
   });
-
-  fs.writeFileSync(job.logFile, `[${new Date().toISOString()}] started ${job.provider} ${job.kind}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  const logFd = fs.openSync(job.logFile, "a", 0o600);
-  const child = spawn(process.execPath, [COMPANION_PATH, "_job-worker", resolveJobConfigFile(workspaceRoot, job.jobId)], {
-    cwd: execution.cwd,
-    env: { ...process.env },
-    stdio: ["ignore", logFd, logFd],
-    detached: true,
-  });
-  child.once("error", (error) => {
-    recordBackgroundSpawnFailure(workspaceRoot, job.jobId, execution, runContext, error);
-  });
-  child.unref();
-  fs.closeSync(logFd);
 
   const runningWrite = updateJobAtomically(workspaceRoot, job.jobId, (latest) => {
     if (!latest || latest.status !== "queued") return null;
@@ -2154,14 +2085,6 @@ async function runJobWorker(rawArgs) {
       },
     });
 
-    // A terminal status promises that all durable result, timing, and ledger writes
-    // are visible. Keep the job active until those writes complete so status --wait
-    // cannot race consumers that inspect or remove the state directory.
-    if (result.timing) {
-      appendTimingRecord(workspaceRoot, result.timing);
-    }
-    cacheProviderModel(workspaceRoot, execution.provider, result.model);
-
     const compactResult = compactProviderResult(result);
     const sessionArtifactPath = resolveSessionArtifactPath(
       execution.provider,
@@ -2169,9 +2092,17 @@ async function runJobWorker(rawArgs) {
       execution.cwd,
     );
     const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
-      if (!latest || latest.status === "cancelled" || hasTerminalJobEnvelope(storedEnvelope)) {
+      if (!latest || latest.status === "cancelled" || blocksBackgroundWorkerCommit(storedEnvelope)) {
         return null;
       }
+      // The state lock makes this the finalize-vs-cancel winner checkpoint. Only after the worker
+      // wins may it commit provider-derived timing/model side effects; if cancellation intent won,
+      // this callback returns without publishing any late provider material.
+      if (result.timing) {
+        appendTimingRecord(workspaceRoot, result.timing);
+      }
+      cacheProviderModel(workspaceRoot, execution.provider, result.model);
+
       const finishedAt = new Date().toISOString();
       const finishedJob = {
         ...latest,
@@ -2255,7 +2186,7 @@ async function runJobWorker(rawArgs) {
     removeJobConfigFile(workspaceRoot, jobId);
   } catch (error) {
     const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
-      if (!latest || latest.status === "cancelled" || hasTerminalJobEnvelope(storedEnvelope)) {
+      if (!latest || latest.status === "cancelled" || blocksBackgroundWorkerCommit(storedEnvelope)) {
         return null;
       }
       const finishedAt = new Date().toISOString();

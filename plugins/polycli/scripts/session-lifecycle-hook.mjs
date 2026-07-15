@@ -3,12 +3,11 @@
 import fs from "node:fs";
 import process from "node:process";
 
-import { isExpectedWorkerProcess } from "./lib/job-control.mjs";
+import { cancelJob } from "./lib/job-control.mjs";
 import {
-  resolveJobConfigFile,
+  listJobs,
   resolveStateFile,
   resolveWorkspaceRoot,
-  updateState,
 } from "./lib/state.mjs";
 
 export const SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
@@ -38,19 +37,6 @@ function appendEnvVar(name, value) {
   );
 }
 
-function terminateProcess(pid) {
-  if (!Number.isInteger(pid) || pid <= 1) return;
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // Process already gone.
-    }
-  }
-}
-
 function jobHostSessionId(job) {
   if (!job || typeof job !== "object") return null;
   if (Object.prototype.hasOwnProperty.call(job, "hostSessionId")) {
@@ -62,47 +48,34 @@ function jobHostSessionId(job) {
     : null;
 }
 
-export function cleanupSessionJobs(cwd, sessionId, {
-  isExpectedWorkerProcess: verifyWorker = isExpectedWorkerProcess,
-  terminateProcess: terminateWorker = terminateProcess,
+export async function cleanupSessionJobs(cwd, sessionId, {
+  cancel = cancelJob,
+  isExpectedWorkerProcess: verifyWorker,
+  terminateProcess: terminateWorker,
+  isWorkerAlive,
 } = {}) {
-  if (!cwd || !sessionId) return;
+  if (!cwd || !sessionId) return [];
 
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const stateFile = resolveStateFile(workspaceRoot);
-  if (!fs.existsSync(stateFile)) return;
+  if (!fs.existsSync(stateFile)) return [];
 
-  const workersToTerminate = [];
-  updateState(workspaceRoot, (state) => {
-    const jobs = Array.isArray(state.jobs) ? state.jobs : [];
-    const sessionJobs = jobs.filter((job) => jobHostSessionId(job) === sessionId);
-    if (sessionJobs.length === 0) return;
-
-    for (const job of sessionJobs) {
-      if (job.status === "running" || job.status === "queued") {
-        workersToTerminate.push({
-          pid: job.pid,
-          configFile: resolveJobConfigFile(workspaceRoot, job.jobId),
-        });
-      }
-    }
-
-    state.jobs = jobs.filter((job) => {
-      if (jobHostSessionId(job) !== sessionId) return true;
-      return job.status === "completed"
-        || job.status === "failed"
-        || job.status === "cancelled";
-    });
-  });
-
-  for (const { pid, configFile } of workersToTerminate) {
-    if (!Number.isInteger(pid) || pid <= 1 || !fs.existsSync(configFile)) continue;
-    if (verifyWorker(pid, configFile) !== true) continue;
-    terminateWorker(pid);
-  }
+  // Snapshot ownership only; cancelJob remains authoritative for every state, ledger, identity,
+  // termination, and cleanup transition. Running cancellations concurrently keeps SessionEnd
+  // within the hook timeout while each per-job state lock preserves serialization.
+  const active = listJobs(workspaceRoot).filter((job) =>
+    (job.status === "running" || job.status === "queued")
+      && jobHostSessionId(job) === sessionId
+  );
+  const cancelOptions = {
+    ...(verifyWorker ? { isExpectedWorker: verifyWorker } : {}),
+    ...(terminateWorker ? { terminate: terminateWorker } : {}),
+    ...(isWorkerAlive ? { isWorkerAlive } : {}),
+  };
+  return Promise.allSettled(active.map((job) => cancel(workspaceRoot, job.jobId, cancelOptions)));
 }
 
-export function handleLifecycleHook(eventName, input = {}) {
+export async function handleLifecycleHook(eventName, input = {}) {
   if (eventName === "SessionStart") {
     appendEnvVar(SESSION_ID_ENV, input.session_id);
     return;
@@ -111,23 +84,21 @@ export function handleLifecycleHook(eventName, input = {}) {
   if (eventName === "SessionEnd") {
     const cwd = input.cwd || process.cwd();
     const sessionId = input.session_id || process.env[SESSION_ID_ENV];
-    cleanupSessionJobs(cwd, sessionId);
+    await cleanupSessionJobs(cwd, sessionId);
   }
 }
 
-function main() {
+async function main() {
   const input = readHookInput();
   const eventName = process.argv[2] ?? input.hook_event_name ?? "";
-  handleLifecycleHook(eventName, input);
+  await handleLifecycleHook(eventName, input);
 }
 
 if (process.argv[1] && process.argv[1].endsWith("session-lifecycle-hook.mjs")) {
-  try {
-    main();
-  } catch (err) {
+  main().catch((err) => {
     process.stderr.write(
       `[polycli session-lifecycle-hook] fatal: ${err && err.message ? err.message : String(err)}\n`
     );
-    process.exit(1);
-  }
+    process.exitCode = 1;
+  });
 }

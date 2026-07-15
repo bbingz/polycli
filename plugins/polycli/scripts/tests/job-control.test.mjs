@@ -1142,7 +1142,9 @@ test("cancelJob resumes a persisted cancellation intent after a transient ledger
     fs.mkdirSync(ledgerFile, { mode: 0o700 });
     await assert.rejects(() => cancelJob(workspaceRoot, jobId), /EISDIR|illegal operation|operation on a directory/i);
     assert.equal(listJobs(workspaceRoot).find((job) => job.jobId === jobId)?.status, "running");
-    assert.equal(readJobFile(resolveJobFile(workspaceRoot, jobId))?.job?.status, "cancelled");
+    const pendingEnvelope = readJobFile(resolveJobFile(workspaceRoot, jobId));
+    assert.equal(pendingEnvelope?.job?.status, "cancelled");
+    assert.equal(pendingEnvelope?.cancellationIntent?.status, "requested");
 
     fs.rmSync(ledgerFile, { recursive: true, force: true });
     const resumed = await cancelJob(workspaceRoot, jobId);
@@ -1210,12 +1212,16 @@ test("cancelJob kills the worker before deleting its runtime paths", async () =>
 
     let dirExistedAtKill = null;
     let statusAtKill = null;
+    let terminalEventsAtKill = null;
     let workerAlive = true;
     const report = await cancelJob(workspaceRoot, "job-order", {
       terminate: async () => {
         // The cleanup path (a review's live cwd) must still exist when the kill runs.
         dirExistedAtKill = fs.existsSync(cleanupDir);
         statusAtKill = listJobs(workspaceRoot).find((job) => job.jobId === "job-order")?.status;
+        terminalEventsAtKill = (await readRunLedgerEvents(workspaceRoot)).filter((event) =>
+          event.runId === "run-order" && ["attempt_result", "provider_decision"].includes(event.phase)
+        ).length;
         workerAlive = false;
       },
       isWorkerAlive: () => workerAlive,
@@ -1225,7 +1231,15 @@ test("cancelJob kills the worker before deleting its runtime paths", async () =>
     assert.equal(report.cancelled, true);
     assert.equal(dirExistedAtKill, true);
     assert.equal(statusAtKill, "running");
+    assert.equal(terminalEventsAtKill, 0);
     assert.equal(fs.existsSync(cleanupDir), false);
+    const terminal = (await readRunLedgerEvents(workspaceRoot)).filter((event) =>
+      event.runId === "run-order" && ["attempt_result", "provider_decision"].includes(event.phase)
+    );
+    assert.deepEqual(terminal.map((event) => [event.phase, event.status]), [
+      ["attempt_result", "cancelled"],
+      ["provider_decision", "cancelled"],
+    ]);
   });
 });
 
@@ -1265,7 +1279,24 @@ test("cancelJob preserves runtime paths when the kill fails (worker may be alive
     assert.equal(fs.existsSync(cleanupDir), true);
     assert.equal(listJobs(workspaceRoot).find((job) => job.jobId === "job-killfail")?.status, "running");
     assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "job-killfail")), true);
-    fs.rmSync(cleanupDir, { recursive: true, force: true });
+    const pendingEnvelope = readJobFile(resolveJobFile(workspaceRoot, "job-killfail"));
+    assert.equal(pendingEnvelope?.job?.status, "running");
+    assert.equal(pendingEnvelope?.cancellationIntent?.status, "requested");
+    assert.equal((await readRunLedgerEvents(workspaceRoot)).filter((event) =>
+      event.runId === "run-killfail" && ["attempt_result", "provider_decision"].includes(event.phase)
+    ).length, 0);
+
+    const retried = await cancelJob(workspaceRoot, "job-killfail", {
+      isWorkerAlive: () => false,
+    });
+    assert.equal(retried.cancelled, true);
+    assert.equal(listJobs(workspaceRoot).find((job) => job.jobId === "job-killfail")?.status, "cancelled");
+    assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, "job-killfail")), false);
+    assert.equal(fs.existsSync(cleanupDir), false);
+    const terminal = (await readRunLedgerEvents(workspaceRoot)).filter((event) =>
+      event.runId === "run-killfail" && ["attempt_result", "provider_decision"].includes(event.phase)
+    );
+    assert.deepEqual(terminal.map((event) => event.phase), ["attempt_result", "provider_decision"]);
   });
 });
 
@@ -1306,6 +1337,68 @@ test("cancelJob refuses to signal a reused pid that no longer identifies its wor
     assert.equal(report.reason, "worker_identity_unverified");
     assert.equal(signalled, false);
     assert.equal(listJobs(workspaceRoot).find((job) => job.jobId === jobId)?.status, "running");
-    assert.equal(readJobFile(resolveJobFile(workspaceRoot, jobId))?.job?.status, "cancelled");
+    const pendingEnvelope = readJobFile(resolveJobFile(workspaceRoot, jobId));
+    assert.equal(pendingEnvelope?.job?.status, "running");
+    assert.equal(pendingEnvelope?.cancellationIntent?.status, "requested");
+    assert.equal((await readRunLedgerEvents(workspaceRoot)).filter((event) =>
+      event.runId === "run-pid-reused" && ["attempt_result", "provider_decision"].includes(event.phase)
+    ).length, 0);
+    const refreshed = refreshJob(workspaceRoot, listJobs(workspaceRoot).find((job) => job.jobId === jobId));
+    assert.equal(refreshed.status, "running");
   });
+});
+
+test("cancelJob keeps an unverifiable or still-running worker active without terminal ledger", async (t) => {
+  for (const scenario of [
+    { name: "identity unavailable", identity: null, expectedReason: "worker_identity_unverified" },
+    { name: "worker survives termination", identity: true, expectedReason: "worker_still_running" },
+  ]) {
+    await t.test(scenario.name, async () => {
+      await withWorkspace(async (workspaceRoot) => {
+        const jobId = `job-${scenario.name.replaceAll(" ", "-")}`;
+        const cleanupDir = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-cancel-pending-"));
+        upsertJob(workspaceRoot, {
+          jobId,
+          provider: "qwen",
+          kind: "rescue",
+          status: "running",
+          pid: 4242,
+        });
+        writeJobConfigFile(workspaceRoot, jobId, {
+          workspaceRoot,
+          jobId,
+          execution: {
+            provider: "qwen",
+            kind: "rescue",
+            runtimeOptions: { cleanupPaths: [cleanupDir] },
+          },
+          runContext: {
+            runId: `run-${jobId}`,
+            command: "rescue",
+            hostSurface: "terminal",
+            jobId,
+            provider: "qwen",
+            kind: "rescue",
+          },
+        });
+
+        const report = await cancelJob(workspaceRoot, jobId, {
+          terminate: async () => {},
+          isWorkerAlive: () => true,
+          isExpectedWorker: () => scenario.identity,
+        });
+
+        assert.equal(report.cancelled, false);
+        assert.equal(report.reason, scenario.expectedReason);
+        assert.equal(listJobs(workspaceRoot).find((job) => job.jobId === jobId)?.status, "running");
+        assert.equal(readJobFile(resolveJobFile(workspaceRoot, jobId))?.cancellationIntent?.status, "requested");
+        assert.equal(fs.existsSync(resolveJobConfigFile(workspaceRoot, jobId)), true);
+        assert.equal(fs.existsSync(cleanupDir), true);
+        assert.equal((await readRunLedgerEvents(workspaceRoot)).filter((event) =>
+          ["attempt_result", "provider_decision"].includes(event.phase)
+        ).length, 0);
+        fs.rmSync(cleanupDir, { recursive: true, force: true });
+      });
+    });
+  }
 });

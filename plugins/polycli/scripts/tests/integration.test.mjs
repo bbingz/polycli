@@ -18,6 +18,7 @@ import {
   resolveWorkspaceRoot,
   upsertJob,
   writeJobConfigFile,
+  writeJobFile,
 } from "../lib/state.mjs";
 import { appendRunLedgerEvent, readRunLedgerEvents } from "../lib/run-ledger.mjs";
 import { resolveTimingHistoryFile } from "../lib/timing.mjs";
@@ -3186,6 +3187,121 @@ test("integration: a late worker cannot call a provider after cancellation won t
   const events = (await readRunLedgerEvents(context.cwd))
     .filter((event) => event.runId === "run-late-worker-after-cancel");
   assert.equal(events.some((event) => event.phase === "attempt_started"), false);
+});
+
+test("integration: a pending cancellation intent prevents a queued worker claim", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const eventLog = path.join(os.tmpdir(), `polycli-pending-cancel-claim-${Date.now()}-${Math.random()}.ndjson`);
+  t.after(() => fs.rmSync(eventLog, { force: true }));
+  const context = createBackgroundLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    QWEN_EVENT_LOG: eventLog,
+  });
+  const sourceContext = { ...context, companion: sourceCompanionPath };
+  const jobId = "job-pending-cancel-before-claim";
+  const logFile = resolveJobLogFile(context.cwd, jobId);
+  const job = {
+    jobId,
+    provider: "qwen",
+    kind: "rescue",
+    status: "queued",
+    pid: null,
+    logFile,
+  };
+  const config = {
+    workspaceRoot: context.cwd,
+    jobId,
+    execution: {
+      provider: "qwen",
+      kind: "rescue",
+      prompt: "__reply=SHOULD_NOT_RUN",
+      cwd: context.cwd,
+      timeout: 5_000,
+      measurementScope: "job",
+      meta: { background: true, jobId },
+    },
+    runContext: {
+      runId: "run-pending-cancel-before-claim",
+      command: "rescue",
+      hostSurface: "terminal",
+      jobId,
+      provider: "qwen",
+      kind: "rescue",
+      logFile,
+    },
+  };
+  ensureStateDir(context.cwd);
+  fs.writeFileSync(logFile, "queued\n");
+  upsertJob(context.cwd, job);
+  writeJobConfigFile(context.cwd, jobId, config);
+  writeJobFile(context.cwd, jobId, {
+    job,
+    cancellationIntent: { status: "requested", requestedAt: new Date().toISOString() },
+  });
+
+  const worker = await runCompanion(["_job-worker", resolveJobConfigFile(context.cwd, jobId)], sourceContext);
+
+  assert.equal(worker.code, 0, worker.stderr);
+  assert.equal(fs.existsSync(eventLog), false, "pending cancellation must prevent provider invocation");
+  assert.equal(listJobs(context.cwd).find((entry) => entry.jobId === jobId)?.status, "queued");
+  assert.equal(readJobFile(resolveJobFile(context.cwd, jobId))?.cancellationIntent?.status, "requested");
+  const events = (await readRunLedgerEvents(context.cwd)).filter((event) =>
+    event.runId === "run-pending-cancel-before-claim"
+  );
+  assert.equal(events.some((event) => event.phase === "attempt_started"), false);
+});
+
+test("integration: a pending cancellation intent prevents a late worker finalizer", async (t) => {
+  const fake = createFakeQwenBin();
+  t.after(() => fake.cleanup());
+  const resultGate = path.join(os.tmpdir(), `polycli-pending-cancel-finalize-${Date.now()}-${Math.random()}`);
+  const eventLog = `${resultGate}.events`;
+  fs.writeFileSync(resultGate, "hold\n", { mode: 0o600 });
+  t.after(() => {
+    fs.rmSync(resultGate, { force: true });
+    fs.rmSync(eventLog, { force: true });
+  });
+  const context = createBackgroundLedgerContext(t, {
+    QWEN_CLI_BIN: fake.bin,
+    QWEN_RESULT_GATE: resultGate,
+    QWEN_EVENT_LOG: eventLog,
+  });
+  const sourceContext = { ...context, companion: sourceCompanionPath };
+  const runId = "run-pending-cancel-before-finalize";
+  const start = await runCompanion(
+    ["rescue", "--provider", "qwen", "--background", "--json", "--run-id", runId, "__reply=MUST_NOT_FINALIZE"],
+    sourceContext,
+  );
+  assert.equal(start.code, 0, start.stderr);
+  const started = JSON.parse(start.stdout);
+  await waitForLedgerPhase(context.cwd, runId, "attempt_started");
+  const activeJob = listJobs(context.cwd).find((job) => job.jobId === started.job.jobId);
+  writeJobFile(context.cwd, started.job.jobId, {
+    job: activeJob,
+    cancellationIntent: { status: "requested", requestedAt: new Date().toISOString() },
+  });
+
+  fs.rmSync(resultGate, { force: true });
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(eventLog) && fs.readFileSync(eventLog, "utf8").includes('"event":"end"')) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  assert.equal(listJobs(context.cwd).find((job) => job.jobId === started.job.jobId)?.status, "running");
+  assert.equal(readJobFile(resolveJobFile(context.cwd, started.job.jobId))?.cancellationIntent?.status, "requested");
+  const terminal = (await readRunLedgerEvents(context.cwd)).filter((event) =>
+    event.runId === runId && ["attempt_result", "provider_decision"].includes(event.phase)
+  );
+  assert.equal(terminal.length, 0);
+  assert.equal(fs.existsSync(resolveTimingHistoryFile(context.cwd)), false, "late worker must not commit timing after cancellation intent wins");
+  assert.equal(
+    fs.existsSync(path.join(resolveStateDir(context.cwd), "provider-models.json")),
+    false,
+    "late worker must not update model cache after cancellation intent wins",
+  );
 });
 
 test("integration: a worker does not publish state over a conflicting partial terminal pair", async (t) => {
