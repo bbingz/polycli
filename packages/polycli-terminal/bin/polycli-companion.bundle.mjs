@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 
 // plugins/polycli/scripts/polycli-companion.mjs
-import fs9 from "node:fs";
+import fs10 from "node:fs";
 import path8 from "node:path";
-import process5 from "node:process";
+import process6 from "node:process";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { spawn as spawn2 } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // packages/polycli-utils/src/args.js
@@ -383,8 +382,91 @@ function parseStreamJsonLine(raw, { allowPrefix = true } = {}) {
 // packages/polycli-utils/src/process.js
 import { spawnSync } from "node:child_process";
 import process3 from "node:process";
+var CONSERVATIVE_POINTER_BYTES = 8;
+var WINDOWS_SAFE_ARGV_BUDGET_BYTES = 24 * 1024;
+var POSIX_SAFE_ARGV_BUDGET_BYTES = 96 * 1024;
+function stringStorageBytes(value) {
+  return Buffer.byteLength(String(value), "utf8") + 1;
+}
+function getSafeArgvBudgetBytes(platform = process3.platform) {
+  return platform === "win32" ? WINDOWS_SAFE_ARGV_BUDGET_BYTES : POSIX_SAFE_ARGV_BUDGET_BYTES;
+}
+function calculateArgvFootprint({
+  command,
+  args = [],
+  env = process3.env
+} = {}) {
+  const argv = [String(command ?? ""), ...args.map((arg) => String(arg))];
+  const envEntries = Object.entries(env ?? {}).filter(([, value]) => value != null).map(([key, value]) => `${key}=${String(value)}`);
+  const argvBytes = argv.reduce((total, value) => total + stringStorageBytes(value), 0);
+  const envBytes = envEntries.reduce((total, value) => total + stringStorageBytes(value), 0);
+  const pointerBytes = (argv.length + envEntries.length + 2) * CONSERVATIVE_POINTER_BYTES;
+  const stringBytes = argvBytes + envBytes;
+  return {
+    totalBytes: stringBytes + pointerBytes,
+    stringBytes,
+    pointerBytes,
+    argvBytes,
+    envBytes,
+    argvCount: argv.length,
+    envCount: envEntries.length
+  };
+}
+function preflightArgv(command, args = [], {
+  env = process3.env,
+  argvBudgetBytes = null,
+  argvBudgetHint = null
+} = {}) {
+  const footprint = calculateArgvFootprint({ command, args, env });
+  if (argvBudgetBytes == null) {
+    return { ok: true, budgetBytes: null, footprint, error: null };
+  }
+  if (!Number.isSafeInteger(argvBudgetBytes) || argvBudgetBytes < 0) {
+    throw new TypeError("argvBudgetBytes must be a non-negative safe integer or null");
+  }
+  if (footprint.totalBytes <= argvBudgetBytes) {
+    return { ok: true, budgetBytes: argvBudgetBytes, footprint, error: null };
+  }
+  const counts = [
+    `footprintBytes=${footprint.totalBytes}`,
+    `budgetBytes=${argvBudgetBytes}`,
+    `argvCount=${footprint.argvCount}`,
+    `envCount=${footprint.envCount}`
+  ].join(", ");
+  const suffix = typeof argvBudgetHint === "string" && argvBudgetHint.trim() ? ` ${argvBudgetHint.trim()}` : "";
+  const error = Object.assign(
+    new Error(`argument list too long for the configured safe argv budget (${counts}).${suffix}`),
+    {
+      code: "E2BIG",
+      footprintBytes: footprint.totalBytes,
+      budgetBytes: argvBudgetBytes,
+      argvCount: footprint.argvCount,
+      envCount: footprint.envCount
+    }
+  );
+  return { ok: false, budgetBytes: argvBudgetBytes, footprint, error };
+}
 function runCommand(command, args = [], options = {}) {
-  const result = spawnSync(command, args, {
+  const effectiveEnv = options.env ?? process3.env;
+  const preflight = preflightArgv(command, args, {
+    env: effectiveEnv,
+    argvBudgetBytes: options.argvBudgetBytes ?? null,
+    argvBudgetHint: options.argvBudgetHint ?? null
+  });
+  if (!preflight.ok) {
+    return {
+      command,
+      args,
+      status: null,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      error: preflight.error,
+      spawnErrorCode: "E2BIG"
+    };
+  }
+  const spawnImpl = options.spawnImpl ?? spawnSync;
+  const result = spawnImpl(command, args, {
     cwd: options.cwd,
     env: options.env,
     encoding: "utf8",
@@ -409,7 +491,8 @@ function runCommand(command, args = [], options = {}) {
     signal: result.signal ?? null,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
-    error
+    error,
+    spawnErrorCode: typeof error?.code === "string" ? error.code : null
   };
 }
 function firstNonEmptyLine(text) {
@@ -452,17 +535,41 @@ function formatCommandFailure(result) {
   }
   return parts.join(": ");
 }
-async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SIGKILL", forceAfterMs = 5e3, ignoreMissing = true } = {}) {
+async function terminateProcessTree(pid, {
+  signal = "SIGTERM",
+  forceSignal = "SIGKILL",
+  forceAfterMs = 5e3,
+  ignoreMissing = true,
+  deadlineAt = null,
+  platform = process3.platform,
+  runCommandImpl = runCommand,
+  now = Date.now,
+  sleep = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))
+} = {}) {
   if (!Number.isInteger(pid) || pid <= 1) {
     throw new Error(`Invalid pid: ${pid}`);
   }
+  if (deadlineAt != null && !Number.isFinite(deadlineAt)) {
+    throw new TypeError("deadlineAt must be a finite epoch millisecond value or null");
+  }
+  const remainingDeadlineMs2 = () => {
+    if (deadlineAt == null) return null;
+    const remainingMs = Math.floor(deadlineAt - now());
+    if (remainingMs <= 0) {
+      const error = new Error("process termination deadline exceeded");
+      error.code = "EDEADLINE";
+      throw error;
+    }
+    return remainingMs;
+  };
   const killOnce = (targetSignal) => {
-    if (process3.platform === "win32") {
+    const remainingMs = remainingDeadlineMs2();
+    if (platform === "win32") {
       const args = ["/PID", String(pid), "/T"];
       if (targetSignal === "SIGKILL") {
         args.push("/F");
       }
-      const result = runCommand("taskkill", args);
+      const result = runCommandImpl("taskkill", args, remainingMs == null ? {} : { timeout: remainingMs });
       if (result.error) {
         if (ignoreMissing && result.error.code === "ESRCH") return false;
         throw result.error;
@@ -501,7 +608,9 @@ async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SI
   if (!terminated || forceAfterMs <= 0) {
     return terminated;
   }
-  await new Promise((resolve) => setTimeout(resolve, forceAfterMs));
+  const remainingBeforeWait = deadlineAt == null ? null : remainingDeadlineMs2();
+  const waitMs = remainingBeforeWait == null ? forceAfterMs : Math.min(forceAfterMs, remainingBeforeWait);
+  await sleep(waitMs);
   try {
     killOnce(forceSignal);
   } catch (error) {
@@ -514,6 +623,20 @@ async function terminateProcessTree(pid, { signal = "SIGTERM", forceSignal = "SI
 
 // packages/polycli-utils/src/session-id.js
 var UUID_SESSION_ID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
+var RESUME_SESSION_ID_LINE_REGEX = new RegExp(
+  `^\\s*resume\\s+(${UUID_SESSION_ID_REGEX.source})\\s*$`,
+  "i"
+);
+function matchResumeSessionIdLine(text) {
+  if (typeof text !== "string" || text.length === 0) {
+    return null;
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(RESUME_SESSION_ID_LINE_REGEX);
+    if (match) return match[1];
+  }
+  return null;
+}
 function matchSessionId(text, { patterns = [UUID_SESSION_ID_REGEX] } = {}) {
   if (typeof text !== "string" || text.length === 0) {
     return null;
@@ -566,6 +689,16 @@ function formatProviderExitError(provider, status) {
   return `${provider} exited with code ${status}`;
 }
 function classifyProviderFailure(error, { provider = null } = {}) {
+  const structuredCode = typeof error?.code === "string" ? error.code.toUpperCase() : null;
+  if (structuredCode === "E2BIG") {
+    return "argument_list_too_long";
+  }
+  if (structuredCode === "ENOENT") {
+    return "binary_missing";
+  }
+  if (structuredCode === "ETIMEDOUT") {
+    return "timeout";
+  }
   const text = typeof error === "string" ? error : String(error?.message ?? error ?? "");
   if (!text.trim()) return null;
   if (provider === "qwen" && /\bmaximum session turn\b|\bmax(?:imum)? session turns?\b/i.test(text)) {
@@ -573,6 +706,12 @@ function classifyProviderFailure(error, { provider = null } = {}) {
   }
   if (/\bspawn\b.*\bENOENT\b|\bENOENT\b|\bnot found\b/i.test(text)) {
     return "binary_missing";
+  }
+  if (/\bE2BIG\b|\bargument list too long\b/i.test(text)) {
+    return "argument_list_too_long";
+  }
+  if (/\b(output|capture|line buffer)\b.*\b(exceeded|overflow)\b/i.test(text)) {
+    return "output_overflow";
   }
   if (/\b(timed out|timeout)\b/i.test(text)) {
     return "timeout";
@@ -643,6 +782,7 @@ function createLineDecoder({ encoding = "utf8", stripCarriageReturn = true, maxB
 }
 
 // packages/polycli-runtime/src/spawn.js
+var DEFAULT_CAPTURE_LIMIT_BYTES = 1048576;
 function formatExitError(status, signal, { timedOut = false, aborted = false } = {}) {
   if (aborted) {
     return "process aborted";
@@ -658,6 +798,34 @@ function formatExitError(status, signal, { timedOut = false, aborted = false } =
   }
   return `process exited with code ${status}`;
 }
+function normalizeCaptureLimit(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : DEFAULT_CAPTURE_LIMIT_BYTES;
+}
+function spawnFailureResult(error, captureLimitBytes) {
+  const spawnErrorCode = typeof error?.code === "string" ? error.code : null;
+  return {
+    ok: false,
+    status: null,
+    signal: null,
+    timedOut: false,
+    aborted: false,
+    stdout: "",
+    stderr: "",
+    stdoutBytes: 0,
+    stderrBytes: 0,
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    captureLimitBytes,
+    outputOverflowStream: null,
+    closeTimedOut: false,
+    terminationErrors: [],
+    terminationFailure: null,
+    terminationReason: null,
+    spawnErrorCode,
+    error: String(error?.message ?? error),
+    errorCode: classifyProviderFailure(error)
+  };
+}
 function spawnStreamingCommand({
   bin,
   args = [],
@@ -668,8 +836,11 @@ function spawnStreamingCommand({
   killGraceMs = 2e3,
   signal = null,
   maxBufferBytes = 1048576,
+  maxCaptureBytes = DEFAULT_CAPTURE_LIMIT_BYTES,
+  argvBudgetBytes = null,
+  argvBudgetHint = null,
   stdio = ["pipe", "pipe", "pipe"],
-  detached = false,
+  detached = process.platform !== "win32",
   unref = false,
   spawnImpl = spawn,
   onStdoutLine = () => {
@@ -677,54 +848,85 @@ function spawnStreamingCommand({
   onStderrChunk = () => {
   }
 } = {}) {
+  const captureLimitBytes = normalizeCaptureLimit(maxCaptureBytes);
+  const preflight = preflightArgv(bin, args, {
+    env: env ?? process.env,
+    argvBudgetBytes,
+    argvBudgetHint
+  });
+  if (!preflight.ok) {
+    return Promise.resolve(spawnFailureResult(preflight.error, captureLimitBytes));
+  }
   return new Promise((resolve) => {
     let child;
     try {
       child = spawnImpl(bin, args, { cwd, env, stdio, detached });
     } catch (error) {
-      resolve({
-        ok: false,
-        status: null,
-        signal: null,
-        timedOut: false,
-        stdout: "",
-        stderr: "",
-        error: error.message
-      });
+      resolve(spawnFailureResult(error, captureLimitBytes));
       return;
     }
     if (unref && typeof child.unref === "function") {
       child.unref();
     }
     const decoder = createLineDecoder({ maxBufferBytes });
-    let stdout = "";
-    let stderr = "";
+    const stdoutParts = [];
+    const stderrParts = [];
+    let stdoutCapturedBytes = 0;
+    let stderrCapturedBytes = 0;
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+    let outputOverflowStream = null;
     let timedOut = false;
     let aborted = false;
     let settled = false;
     let timer = null;
     let forceTimer = null;
+    let settleTimer = null;
     let decoderError = null;
+    let lifecycleFailure = null;
     let terminationRequested = false;
-    const signalChild = (signal2) => {
-      try {
-        if (detached && Number.isInteger(child.pid) && child.pid > 0 && process.platform !== "win32") {
-          process.kill(-child.pid, signal2);
-          return;
-        }
-        child.kill(signal2);
-      } catch {
+    const terminationErrors = [];
+    const setLifecycleFailure = (code, message) => {
+      if (!lifecycleFailure) {
+        lifecycleFailure = { code, message };
       }
     };
-    const terminateChild = () => {
-      if (terminationRequested) return;
-      terminationRequested = true;
-      signalChild("SIGTERM");
-      if (killGraceMs > 0) {
-        forceTimer = setTimeout(() => {
-          signalChild("SIGKILL");
-        }, killGraceMs);
+    const recordTerminationError = (error, killSignal, target) => {
+      terminationErrors.push({
+        signal: killSignal,
+        target,
+        code: typeof error?.code === "string" ? error.code : null,
+        message: String(error?.message ?? error).slice(0, 4096)
+      });
+    };
+    const trySignal = (killSignal, target, sender) => {
+      try {
+        const delivered = sender();
+        if (delivered === false) {
+          const error = new Error(`${target} kill returned false`);
+          error.code = "KILL_RETURNED_FALSE";
+          recordTerminationError(error, killSignal, target);
+          return false;
+        }
+        return true;
+      } catch (error) {
+        recordTerminationError(error, killSignal, target);
+        return false;
       }
+    };
+    const signalChild = (killSignal) => {
+      const canSignalGroup = detached && Number.isInteger(child.pid) && child.pid > 0 && process.platform !== "win32";
+      if (canSignalGroup) {
+        const groupSignalled = trySignal(
+          killSignal,
+          "process_group",
+          () => process.kill(-child.pid, killSignal)
+        );
+        if (groupSignalled) return;
+      }
+      trySignal(killSignal, "child", () => child.kill(killSignal));
     };
     const cleanup = () => {
       if (signal && typeof signal.removeEventListener === "function") {
@@ -736,119 +938,215 @@ function spawnStreamingCommand({
       child.off?.("error", handleChildError);
       child.off?.("close", handleChildClose);
     };
+    const capturedStdout = () => stdoutParts.join("");
+    const capturedStderr = () => Buffer.concat(stderrParts, stderrCapturedBytes).toString("utf8");
+    const buildResult = (status, signalName, { closeTimedOut = false } = {}) => {
+      if (!lifecycleFailure) {
+        if (timedOut || status === 124) {
+          setLifecycleFailure("timeout", "process timed out");
+        } else if (aborted || signalName === "SIGINT" || status === 130) {
+          setLifecycleFailure("cancelled", aborted ? "process aborted" : "process interrupted");
+        } else if (signalName || status === 143) {
+          setLifecycleFailure("terminated", formatExitError(status, signalName));
+        }
+      }
+      const stdout = capturedStdout();
+      const stderr = capturedStderr();
+      const ok = status === 0 && !lifecycleFailure && !closeTimedOut;
+      const error = ok ? null : lifecycleFailure?.message ?? (stderr.trim() || formatExitError(status, signalName, { timedOut, aborted }));
+      return {
+        ok,
+        status,
+        signal: signalName,
+        timedOut,
+        aborted,
+        stdout,
+        stderr,
+        stdoutBytes,
+        stderrBytes,
+        stdoutTruncated,
+        stderrTruncated,
+        captureLimitBytes,
+        outputOverflowStream,
+        closeTimedOut,
+        terminationErrors: terminationErrors.map((entry) => ({ ...entry })),
+        terminationFailure: closeTimedOut ? "close_timeout" : terminationErrors.length > 0 ? "signal_error" : null,
+        terminationReason: lifecycleFailure?.code ?? null,
+        spawnErrorCode: null,
+        error,
+        errorCode: lifecycleFailure?.code ?? classifyProviderFailure(error)
+      };
+    };
     const finish = (result) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
       if (forceTimer) clearTimeout(forceTimer);
+      if (settleTimer) clearTimeout(settleTimer);
       cleanup();
       resolve(result);
     };
-    const decoderFailureResult = (status, signalName) => ({
-      ok: false,
-      status,
-      signal: signalName,
-      timedOut,
-      stdout,
-      stderr,
-      error: decoderError
-    });
+    const settleWithoutClose = () => {
+      if (settled) return;
+      finish(buildResult(null, null, { closeTimedOut: true }));
+    };
+    const forceKill = () => {
+      if (settled) return;
+      signalChild("SIGKILL");
+      if (settled) return;
+      const closeWaitMs = Math.max(10, Math.max(0, killGraceMs));
+      settleTimer = setTimeout(settleWithoutClose, closeWaitMs);
+    };
+    const terminateChild = (code, message) => {
+      setLifecycleFailure(code, message);
+      if (terminationRequested) return;
+      terminationRequested = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      signalChild("SIGTERM");
+      if (settled) return;
+      forceTimer = setTimeout(forceKill, Math.max(0, killGraceMs));
+    };
+    const handleOutputOverflow = (streamName) => {
+      if (!outputOverflowStream) {
+        outputOverflowStream = streamName;
+      }
+      terminateChild(
+        "output_overflow",
+        `${streamName} capture exceeded maxCaptureBytes (${captureLimitBytes})`
+      );
+    };
+    const appendStdoutLine = (line, { trailingNewline = true } = {}) => {
+      const text = trailingNewline ? `${line}
+` : line;
+      const bytes = Buffer.byteLength(text);
+      if (stdoutCapturedBytes + bytes > captureLimitBytes) {
+        stdoutTruncated = true;
+        return false;
+      }
+      stdoutParts.push(text);
+      stdoutCapturedBytes += bytes;
+      try {
+        onStdoutLine(line);
+      } catch {
+      }
+      return true;
+    };
     const handleDecoderError = (error) => {
       if (decoderError || settled) return;
       decoderError = String(error?.message ?? error).slice(0, 4096);
+      stdoutTruncated = true;
+      outputOverflowStream = outputOverflowStream || "stdout";
       child.stdout?.off?.("data", handleStdoutData);
-      terminateChild();
+      terminateChild("output_overflow", decoderError);
     };
     const abortHandler = () => {
       if (settled || aborted) return;
       aborted = true;
-      terminateChild();
+      terminateChild("cancelled", "process aborted");
     };
     if (timeout != null) {
       timer = setTimeout(() => {
-        if (settled || timedOut) return;
+        if (settled || timedOut || terminationRequested) return;
         timedOut = true;
-        terminateChild();
+        terminateChild("timeout", "process timed out");
       }, timeout);
     }
     const handleChildError = (error) => {
-      if (decoderError) {
+      if (terminationRequested) {
         return;
       }
       finish({
-        ok: false,
-        status: null,
-        signal: null,
+        ...spawnFailureResult(error, captureLimitBytes),
         timedOut,
-        stdout,
-        stderr,
-        error: error.message
+        aborted,
+        stdout: capturedStdout(),
+        stderr: capturedStderr(),
+        stdoutBytes,
+        stderrBytes,
+        stdoutTruncated,
+        stderrTruncated
       });
+    };
+    const captureStderr = (chunk, { emit = true } = {}) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      stderrBytes += buffer.length;
+      const remaining = Math.max(captureLimitBytes - stderrCapturedBytes, 0);
+      const accepted = buffer.subarray(0, remaining);
+      if (accepted.length > 0) {
+        stderrParts.push(Buffer.from(accepted));
+        stderrCapturedBytes += accepted.length;
+        if (emit) {
+          try {
+            onStderrChunk(accepted.toString("utf8"));
+          } catch {
+          }
+        }
+      }
+      if (accepted.length < buffer.length) {
+        stderrTruncated = true;
+        child.stderr?.off?.("data", handleStderrData);
+        handleOutputOverflow("stderr");
+      }
     };
     const handleStdinError = (error) => {
       if (error?.code === "EPIPE" || error?.code === "ERR_STREAM_DESTROYED") {
         return;
       }
-      stderr += `${error.message}
-`;
+      captureStderr(Buffer.from(`${error.message}
+`), { emit: false });
     };
     const handleStdoutData = (chunk) => {
       if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      const previousBytes = stdoutBytes;
+      stdoutBytes += buffer.length;
+      const remaining = Math.max(captureLimitBytes - previousBytes, 0);
+      const accepted = buffer.subarray(0, remaining);
       let lines;
       try {
-        lines = decoder.push(chunk);
+        lines = accepted.length > 0 ? decoder.push(accepted) : [];
       } catch (error) {
         handleDecoderError(error);
         return;
       }
       for (const line of lines) {
-        stdout += `${line}
-`;
-        try {
-          onStdoutLine(line);
-        } catch {
+        if (!appendStdoutLine(line)) {
+          child.stdout?.off?.("data", handleStdoutData);
+          handleOutputOverflow("stdout");
+          return;
         }
+      }
+      if (accepted.length < buffer.length) {
+        stdoutTruncated = true;
+        child.stdout?.off?.("data", handleStdoutData);
+        handleOutputOverflow("stdout");
       }
     };
     const handleStderrData = (chunk) => {
       if (settled) return;
-      const text = chunk.toString("utf8");
-      stderr += text;
-      try {
-        onStderrChunk(text);
-      } catch {
-      }
+      captureStderr(chunk);
     };
     const handleChildClose = (status, signalName) => {
-      if (decoderError) {
-        finish(decoderFailureResult(status, signalName));
-        return;
-      }
-      let lines;
-      try {
-        lines = decoder.end();
-      } catch (error) {
-        handleDecoderError(error);
-        finish(decoderFailureResult(status, signalName));
-        return;
-      }
-      for (const line of lines) {
-        stdout += `${line}
-`;
+      if (!decoderError && !stdoutTruncated) {
+        let lines;
         try {
-          onStdoutLine(line);
-        } catch {
+          lines = decoder.end();
+        } catch (error) {
+          handleDecoderError(error);
+          finish(buildResult(status, signalName));
+          return;
+        }
+        for (const line of lines) {
+          if (!appendStdoutLine(line, { trailingNewline: false })) {
+            handleOutputOverflow("stdout");
+            break;
+          }
         }
       }
-      finish({
-        ok: status === 0 && !timedOut && !aborted,
-        status,
-        signal: signalName,
-        timedOut,
-        stdout,
-        stderr,
-        error: status === 0 && !timedOut && !aborted ? null : stderr.trim() || formatExitError(status, signalName, { timedOut, aborted })
-      });
+      finish(buildResult(status, signalName));
     };
     child.on("error", handleChildError);
     child.stdin?.on?.("error", handleStdinError);
@@ -888,6 +1186,8 @@ var DEFAULT_TIMEOUT_MS = 9e5;
 var TMUX_START_TIMEOUT_MS = 3e4;
 var AUTH_CHECK_TIMEOUT_MS = 3e4;
 var PROMPT_STDIN_THRESHOLD = 1e5;
+var SAFE_PROMPT_ARGV_BUDGET_BYTES = getSafeArgvBudgetBytes();
+var SAFE_PROMPT_ARGV_BUDGET_HINT = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 var CLAUDE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var CLAUDE_TMUX_ENV_EXACT = /* @__PURE__ */ new Set([
   "ALL_PROXY",
@@ -989,33 +1289,26 @@ function buildClaudeInvocation({
   maxTurns = 10,
   resumeSessionId = null,
   extraArgs = [],
-  bin = CLAUDE_BIN
+  bin = CLAUDE_BIN,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES
 } = {}) {
   const promptText = String(prompt ?? "");
-  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD;
-  const args = ["-p"];
-  if (!useStdin) {
-    args.push(promptText);
-  }
-  args.push("--output-format", outputFormat);
-  if (outputFormat === "stream-json") {
-    args.push("--verbose");
-  }
-  if (permissionMode) {
-    args.push("--permission-mode", permissionMode);
-  }
-  if (Number.isFinite(maxTurns) && maxTurns > 0) {
-    args.push("--max-turns", String(maxTurns));
-  }
-  if (model) {
-    args.push("--model", model);
-  }
-  if (resumeSessionId) {
-    args.push("--resume", resumeSessionId);
-  }
-  if (extraArgs.length > 0) {
-    args.push(...extraArgs);
-  }
+  const buildArgs = (includePrompt) => {
+    const nextArgs = ["-p"];
+    if (includePrompt) nextArgs.push(promptText);
+    nextArgs.push("--output-format", outputFormat);
+    if (outputFormat === "stream-json") nextArgs.push("--verbose");
+    if (permissionMode) nextArgs.push("--permission-mode", permissionMode);
+    if (Number.isFinite(maxTurns) && maxTurns > 0) nextArgs.push("--max-turns", String(maxTurns));
+    if (model) nextArgs.push("--model", model);
+    if (resumeSessionId) nextArgs.push("--resume", resumeSessionId);
+    if (extraArgs.length > 0) nextArgs.push(...extraArgs);
+    return nextArgs;
+  };
+  const inlineArgs = buildArgs(true);
+  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD || !preflightArgv(bin, inlineArgs, { env, argvBudgetBytes }).ok;
+  const args = useStdin ? buildArgs(false) : inlineArgs;
   return {
     bin,
     args,
@@ -1390,13 +1683,8 @@ function parseClaudeJsonResult(stdout, stderr, status, { defaultModel = null } =
   }
   try {
     const parsed = JSON.parse(text.slice(jsonStart));
-    const resolvedSession = resolveSessionId({
-      stdout,
-      stderr,
-      priority: ["stdout", "stderr", "file"]
-    });
     const response = typeof parsed.result === "string" ? parsed.result : "";
-    const sessionId = parsed.session_id ?? parsed.sessionId ?? resolvedSession.sessionId ?? null;
+    const sessionId = parsed.session_id ?? parsed.sessionId ?? matchResumeSessionIdLine(stderr) ?? null;
     const errorText2 = isClaudeErrorResultEvent(parsed) ? getClaudeErrorText(parsed) : null;
     const processError = status === 0 ? null : String(stderr ?? "").trim() || formatProviderExitError("claude", status);
     return {
@@ -1480,7 +1768,10 @@ function runClaudePrompt({
   extraArgs = [],
   resumeSessionId = null,
   defaultModel = null,
-  bin = CLAUDE_BIN
+  bin = CLAUDE_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES
 } = {}) {
   const invocation = buildClaudeInvocation({
     prompt,
@@ -1490,17 +1781,25 @@ function runClaudePrompt({
     maxTurns,
     resumeSessionId,
     extraArgs,
-    bin
+    bin,
+    env,
+    argvBudgetBytes
   });
   const result = runCommand(invocation.bin, invocation.args, {
     cwd,
     timeout,
-    input: invocation.input
+    input: invocation.input,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT
   });
   if (result.error) {
     return {
       ok: false,
-      error: result.error.code === "ETIMEDOUT" ? `claude timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+      error: result.error.code === "ETIMEDOUT" ? `claude timed out after ${Math.round(timeout / 1e3)}s` : result.error.message,
+      errorCode: classifyProviderFailure(result.error),
+      spawnErrorCode: result.spawnErrorCode ?? null
     };
   }
   return parseClaudeJsonResult(result.stdout, result.stderr, result.status, {
@@ -1514,6 +1813,7 @@ function runClaudePromptStreaming({
   maxTurns = 10,
   cwd,
   timeout = DEFAULT_TIMEOUT_MS,
+  killGraceMs,
   extraArgs = [],
   resumeSessionId = null,
   defaultModel = null,
@@ -1525,7 +1825,8 @@ function runClaudePromptStreaming({
   executionMode = "print",
   env = process.env,
   signalEmitter = process,
-  spawnImpl
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES
 } = {}) {
   if (executionMode === "tmux-tui") {
     return Promise.resolve(runClaudeTuiPrompt({
@@ -1552,7 +1853,9 @@ function runClaudePromptStreaming({
     maxTurns,
     resumeSessionId,
     extraArgs,
-    bin
+    bin,
+    env,
+    argvBudgetBytes
   });
   return spawnStreamingCommand({
     bin: invocation.bin,
@@ -1561,7 +1864,10 @@ function runClaudePromptStreaming({
     env,
     input: invocation.input,
     timeout,
+    killGraceMs,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT,
     onStdoutLine(line) {
       const parsed = parseStreamJsonLine(line, { allowPrefix: true });
       if (parsed.ok) {
@@ -1573,25 +1879,23 @@ function runClaudePromptStreaming({
     }
   }).then((result) => {
     const parsed = parseClaudeStreamText(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"]
-    });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultError = isClaudeErrorResultEvent(parsed.resultEvent) ? getClaudeErrorText(parsed.resultEvent) : null;
     const hasSuccessfulResult = Boolean(
       parsed.resultEvent && parsed.resultEvent.type === "result" && !isClaudeErrorResultEvent(parsed.resultEvent)
     );
-    const completed = result.ok || result.timedOut && hasSuccessfulResult;
+    const recoveredTimeout = result.timedOut && hasSuccessfulResult && !result.closeTimedOut && !result.terminationFailure;
+    const completed = result.ok || recoveredTimeout;
     return {
       ...result,
       ...parsed,
       timedOut: completed ? false : result.timedOut,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      sessionId: parsed.sessionId ?? matchResumeSessionIdLine(result.stderr),
       model: parsed.model ?? model ?? defaultModel,
       ok: completed && !resultError && hasVisibleText,
-      error: completed ? resultError || (hasVisibleText ? null : "claude produced no visible text") : result.error
+      error: completed ? resultError || (hasVisibleText ? null : "claude produced no visible text") : result.error,
+      errorCode: completed && !resultError ? hasVisibleText ? null : "no_visible_text" : result.errorCode,
+      terminationReason: completed ? null : result.terminationReason
     };
   });
 }
@@ -1600,6 +1904,8 @@ function runClaudePromptStreaming({
 var COPILOT_BIN = process.env.COPILOT_CLI_BIN || "copilot";
 var DEFAULT_TIMEOUT_MS2 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS2 = 3e4;
+var SAFE_PROMPT_ARGV_BUDGET_BYTES2 = getSafeArgvBudgetBytes();
+var SAFE_PROMPT_ARGV_BUDGET_HINT2 = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 var COPILOT_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var TRANSIENT_PROBE_ERROR_PATTERNS2 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
@@ -1792,7 +2098,10 @@ function runCopilotPrompt({
   allowAllPaths = true,
   allowAllUrls = true,
   noAskUser = true,
-  bin = COPILOT_BIN
+  bin = COPILOT_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES2
 } = {}) {
   const invocation = buildCopilotInvocation({
     prompt,
@@ -1808,23 +2117,27 @@ function runCopilotPrompt({
     extraArgs,
     bin
   });
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT2
+  });
   if (result.error) {
     return {
       ok: false,
       resumeStatus: getCopilotResumeStatus(resumeSessionId, null),
-      error: result.error.code === "ETIMEDOUT" ? `copilot timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+      error: result.error.code === "ETIMEDOUT" ? `copilot timed out after ${Math.round(timeout / 1e3)}s` : result.error.message,
+      errorCode: classifyProviderFailure(result.error, { provider: "copilot" }),
+      spawnErrorCode: result.spawnErrorCode ?? null
     };
   }
   const parsed = parseCopilotStreamText(result.stdout);
-  const resolvedSession = resolveSessionId({
-    stdout: result.stdout,
-    stderr: result.stderr,
-    priority: ["stdout", "stderr", "file"]
-  });
   const resultError = getCopilotResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
-  const sessionId = parsed.sessionId ?? resolvedSession.sessionId;
+  const sessionId = parsed.sessionId ?? matchResumeSessionIdLine(result.stderr);
   return {
     ok: result.status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
@@ -1851,7 +2164,9 @@ function runCopilotPromptStreaming({
   onEvent = () => {
   },
   bin = COPILOT_BIN,
-  spawnImpl
+  spawnImpl,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES2
 } = {}) {
   const invocation = buildCopilotInvocation({
     prompt,
@@ -1871,9 +2186,11 @@ function runCopilotPromptStreaming({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT2,
     onStdoutLine(line) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("{")) return;
@@ -1884,14 +2201,9 @@ function runCopilotPromptStreaming({
     }
   }).then((result) => {
     const parsed = parseCopilotStreamText(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"]
-    });
     const resultError = getCopilotResultError(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
-    const sessionId = parsed.sessionId ?? resolvedSession.sessionId;
+    const sessionId = parsed.sessionId ?? matchResumeSessionIdLine(result.stderr);
     return {
       ...result,
       ...parsed,
@@ -1908,6 +2220,8 @@ var GEMINI_BIN = process.env.GEMINI_CLI_BIN || "gemini";
 var DEFAULT_TIMEOUT_MS3 = 3e5;
 var AUTH_CHECK_TIMEOUT_MS3 = 3e4;
 var PROMPT_STDIN_THRESHOLD2 = 1e5;
+var SAFE_PROMPT_ARGV_BUDGET_BYTES3 = getSafeArgvBudgetBytes();
+var SAFE_PROMPT_ARGV_BUDGET_HINT3 = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 var GEMINI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var VALID_GEMINI_EFFORTS = /* @__PURE__ */ new Set(["low", "medium", "high"]);
 var TRANSIENT_PROBE_ERROR_PATTERNS3 = [
@@ -1944,16 +2258,23 @@ function buildGeminiInvocation({
   outputFormat = "json",
   resumeSessionId = null,
   extraArgs = [],
-  bin = GEMINI_BIN
+  bin = GEMINI_BIN,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES3
 } = {}) {
   const promptText = applyGeminiEffort(prompt, effort);
-  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD2;
-  const args = ["-p", useStdin ? "" : promptText, "-o", outputFormat];
   const resolvedApprovalMode = write ? "auto_edit" : approvalMode;
-  if (model) args.push("-m", model);
-  args.push("--approval-mode", resolvedApprovalMode);
-  if (resumeSessionId) args.push("--resume", resumeSessionId);
-  if (extraArgs.length > 0) args.push(...extraArgs);
+  const buildArgs = (inlinePrompt) => {
+    const nextArgs = ["-p", inlinePrompt ? promptText : "", "-o", outputFormat];
+    if (model) nextArgs.push("-m", model);
+    nextArgs.push("--approval-mode", resolvedApprovalMode);
+    if (resumeSessionId) nextArgs.push("--resume", resumeSessionId);
+    if (extraArgs.length > 0) nextArgs.push(...extraArgs);
+    return nextArgs;
+  };
+  const inlineArgs = buildArgs(true);
+  const useStdin = Buffer.byteLength(promptText, "utf8") > PROMPT_STDIN_THRESHOLD2 || !preflightArgv(bin, inlineArgs, { env, argvBudgetBytes }).ok;
+  const args = useStdin ? buildArgs(false) : inlineArgs;
   return {
     bin,
     args,
@@ -2085,8 +2406,12 @@ function runGeminiPrompt({
   extraArgs = [],
   resumeSessionId = null,
   defaultModel = null,
-  bin = GEMINI_BIN
+  bin = GEMINI_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES3
 } = {}) {
+  const childEnv = buildGeminiEnv(env);
   const invocation = buildGeminiInvocation({
     prompt,
     model,
@@ -2096,18 +2421,25 @@ function runGeminiPrompt({
     outputFormat: "json",
     resumeSessionId,
     extraArgs,
-    bin
+    bin,
+    env: childEnv,
+    argvBudgetBytes
   });
   const result = runCommand(invocation.bin, invocation.args, {
     cwd,
     timeout,
     input: invocation.input,
-    env: buildGeminiEnv()
+    env: childEnv,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT3
   });
   if (result.error) {
     return {
       ok: false,
-      error: result.error.code === "ETIMEDOUT" ? `gemini timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+      error: result.error.code === "ETIMEDOUT" ? `gemini timed out after ${Math.round(timeout / 1e3)}s` : result.error.message,
+      errorCode: classifyProviderFailure(result.error),
+      spawnErrorCode: result.spawnErrorCode ?? null
     };
   }
   return parseGeminiJsonResult(result.stdout, result.stderr, result.status, {
@@ -2128,8 +2460,11 @@ function runGeminiPromptStreaming({
   onEvent = () => {
   },
   bin = GEMINI_BIN,
-  spawnImpl
+  spawnImpl,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES3
 } = {}) {
+  const childEnv = buildGeminiEnv(env);
   const invocation = buildGeminiInvocation({
     prompt,
     model,
@@ -2139,16 +2474,20 @@ function runGeminiPromptStreaming({
     outputFormat: "stream-json",
     resumeSessionId,
     extraArgs,
-    bin
+    bin,
+    env: childEnv,
+    argvBudgetBytes
   });
   return spawnStreamingCommand({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: buildGeminiEnv(),
+    env: childEnv,
     input: invocation.input,
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT3,
     onStdoutLine(line) {
       const parsed = parseStreamJsonLine(line, { allowPrefix: true });
       if (parsed.ok) {
@@ -2186,6 +2525,8 @@ import path2 from "node:path";
 var KIMI_BIN = process.env.KIMI_CLI_BIN || "kimi";
 var DEFAULT_TIMEOUT_MS4 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS4 = 3e4;
+var SAFE_PROMPT_ARGV_BUDGET_BYTES4 = getSafeArgvBudgetBytes();
+var SAFE_PROMPT_ARGV_BUDGET_HINT4 = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 var KIMI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var TRANSIENT_PROBE_ERROR_PATTERNS4 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
@@ -2297,13 +2638,28 @@ function runKimiPrompt({
   resumeSessionId = null,
   resumeLast = false,
   defaultModel = null,
-  bin = KIMI_BIN
+  bin = KIMI_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES4
 } = {}) {
   const invocation = buildKimiInvocation({ prompt, model, resumeSessionId, resumeLast, extraArgs, bin });
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT4
+  });
   if (result.error) {
     const error2 = result.error.code === "ETIMEDOUT" ? `kimi timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
-    return { ok: false, error: error2, errorCode: classifyProviderFailure(error2, { provider: "kimi" }) };
+    return {
+      ok: false,
+      error: error2,
+      errorCode: classifyProviderFailure(result.error, { provider: "kimi" }),
+      spawnErrorCode: result.spawnErrorCode ?? null
+    };
   }
   if (result.status !== 0) {
     const error2 = result.stderr.trim() || formatProviderExitError("kimi", result.status);
@@ -2340,16 +2696,20 @@ function runKimiPromptStreaming({
   onEvent = () => {
   },
   bin = KIMI_BIN,
-  spawnImpl
+  spawnImpl,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES4
 } = {}) {
   const invocation = buildKimiInvocation({ prompt, model, resumeSessionId, resumeLast, extraArgs, bin });
   return spawnStreamingCommand({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT4,
     onStdoutLine(line) {
       const event = parseKimiEventLine(line);
       if (event) {
@@ -2371,7 +2731,7 @@ function runKimiPromptStreaming({
       model: parsed.model ?? model ?? defaultModel ?? readKimiDefaultModel(),
       ok,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "kimi" })
+      errorCode: result.errorCode ?? classifyProviderFailure(error, { provider: "kimi" })
     };
   });
 }
@@ -2380,6 +2740,8 @@ function runKimiPromptStreaming({
 var QWEN_BIN = process.env.QWEN_CLI_BIN || "qwen";
 var DEFAULT_TIMEOUT_MS5 = 3e5;
 var AUTH_CHECK_TIMEOUT_MS5 = 3e4;
+var SAFE_PROMPT_ARGV_BUDGET_BYTES5 = getSafeArgvBudgetBytes();
+var SAFE_PROMPT_ARGV_BUDGET_HINT5 = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var PROXY_KEYS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
 var NO_PROXY_DEFAULTS = ["localhost", "127.0.0.1"];
@@ -2627,7 +2989,9 @@ function runQwenPrompt({
   appendSystem,
   appendDirs,
   extraArgs = [],
-  bin = QWEN_BIN
+  bin = QWEN_BIN,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES5
 } = {}) {
   const invocation = buildQwenInvocation({
     prompt,
@@ -2647,18 +3011,21 @@ function runQwenPrompt({
   const result = runCommand(invocation.bin, invocation.args, {
     cwd,
     env,
-    timeout
+    timeout,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT5
   });
   if (result.error) {
     const error2 = result.error.code === "ETIMEDOUT" ? `qwen timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
-    return { ok: false, error: error2, errorCode: classifyProviderFailure(error2, { provider: "qwen" }) };
+    return {
+      ok: false,
+      error: error2,
+      errorCode: classifyProviderFailure(result.error, { provider: "qwen" }),
+      spawnErrorCode: result.spawnErrorCode ?? null
+    };
   }
   const parsed = parseQwenStreamText(result.stdout);
-  const resolvedSession = resolveSessionId({
-    stdout: result.stdout,
-    stderr: result.stderr,
-    priority: ["stdout", "stderr", "file"]
-  });
   const resultEventError = extractQwenResultError(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
   const error = result.status === 0 && !resultEventError && hasVisibleText ? null : result.stderr.trim() || resultEventError || (result.status === 0 ? "qwen produced no visible text" : formatProviderExitError("qwen", result.status));
@@ -2668,7 +3035,7 @@ function runQwenPrompt({
     status: result.status,
     stderr: result.stderr,
     ...parsed,
-    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+    sessionId: parsed.sessionId ?? matchResumeSessionIdLine(result.stderr),
     error,
     errorCode
   };
@@ -2692,7 +3059,8 @@ function runQwenPromptStreaming({
   onEvent = () => {
   },
   bin = QWEN_BIN,
-  spawnImpl
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES5
 } = {}) {
   const invocation = buildQwenInvocation({
     prompt,
@@ -2715,10 +3083,12 @@ function runQwenPromptStreaming({
     cwd,
     env,
     timeout,
-    detached: background,
+    detached: background ? true : void 0,
     unref: background,
     stdio: ["ignore", "pipe", "pipe"],
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT5,
     onStdoutLine(line) {
       if (!line.trim().startsWith("{")) return;
       try {
@@ -2728,19 +3098,15 @@ function runQwenPromptStreaming({
     }
   }).then((result) => {
     const parsed = parseQwenStreamText(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"]
-    });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultEventError = extractQwenResultError(parsed.resultEvent);
-    const error = result.ok && !resultEventError ? hasVisibleText ? null : resultEventError || "qwen produced no visible text" : resultEventError || result.error;
-    const errorCode = resultEventError ? classifyProviderFailure(resultEventError, { provider: "qwen" }) || "provider_error" : classifyProviderFailure(error, { provider: "qwen" });
+    const commonFailure = !result.ok && result.errorCode ? result.error : null;
+    const error = commonFailure || (result.ok && !resultEventError ? hasVisibleText ? null : resultEventError || "qwen produced no visible text" : resultEventError || result.error);
+    const errorCode = result.errorCode ?? (resultEventError ? classifyProviderFailure(resultEventError, { provider: "qwen" }) || "provider_error" : classifyProviderFailure(error, { provider: "qwen" }));
     return {
       ...result,
       ...parsed,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      sessionId: parsed.sessionId ?? matchResumeSessionIdLine(result.stderr),
       ok: result.ok && !resultEventError && hasVisibleText,
       error,
       errorCode
@@ -2752,6 +3118,8 @@ function runQwenPromptStreaming({
 var MMX_BIN = process.env.MMX_CLI_BIN || process.env.MINIMAX_CLI_BIN || "mmx";
 var DEFAULT_TIMEOUT_MS6 = 12e4;
 var AUTH_CHECK_TIMEOUT_MS6 = 3e4;
+var SAFE_PROMPT_ARGV_BUDGET_BYTES6 = getSafeArgvBudgetBytes();
+var SAFE_PROMPT_ARGV_BUDGET_HINT6 = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 var MINIMAX_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var TRANSIENT_PROBE_ERROR_PATTERNS6 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
@@ -2860,7 +3228,8 @@ function runMiniMaxPrompt({
   defaultModel = null,
   env = process.env,
   bin = MMX_BIN,
-  spawnImpl
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES6
 } = {}) {
   return new Promise((resolve) => {
     const invocation = buildMiniMaxInvocation({ prompt, model, extraArgs, bin });
@@ -2872,6 +3241,8 @@ function runMiniMaxPrompt({
       timeout,
       stdio: ["ignore", "pipe", "pipe"],
       spawnImpl,
+      argvBudgetBytes,
+      argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT6,
       onStdoutLine() {
       }
     }).then((result) => {
@@ -2932,7 +3303,8 @@ async function runMiniMaxPromptStreaming({
   onEvent = () => {
   },
   bin = MMX_BIN,
-  spawnImpl
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES6
 } = {}) {
   const events = [];
   return runMiniMaxPrompt({
@@ -2944,7 +3316,8 @@ async function runMiniMaxPromptStreaming({
     defaultModel,
     env,
     bin,
-    spawnImpl
+    spawnImpl,
+    argvBudgetBytes
   }).then((result) => {
     try {
       const event = {
@@ -2967,6 +3340,8 @@ var OPENCODE_BIN = process.env.OPENCODE_CLI_BIN || "opencode";
 var DEFAULT_TIMEOUT_MS7 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS7 = 3e4;
 var SESSION_EXPORT_TIMEOUT_MS = 3e4;
+var SAFE_PROMPT_ARGV_BUDGET_BYTES7 = getSafeArgvBudgetBytes();
+var SAFE_PROMPT_ARGV_BUDGET_HINT7 = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 var OPENCODE_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var TRANSIENT_PROBE_ERROR_PATTERNS7 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
@@ -3153,11 +3528,6 @@ function parseOpenCodeStreamText(text) {
 }
 function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel = null } = {}) {
   const parsed = parseOpenCodeStreamText(stdout);
-  const resolvedSession = resolveSessionId({
-    stdout,
-    stderr,
-    priority: ["stdout", "stderr", "file"]
-  });
   const resultError = getOpenCodeResultError(parsed.resultEvent);
   const sessionErrorMessage = getOpenCodeSessionErrorDataMessage(parsed.resultEvent);
   const hasVisibleText = Boolean(parsed.response.trim());
@@ -3166,7 +3536,7 @@ function parseOpenCodeJsonResult(stdout, stderr, status, { defaultModel = null }
     ok: status === 0 && !resultError && hasVisibleText,
     response: parsed.response,
     events: parsed.events,
-    sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+    sessionId: parsed.sessionId ?? matchResumeSessionIdLine(stderr),
     model: parsed.model ?? defaultModel,
     status,
     error,
@@ -3214,7 +3584,9 @@ function runOpenCodePrompt({
   variant = null,
   skipPermissions = true,
   defaultModel = null,
-  bin = OPENCODE_BIN
+  bin = OPENCODE_BIN,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES7
 } = {}) {
   const invocation = buildOpenCodeInvocation({
     prompt,
@@ -3228,13 +3600,21 @@ function runOpenCodePrompt({
     extraArgs,
     bin
   });
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT7
+  });
   if (result.error) {
     const error = result.error.code === "ETIMEDOUT" ? `opencode timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
     return {
       ok: false,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "opencode" })
+      errorCode: classifyProviderFailure(result.error, { provider: "opencode" }),
+      spawnErrorCode: result.spawnErrorCode ?? null
     };
   }
   const parsed = parseOpenCodeJsonResult(result.stdout, result.stderr, result.status, {
@@ -3262,7 +3642,8 @@ function runOpenCodePromptStreaming({
   onEvent = () => {
   },
   bin = OPENCODE_BIN,
-  spawnImpl
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES7
 } = {}) {
   const invocation = buildOpenCodeInvocation({
     prompt,
@@ -3283,6 +3664,8 @@ function runOpenCodePromptStreaming({
     env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT7,
     onStdoutLine(line) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("{")) return;
@@ -3293,28 +3676,24 @@ function runOpenCodePromptStreaming({
     }
   }).then((result) => {
     const parsed = parseOpenCodeStreamText(result.stdout);
-    const resolvedSession = resolveSessionId({
-      stdout: result.stdout,
-      stderr: result.stderr,
-      priority: ["stdout", "stderr", "file"]
-    });
+    const fallbackSessionId = matchResumeSessionIdLine(result.stderr);
     const resultError = getOpenCodeResultError(parsed.resultEvent);
     const sessionErrorMessage = getOpenCodeSessionErrorDataMessage(parsed.resultEvent);
     const hasVisibleText = Boolean(parsed.response.trim());
     let resolvedModel = parsed.model ?? model ?? defaultModel;
     const ok = result.ok && !resultError && hasVisibleText;
     if (ok && !resolvedModel) {
-      resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? resolvedSession.sessionId, { cwd, env, bin });
+      resolvedModel = resolveOpenCodeSessionModel(parsed.sessionId ?? fallbackSessionId, { cwd, env, bin });
     }
-    const error = sessionErrorMessage || (result.ok ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : result.error);
+    const error = (!result.ok && result.errorCode ? result.error : null) || sessionErrorMessage || (result.ok ? resultError || (hasVisibleText ? null : "opencode produced no visible text") : result.error);
     return {
       ...result,
       ...parsed,
-      sessionId: parsed.sessionId ?? resolvedSession.sessionId,
+      sessionId: parsed.sessionId ?? fallbackSessionId,
       model: resolvedModel,
       ok,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "opencode" })
+      errorCode: result.errorCode ?? classifyProviderFailure(error, { provider: "opencode" })
     };
   });
 }
@@ -3324,6 +3703,8 @@ var PI_BIN = process.env.PI_CLI_BIN || "pi";
 var DEFAULT_PI_MODEL = null;
 var DEFAULT_TIMEOUT_MS8 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS8 = 3e4;
+var SAFE_PROMPT_ARGV_BUDGET_BYTES8 = getSafeArgvBudgetBytes();
+var SAFE_PROMPT_ARGV_BUDGET_HINT8 = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 var PI_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var TRANSIENT_PROBE_ERROR_PATTERNS8 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
@@ -3489,7 +3870,10 @@ function runPiPrompt({
   continueLast = false,
   noSession = false,
   defaultModel = null,
-  bin = PI_BIN
+  bin = PI_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES8
 } = {}) {
   const invocation = buildPiInvocation({
     prompt,
@@ -3501,11 +3885,20 @@ function runPiPrompt({
     extraArgs,
     bin
   });
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT8
+  });
   if (result.error) {
     return {
       ok: false,
-      error: result.error.code === "ETIMEDOUT" ? `pi timed out after ${Math.round(timeout / 1e3)}s` : result.error.message
+      error: result.error.code === "ETIMEDOUT" ? `pi timed out after ${Math.round(timeout / 1e3)}s` : result.error.message,
+      errorCode: classifyProviderFailure(result.error, { provider: "pi" }),
+      spawnErrorCode: result.spawnErrorCode ?? null
     };
   }
   const parsed = parsePiStreamText(result.stdout);
@@ -3542,7 +3935,9 @@ function runPiPromptStreaming({
   onEvent = () => {
   },
   bin = PI_BIN,
-  spawnImpl
+  spawnImpl,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES8
 } = {}) {
   const invocation = buildPiInvocation({
     prompt,
@@ -3558,9 +3953,11 @@ function runPiPromptStreaming({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT8,
     onStdoutLine(line) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("{")) return;
@@ -3596,6 +3993,8 @@ var CMD_BIN = process.env.CMD_CLI_BIN || "cmd";
 var DEFAULT_CMD_MODEL = "deepseek";
 var DEFAULT_TIMEOUT_MS9 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS9 = 3e4;
+var SAFE_PROMPT_ARGV_BUDGET_BYTES9 = getSafeArgvBudgetBytes();
+var SAFE_PROMPT_ARGV_BUDGET_HINT9 = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 var CMD_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var TRANSIENT_PROBE_ERROR_PATTERNS9 = [
   /\b(timed out|timeout|429|rate limit|no capacity available|temporar(?:y|ily)|service unavailable|overloaded|try again|econnreset|econnrefused|enotfound|network|socket hang up)\b/i
@@ -3676,7 +4075,9 @@ function runCmdPrompt({
   extraArgs = [],
   yolo = true,
   defaultModel = null,
-  bin = CMD_BIN
+  bin = CMD_BIN,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES9
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
@@ -3684,13 +4085,21 @@ function runCmdPrompt({
     extraArgs,
     bin
   });
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout, env });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT9
+  });
   if (result.error) {
     const error2 = result.error.code === "ETIMEDOUT" ? `cmd timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
     return {
       ok: false,
       error: error2,
-      errorCode: classifyProviderFailure(error2, { provider: "cmd" })
+      errorCode: classifyProviderFailure(result.error, { provider: "cmd" }),
+      spawnErrorCode: result.spawnErrorCode ?? null
     };
   }
   const parsed = parseCmdTextResult(result.stdout);
@@ -3721,7 +4130,8 @@ function runCmdPromptStreaming({
   onEvent = () => {
   },
   bin = CMD_BIN,
-  spawnImpl
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES9
 } = {}) {
   const invocation = buildCmdInvocation({
     prompt,
@@ -3736,6 +4146,8 @@ function runCmdPromptStreaming({
     env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT9,
     onStdoutLine(line) {
       const trimmed = line.trimEnd();
       if (!trimmed.trim()) return;
@@ -3754,7 +4166,7 @@ function runCmdPromptStreaming({
       model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
       ok: result.ok && hasVisibleText,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "cmd" })
+      errorCode: result.errorCode ?? classifyProviderFailure(error, { provider: "cmd" })
     };
   });
 }
@@ -3946,7 +4358,7 @@ function runAgyPromptStreaming({
     const parsed = parseAgyTextResult(result.stdout);
     const filteredStderr = stripAgyBenignStderr(result.stderr);
     const hasVisibleText = Boolean(parsed.response.trim());
-    const error = result.ok ? hasVisibleText ? null : "agy produced no visible text" : filteredStderr.trim() || result.error;
+    const error = !result.ok && result.errorCode ? result.error : result.ok ? hasVisibleText ? null : "agy produced no visible text" : filteredStderr.trim() || result.error;
     return {
       ...result,
       ...parsed,
@@ -3955,7 +4367,7 @@ function runAgyPromptStreaming({
       model: model ?? defaultModel ?? DEFAULT_AGY_MODEL,
       ok: result.ok && hasVisibleText,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "agy" })
+      errorCode: result.errorCode ?? classifyProviderFailure(error, { provider: "agy" })
     };
   });
 }
@@ -3964,6 +4376,8 @@ function runAgyPromptStreaming({
 var GROK_BIN = process.env.GROK_CLI_BIN || "grok";
 var DEFAULT_TIMEOUT_MS11 = 9e5;
 var AUTH_CHECK_TIMEOUT_MS11 = 3e4;
+var SAFE_PROMPT_ARGV_BUDGET_BYTES10 = getSafeArgvBudgetBytes();
+var SAFE_PROMPT_ARGV_BUDGET_HINT10 = "Prompt exceeds the safe argv budget. When using review, pass --max-diff-bytes explicitly.";
 var DEFAULT_GROK_MODEL = "grok-4.5";
 var GROK_EXPLICIT_AUTH_ERROR_RE = /\b(unauthenticated|unauthorized|not authenticated|not authorized|login required|log in|sign in|not logged in|invalid api key|missing api key|api key required|token expired|invalid token|credential(?:s)? (?:missing|invalid|expired)|permission denied|access denied|forbidden|401|403)\b/i;
 var SUCCESS_STOP_REASONS = /* @__PURE__ */ new Set(["endturn", "end_turn", "stop", "stop_sequence", "complete", "completed", "done", "finished", "maxtokens", "max_tokens", "length"]);
@@ -4127,7 +4541,10 @@ function runGrokPrompt({
   continueLast = false,
   extraArgs = [],
   defaultModel = null,
-  bin = GROK_BIN
+  bin = GROK_BIN,
+  env = process.env,
+  spawnImpl,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES10
 } = {}) {
   const invocation = buildGrokInvocation({
     prompt,
@@ -4141,10 +4558,22 @@ function runGrokPrompt({
     extraArgs,
     bin
   });
-  const result = runCommand(invocation.bin, invocation.args, { cwd, timeout });
+  const result = runCommand(invocation.bin, invocation.args, {
+    cwd,
+    timeout,
+    env,
+    spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT10
+  });
   if (result.error) {
     const error = result.error.code === "ETIMEDOUT" ? `grok timed out after ${Math.round(timeout / 1e3)}s` : result.error.message;
-    return { ok: false, error, errorCode: classifyProviderFailure(error, { provider: "grok" }) };
+    return {
+      ok: false,
+      error,
+      errorCode: classifyProviderFailure(result.error, { provider: "grok" }),
+      spawnErrorCode: result.spawnErrorCode ?? null
+    };
   }
   const parsed = parseGrokJsonResult(result.stdout, result.stderr, result.status, {
     defaultModel: model ?? defaultModel
@@ -4166,7 +4595,9 @@ function runGrokPromptStreaming({
   onEvent = () => {
   },
   bin = GROK_BIN,
-  spawnImpl
+  spawnImpl,
+  env = process.env,
+  argvBudgetBytes = SAFE_PROMPT_ARGV_BUDGET_BYTES10
 } = {}) {
   const invocation = buildGrokInvocation({
     prompt,
@@ -4184,9 +4615,11 @@ function runGrokPromptStreaming({
     bin: invocation.bin,
     args: invocation.args,
     cwd,
-    env: { ...process.env },
+    env: { ...env },
     timeout,
     spawnImpl,
+    argvBudgetBytes,
+    argvBudgetHint: SAFE_PROMPT_ARGV_BUDGET_HINT10,
     onStdoutLine(line) {
       const trimmed = line.trim();
       if (!trimmed.startsWith("{")) return;
@@ -4200,14 +4633,14 @@ function runGrokPromptStreaming({
     const hasVisibleText = Boolean(parsed.response.trim());
     const stopReasonError = isNonSuccessStopReason(parsed.stopReason) ? `grok stopped with ${parsed.stopReason}` : null;
     const ok = result.ok && hasVisibleText && !parsed.providerError && !stopReasonError;
-    const error = ok ? null : parsed.providerError || stopReasonError || (result.ok ? "grok produced no visible text" : result.error);
+    const error = ok ? null : (!result.ok && result.errorCode ? result.error : null) || parsed.providerError || stopReasonError || (result.ok ? "grok produced no visible text" : result.error);
     return {
       ...result,
       ...parsed,
       model: model ?? defaultModel ?? DEFAULT_GROK_MODEL,
       ok,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "grok" })
+      errorCode: result.errorCode ?? classifyProviderFailure(error, { provider: "grok" })
     };
   });
 }
@@ -6419,9 +6852,9 @@ function assertCommandRegistry({
 assertCommandRegistry();
 
 // plugins/polycli/scripts/lib/job-control.mjs
-import fs6 from "node:fs";
+import fs7 from "node:fs";
 import os4 from "node:os";
-import process4 from "node:process";
+import process5 from "node:process";
 import { spawnSync as spawnSync3 } from "node:child_process";
 
 // plugins/polycli/scripts/lib/state.mjs
@@ -6562,8 +6995,13 @@ function describeStateRoot() {
 function stateRootDir() {
   return describeStateRoot().stateRoot;
 }
-function resolveWorkspaceRoot(cwd = process.cwd()) {
-  const result = runCommand2("git", ["rev-parse", "--show-toplevel"], { cwd });
+function resolveWorkspaceRoot(cwd = process.cwd(), { deadlineAt = null } = {}) {
+  const remainingMs = Number.isFinite(deadlineAt) ? Math.floor(deadlineAt - Date.now()) : null;
+  if (remainingMs != null && remainingMs <= 0) return path3.resolve(cwd);
+  const result = runCommand2("git", ["rev-parse", "--show-toplevel"], {
+    cwd,
+    ...remainingMs == null ? {} : { timeout: remainingMs }
+  });
   if (result.status === 0 && result.stdout.trim()) {
     return path3.resolve(result.stdout.trim());
   }
@@ -6586,6 +7024,9 @@ function resolveJobLogFile(workspaceRoot, jobId) {
 }
 function resolveJobConfigFile(workspaceRoot, jobId) {
   return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.config.json`);
+}
+function resolveJobStartFailureFile(workspaceRoot, jobId) {
+  return path3.join(resolveJobsDir(workspaceRoot), `${jobId}.start-failure.json`);
 }
 function chmodPrivateDir(dir) {
   try {
@@ -6651,6 +7092,7 @@ function saveState(workspaceRoot, state, { preserveJobIds = [] } = {}) {
     if (job && job.jobId && !keptIds.has(job.jobId)) {
       removeJobFile(workspaceRoot, job.jobId);
       removeJobConfigFile(workspaceRoot, job.jobId);
+      removeJobStartFailureFile(workspaceRoot, job.jobId);
       removeJobLogFile(workspaceRoot, job.jobId);
     }
   }
@@ -6665,7 +7107,7 @@ function updateState(workspaceRoot, mutate) {
     return saveState(workspaceRoot, state);
   });
 }
-function updateJobAtomically(workspaceRoot, jobId, buildNext) {
+function updateJobAtomically(workspaceRoot, jobId, buildNext, { lockOptions = {} } = {}) {
   ensureStateDir(workspaceRoot);
   const lockPath = `${resolveStateFile(workspaceRoot)}.lock`;
   return withLockfile(lockPath, () => {
@@ -6703,7 +7145,7 @@ function updateJobAtomically(workspaceRoot, jobId, buildNext) {
     }
     saveState(workspaceRoot, state, { preserveJobIds: [jobId] });
     return { written: true, job, envelope };
-  });
+  }, lockOptions);
 }
 function upsertJob(workspaceRoot, jobPatch) {
   let savedJob = null;
@@ -6784,6 +7226,24 @@ function removeJobConfigFile(workspaceRoot, jobId) {
   } catch {
   }
 }
+function writeJobStartFailureFile(workspaceRoot, jobId, payload) {
+  ensureStateDir(workspaceRoot);
+  writeJsonAtomic(resolveJobStartFailureFile(workspaceRoot, jobId), payload, { mode: PRIVATE_FILE_MODE });
+  return resolveJobStartFailureFile(workspaceRoot, jobId);
+}
+function readJobStartFailureFile(workspaceRoot, jobId) {
+  try {
+    return JSON.parse(fs3.readFileSync(resolveJobStartFailureFile(workspaceRoot, jobId), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function removeJobStartFailureFile(workspaceRoot, jobId) {
+  try {
+    fs3.unlinkSync(resolveJobStartFailureFile(workspaceRoot, jobId));
+  } catch {
+  }
+}
 function removeJobLogFile(workspaceRoot, jobId) {
   try {
     fs3.unlinkSync(resolveJobLogFile(workspaceRoot, jobId));
@@ -6791,174 +7251,10 @@ function removeJobLogFile(workspaceRoot, jobId) {
   }
 }
 
-// plugins/polycli/scripts/lib/run-ledger.mjs
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { stat as fsStat } from "node:fs/promises";
-import path4 from "node:path";
-
-// packages/polycli-utils/src/ndjson.js
-import fs4 from "node:fs";
-function safeParseLine(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
-function retainCompactedLines(lines, keepFrom, retentionGroupKey) {
-  const entries = [];
-  for (const line of lines) {
-    const record = safeParseLine(line);
-    if (record != null) {
-      entries.push({ line, record });
-    }
-  }
-  if (typeof retentionGroupKey !== "function") {
-    return entries.slice(keepFrom).map((entry) => entry.line);
-  }
-  const grouped = entries.map((entry) => ({
-    ...entry,
-    retentionGroup: retentionGroupKey(entry.record)
-  }));
-  const retainedStart = keepFrom < 0 ? Math.max(0, grouped.length + keepFrom) : Math.min(keepFrom, grouped.length);
-  const retainedGroups = new Set(
-    grouped.slice(keepFrom).map((entry) => entry.retentionGroup).filter((group) => group != null)
-  );
-  return grouped.filter((entry, index) => index >= retainedStart || entry.retentionGroup != null && retainedGroups.has(entry.retentionGroup)).map((entry) => entry.line);
-}
-function chmodIfRequested(filePath, mode) {
-  if (mode === 438) return;
-  try {
-    fs4.chmodSync(filePath, mode);
-  } catch {
-  }
-}
-function readNdjson(filePath) {
-  let text;
-  try {
-    text = fs4.readFileSync(filePath, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-  if (text.length === 0) {
-    return [];
-  }
-  const records = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const parsed = safeParseLine(trimmed);
-    if (parsed != null) {
-      records.push(parsed);
-    }
-  }
-  return records;
-}
-function appendNdjson(filePath, record, {
-  timeoutMs = 1e4,
-  staleMs = 3e4,
-  pollMs = 25,
-  maxBytes = null,
-  keepRatio = 0.5,
-  retentionGroupKey = null,
-  mode = 438
-} = {}) {
-  const lockPath = `${filePath}.lock`;
-  return withLockfile(lockPath, () => {
-    ensureParentDir(filePath);
-    let needsLeadingNewline = false;
-    try {
-      const stat = fs4.statSync(filePath);
-      if (stat.size > 0) {
-        const fd = fs4.openSync(filePath, "r");
-        const lastByte = Buffer.alloc(1);
-        try {
-          fs4.readSync(fd, lastByte, 0, 1, stat.size - 1);
-        } finally {
-          fs4.closeSync(fd);
-        }
-        needsLeadingNewline = lastByte[0] !== 10;
-      }
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        throw error;
-      }
-    }
-    const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}
-`;
-    fs4.appendFileSync(filePath, line, { encoding: "utf8", mode });
-    chmodIfRequested(filePath, mode);
-    if (maxBytes != null) {
-      const stat = fs4.statSync(filePath);
-      if (stat.size > maxBytes) {
-        const lines = fs4.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
-        const validCount = lines.reduce((count, entry) => count + (safeParseLine(entry) != null ? 1 : 0), 0);
-        const keepFrom = Math.floor(validCount * (1 - keepRatio));
-        const kept = retainCompactedLines(lines, keepFrom, retentionGroupKey);
-        writeFileAtomic(filePath, `${kept.join("\n")}
-`, { encoding: "utf8", mode });
-        chmodIfRequested(filePath, mode);
-      }
-    }
-    return true;
-  }, { timeoutMs, staleMs, pollMs });
-}
-function appendNdjsonBatch(filePath, records, {
-  timeoutMs = 1e4,
-  staleMs = 3e4,
-  pollMs = 25,
-  maxBytes = null,
-  keepRatio = 0.5,
-  retentionGroupKey = null,
-  mode = 438
-} = {}) {
-  if (!Array.isArray(records)) {
-    throw new TypeError("records must be an array");
-  }
-  if (records.length === 0) {
-    return true;
-  }
-  const serializedBatch = records.map((record) => {
-    const serialized = JSON.stringify(record);
-    if (typeof serialized !== "string") {
-      throw new TypeError("each record must be JSON-serializable");
-    }
-    return serialized;
-  });
-  const batch = `${serializedBatch.join("\n")}
-`;
-  const lockPath = `${filePath}.lock`;
-  return withLockfile(lockPath, () => {
-    ensureParentDir(filePath);
-    let text = "";
-    try {
-      text = fs4.readFileSync(filePath, "utf8");
-    } catch (error) {
-      if (error?.code !== "ENOENT") {
-        throw error;
-      }
-    }
-    let nextText = `${text}${text.length > 0 && !text.endsWith("\n") ? "\n" : ""}${batch}`;
-    if (maxBytes != null && Buffer.byteLength(nextText, "utf8") > maxBytes) {
-      const existing = text.split("\n").filter((entry) => safeParseLine(entry) != null);
-      const targetCount = Math.max(
-        serializedBatch.length,
-        Math.ceil((existing.length + serializedBatch.length) * keepRatio)
-      );
-      const allLines = [...existing, ...serializedBatch];
-      const keepFrom = Math.max(0, allLines.length - targetCount);
-      const kept = retainCompactedLines(allLines, keepFrom, retentionGroupKey);
-      nextText = `${kept.join("\n")}
-`;
-    }
-    writeFileAtomic(filePath, nextText, { encoding: "utf8", mode });
-    chmodIfRequested(filePath, mode);
-    return true;
-  }, { timeoutMs, staleMs, pollMs });
-}
+// plugins/polycli/scripts/lib/background-start.mjs
+import fs5 from "node:fs";
+import process4 from "node:process";
+import { spawn as spawn2 } from "node:child_process";
 
 // plugins/polycli/scripts/lib/cli-contract.mjs
 var ERROR_CODES = /* @__PURE__ */ new Set([
@@ -7456,6 +7752,175 @@ function createV2ErrorEnvelope(error, context = {}) {
 }
 
 // plugins/polycli/scripts/lib/run-ledger.mjs
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { stat as fsStat } from "node:fs/promises";
+import path4 from "node:path";
+
+// packages/polycli-utils/src/ndjson.js
+import fs4 from "node:fs";
+function safeParseLine(line) {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+function retainCompactedLines(lines, keepFrom, retentionGroupKey) {
+  const entries = [];
+  for (const line of lines) {
+    const record = safeParseLine(line);
+    if (record != null) {
+      entries.push({ line, record });
+    }
+  }
+  if (typeof retentionGroupKey !== "function") {
+    return entries.slice(keepFrom).map((entry) => entry.line);
+  }
+  const grouped = entries.map((entry) => ({
+    ...entry,
+    retentionGroup: retentionGroupKey(entry.record)
+  }));
+  const retainedStart = keepFrom < 0 ? Math.max(0, grouped.length + keepFrom) : Math.min(keepFrom, grouped.length);
+  const retainedGroups = new Set(
+    grouped.slice(keepFrom).map((entry) => entry.retentionGroup).filter((group) => group != null)
+  );
+  return grouped.filter((entry, index) => index >= retainedStart || entry.retentionGroup != null && retainedGroups.has(entry.retentionGroup)).map((entry) => entry.line);
+}
+function chmodIfRequested(filePath, mode) {
+  if (mode === 438) return;
+  try {
+    fs4.chmodSync(filePath, mode);
+  } catch {
+  }
+}
+function readNdjson(filePath) {
+  let text;
+  try {
+    text = fs4.readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+  if (text.length === 0) {
+    return [];
+  }
+  const records = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parsed = safeParseLine(trimmed);
+    if (parsed != null) {
+      records.push(parsed);
+    }
+  }
+  return records;
+}
+function appendNdjson(filePath, record, {
+  timeoutMs = 1e4,
+  staleMs = 3e4,
+  pollMs = 25,
+  maxBytes = null,
+  keepRatio = 0.5,
+  retentionGroupKey = null,
+  mode = 438
+} = {}) {
+  const lockPath = `${filePath}.lock`;
+  return withLockfile(lockPath, () => {
+    ensureParentDir(filePath);
+    let needsLeadingNewline = false;
+    try {
+      const stat = fs4.statSync(filePath);
+      if (stat.size > 0) {
+        const fd = fs4.openSync(filePath, "r");
+        const lastByte = Buffer.alloc(1);
+        try {
+          fs4.readSync(fd, lastByte, 0, 1, stat.size - 1);
+        } finally {
+          fs4.closeSync(fd);
+        }
+        needsLeadingNewline = lastByte[0] !== 10;
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    const line = `${needsLeadingNewline ? "\n" : ""}${JSON.stringify(record)}
+`;
+    fs4.appendFileSync(filePath, line, { encoding: "utf8", mode });
+    chmodIfRequested(filePath, mode);
+    if (maxBytes != null) {
+      const stat = fs4.statSync(filePath);
+      if (stat.size > maxBytes) {
+        const lines = fs4.readFileSync(filePath, "utf8").split("\n").filter(Boolean);
+        const validCount = lines.reduce((count, entry) => count + (safeParseLine(entry) != null ? 1 : 0), 0);
+        const keepFrom = Math.floor(validCount * (1 - keepRatio));
+        const kept = retainCompactedLines(lines, keepFrom, retentionGroupKey);
+        writeFileAtomic(filePath, `${kept.join("\n")}
+`, { encoding: "utf8", mode });
+        chmodIfRequested(filePath, mode);
+      }
+    }
+    return true;
+  }, { timeoutMs, staleMs, pollMs });
+}
+function appendNdjsonBatch(filePath, records, {
+  timeoutMs = 1e4,
+  staleMs = 3e4,
+  pollMs = 25,
+  maxBytes = null,
+  keepRatio = 0.5,
+  retentionGroupKey = null,
+  mode = 438
+} = {}) {
+  if (!Array.isArray(records)) {
+    throw new TypeError("records must be an array");
+  }
+  if (records.length === 0) {
+    return true;
+  }
+  const serializedBatch = records.map((record) => {
+    const serialized = JSON.stringify(record);
+    if (typeof serialized !== "string") {
+      throw new TypeError("each record must be JSON-serializable");
+    }
+    return serialized;
+  });
+  const batch = `${serializedBatch.join("\n")}
+`;
+  const lockPath = `${filePath}.lock`;
+  return withLockfile(lockPath, () => {
+    ensureParentDir(filePath);
+    let text = "";
+    try {
+      text = fs4.readFileSync(filePath, "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    let nextText = `${text}${text.length > 0 && !text.endsWith("\n") ? "\n" : ""}${batch}`;
+    if (maxBytes != null && Buffer.byteLength(nextText, "utf8") > maxBytes) {
+      const existing = text.split("\n").filter((entry) => safeParseLine(entry) != null);
+      const targetCount = Math.max(
+        serializedBatch.length,
+        Math.ceil((existing.length + serializedBatch.length) * keepRatio)
+      );
+      const allLines = [...existing, ...serializedBatch];
+      const keepFrom = Math.max(0, allLines.length - targetCount);
+      const kept = retainCompactedLines(allLines, keepFrom, retentionGroupKey);
+      nextText = `${kept.join("\n")}
+`;
+    }
+    writeFileAtomic(filePath, nextText, { encoding: "utf8", mode });
+    chmodIfRequested(filePath, mode);
+    return true;
+  }, { timeoutMs, staleMs, pollMs });
+}
+
+// plugins/polycli/scripts/lib/run-ledger.mjs
 var MAX_LEDGER_BYTES = 2e6;
 var KEEP_RATIO = 0.5;
 var PRIVATE_FILE_MODE2 = 384;
@@ -7698,7 +8163,7 @@ function appendRunLedgerEvent(workspaceRoot, event) {
   });
   return full;
 }
-function appendRunLedgerEvents(workspaceRoot, events) {
+function appendRunLedgerEvents(workspaceRoot, events, lockOptions = {}) {
   if (!Array.isArray(events)) {
     throw new TypeError("events must be an array");
   }
@@ -7712,6 +8177,7 @@ function appendRunLedgerEvents(workspaceRoot, events) {
     workspaceSlug: event.workspaceSlug ?? workspaceSlug
   }));
   appendNdjsonBatch(file, full, {
+    ...lockOptions,
     maxBytes: MAX_LEDGER_BYTES,
     keepRatio: KEEP_RATIO,
     retentionGroupKey: terminalLedgerRetentionGroupKey,
@@ -7901,7 +8367,7 @@ function buildExpectedTerminalPair(events) {
     expected: rawExpected.map((event) => ({ ...event, terminalDescriptor: descriptor }))
   };
 }
-function ensureRunLedgerTerminalPair(workspaceRoot, events) {
+function ensureRunLedgerTerminalPair(workspaceRoot, events, { lockOptions = {} } = {}) {
   if (!Array.isArray(events) || events.length !== 2) {
     throw new TypeError("terminal ledger pair must contain exactly two events");
   }
@@ -7918,7 +8384,7 @@ function ensureRunLedgerTerminalPair(workspaceRoot, events) {
     if (ambiguousLegacy.length > 0) {
       throw new Error(`Incomplete or conflicting terminal ledger pair for ${identityLabel}`);
     }
-    return appendRunLedgerEvents(workspaceRoot, expected);
+    return appendRunLedgerEvents(workspaceRoot, expected, lockOptions);
   }
   if (existing.length === 1) {
     const [partial] = existing;
@@ -7941,7 +8407,7 @@ function ensureRunLedgerTerminalPair(workspaceRoot, events) {
       ...missing,
       terminalDescriptor: repairDescriptor
     };
-    return [...existing, ...appendRunLedgerEvents(workspaceRoot, [repair])];
+    return [...existing, ...appendRunLedgerEvents(workspaceRoot, [repair], lockOptions)];
   }
   if (!terminalPairMatches(existing, expected)) {
     throw new Error(`Incomplete or conflicting terminal ledger pair for ${identityLabel}`);
@@ -8304,8 +8770,310 @@ function buildRunExplanation(events, runId) {
   return { runId, found: true, text: lines.join("\n"), events: group.events };
 }
 
+// plugins/polycli/scripts/lib/background-start.mjs
+var ACTIVE_JOB_STATUSES2 = /* @__PURE__ */ new Set(["queued", "running"]);
+var TERMINAL_JOB_STATUSES2 = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
+function blocksFailureFinalizer(envelope) {
+  return TERMINAL_JOB_STATUSES2.has(envelope?.job?.status) || envelope?.cancellationIntent?.status === "requested" && ACTIVE_JOB_STATUSES2.has(envelope?.job?.status);
+}
+function cleanupRuntimeOptions(runtimeOptions = {}) {
+  const cleanupPaths = Array.isArray(runtimeOptions?.cleanupPaths) ? runtimeOptions.cleanupPaths : [];
+  for (const cleanupPath of cleanupPaths) {
+    if (typeof cleanupPath !== "string" || cleanupPath.trim() === "") continue;
+    try {
+      fs5.rmSync(cleanupPath, { recursive: true, force: true });
+    } catch {
+    }
+  }
+}
+function buildRunEvent(runContext, base) {
+  if (!runContext?.runId) return null;
+  const command = base.command || runContext.command;
+  return {
+    runId: runContext.runId,
+    hostSurface: runContext.hostSurface || "unknown",
+    argv: runContext.argv || [],
+    invocationId: runContext.invocationId ?? null,
+    attemptId: runContext.attemptId ?? null,
+    jobId: runContext.jobId ?? base.jobId ?? null,
+    command,
+    commands: Array.from(new Set([
+      ...runContext.commands || [],
+      command,
+      ...base.commands || []
+    ].filter(Boolean))).sort(),
+    ...base
+  };
+}
+function prepareFailureEvents(runContext, events) {
+  const material = events.map((event) => buildRunEvent(runContext, event)).filter(Boolean);
+  if (material.length === 0) return [];
+  const terminalDescriptor = createTerminalLedgerDescriptor(material);
+  return material.map((event) => ({ ...event, terminalDescriptor }));
+}
+function safeRunIdentity(jobId, execution, runContext) {
+  return {
+    runId: runContext?.runId ?? null,
+    invocationId: runContext?.invocationId ?? null,
+    attemptId: runContext?.attemptId ?? null,
+    command: runContext?.command || execution.kind,
+    commands: Array.from(new Set([
+      ...runContext?.commands || [],
+      runContext?.command,
+      execution.kind
+    ].filter(Boolean))).sort(),
+    hostSurface: runContext?.hostSurface || "unknown",
+    jobId,
+    provider: execution.provider,
+    kind: execution.kind,
+    logFile: runContext?.logFile ?? null
+  };
+}
+function buildStartFailureRecovery(jobId, execution, runContext, error, runtimeOptions) {
+  const safeMessage = sanitizePublicErrorMessage(error?.message || error, 300);
+  const identity = safeRunIdentity(jobId, execution, runContext);
+  const terminalReason = `${execution.kind}_failed`;
+  const terminalEvents = prepareFailureEvents(identity, [
+    {
+      command: identity.command,
+      kind: execution.kind,
+      provider: execution.provider,
+      phase: "attempt_result",
+      status: "failed",
+      reason: terminalReason,
+      attempt: { ordinal: 1 },
+      jobId,
+      error: { message: safeMessage },
+      logFile: identity.logFile
+    },
+    {
+      command: identity.command,
+      kind: execution.kind,
+      provider: execution.provider,
+      phase: "provider_decision",
+      status: "failed",
+      reason: terminalReason,
+      jobId
+    }
+  ]);
+  return {
+    version: 1,
+    jobId,
+    provider: execution.provider,
+    kind: execution.kind,
+    error: safeMessage,
+    recordedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    identity,
+    terminalDescriptor: terminalEvents[0]?.terminalDescriptor ?? null,
+    ownedCleanupPaths: Array.isArray(runtimeOptions?.cleanupPaths) ? runtimeOptions.cleanupPaths.filter((entry) => typeof entry === "string" && entry.trim() !== "") : []
+  };
+}
+function materialExecution(recovery) {
+  return {
+    provider: recovery.provider,
+    kind: recovery.kind,
+    runtimeOptions: { cleanupPaths: recovery.ownedCleanupPaths || [] }
+  };
+}
+function finalizeBackgroundStartFailure(workspaceRoot, recovery, { lockOptions = {} } = {}) {
+  const { jobId } = recovery;
+  const execution = materialExecution(recovery);
+  const runContext = recovery.identity;
+  const safeMessage = recovery.error;
+  return updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
+    if (!latest || !ACTIVE_JOB_STATUSES2.has(latest.status) || blocksFailureFinalizer(storedEnvelope)) {
+      return null;
+    }
+    const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const failedJob = {
+      ...latest,
+      invocationId: latest.invocationId ?? runContext?.invocationId ?? null,
+      attemptId: latest.attemptId ?? runContext?.attemptId ?? null,
+      status: "failed",
+      pid: null,
+      finishedAt,
+      updatedAt: finishedAt,
+      error: safeMessage
+    };
+    const terminalReason = `${execution.kind}_failed`;
+    const terminalEvents = prepareFailureEvents(runContext, [
+      {
+        command: runContext?.command || execution.kind,
+        kind: execution.kind,
+        provider: execution.provider,
+        phase: "attempt_result",
+        status: "failed",
+        reason: terminalReason,
+        attempt: { ordinal: 1 },
+        jobId,
+        error: { message: safeMessage },
+        logFile: failedJob.logFile || runContext?.logFile || null
+      },
+      {
+        command: runContext?.command || execution.kind,
+        kind: execution.kind,
+        provider: execution.provider,
+        phase: "provider_decision",
+        status: "failed",
+        reason: terminalReason,
+        jobId
+      }
+    ]).map((event) => ({
+      ...event,
+      terminalDescriptor: recovery.terminalDescriptor || event.terminalDescriptor
+    }));
+    const terminalDescriptor = recovery.terminalDescriptor || terminalEvents[0]?.terminalDescriptor || null;
+    return {
+      job: failedJob,
+      envelope: {
+        job: failedJob,
+        result: { ok: false, error: safeMessage },
+        terminalReason,
+        terminalDescriptor
+      },
+      beforeStateCommit() {
+        if (terminalEvents.length > 0) {
+          ensureRunLedgerTerminalPair(workspaceRoot, terminalEvents);
+        }
+      }
+    };
+  }, { lockOptions });
+}
+function persistedJobBlocksFailure(workspaceRoot, jobId) {
+  const job = getJob(workspaceRoot, jobId);
+  const envelope = readJobFile(resolveJobFile(workspaceRoot, jobId));
+  return !job || !ACTIVE_JOB_STATUSES2.has(job.status) || blocksFailureFinalizer(envelope);
+}
+function recoverBackgroundStartFailure(workspaceRoot, jobId, options = {}) {
+  const recovery = readJobStartFailureFile(workspaceRoot, jobId);
+  if (!recovery || recovery.version !== 1 || recovery.jobId !== jobId) {
+    return { written: false, finalizationError: null };
+  }
+  if (persistedJobBlocksFailure(workspaceRoot, jobId)) {
+    removeJobStartFailureFile(workspaceRoot, jobId);
+    return { written: false, finalizationError: null };
+  }
+  try {
+    const write = finalizeBackgroundStartFailure(workspaceRoot, recovery, options);
+    if (write.written) {
+      cleanupRuntimeOptions({ cleanupPaths: recovery.ownedCleanupPaths });
+      removeJobConfigFile(workspaceRoot, jobId);
+      removeJobStartFailureFile(workspaceRoot, jobId);
+    }
+    return { written: write.written, finalizationError: null };
+  } catch (finalizationError) {
+    return { written: false, finalizationError };
+  }
+}
+function recordBackgroundStartFailure(workspaceRoot, jobId, execution, runContext, error, options = {}) {
+  const configFile = resolveJobConfigFile(workspaceRoot, jobId);
+  const config = readJobConfigFile(configFile);
+  const runtimeOptions = config?.execution?.runtimeOptions ?? execution.runtimeOptions;
+  const recovery = buildStartFailureRecovery(jobId, execution, runContext, error, runtimeOptions);
+  if (persistedJobBlocksFailure(workspaceRoot, jobId)) {
+    removeJobStartFailureFile(workspaceRoot, jobId);
+    return { written: false, finalizationError: null };
+  }
+  try {
+    writeJobStartFailureFile(workspaceRoot, jobId, recovery);
+  } catch {
+  }
+  if (persistedJobBlocksFailure(workspaceRoot, jobId)) {
+    removeJobStartFailureFile(workspaceRoot, jobId);
+    return { written: false, finalizationError: null };
+  }
+  try {
+    const write = finalizeBackgroundStartFailure(workspaceRoot, recovery, options);
+    if (write.written) {
+      cleanupRuntimeOptions(runtimeOptions);
+      removeJobConfigFile(workspaceRoot, jobId);
+      removeJobStartFailureFile(workspaceRoot, jobId);
+    }
+    return { written: write.written, finalizationError: null };
+  } catch (finalizationError) {
+    cleanupRuntimeOptions(runtimeOptions);
+    return { written: false, finalizationError };
+  }
+}
+async function startBackgroundWorker({
+  workspaceRoot,
+  job,
+  execution,
+  runContext,
+  config,
+  companionPath,
+  env = process4.env,
+  failureFinalizationOptions = {}
+}, {
+  writeConfigFile = writeJobConfigFile,
+  writeLogFile = fs5.writeFileSync,
+  openLogFile = fs5.openSync,
+  closeLogFile = fs5.closeSync,
+  spawnWorker = spawn2
+} = {}) {
+  let child = null;
+  let logFd = null;
+  let startFailure = null;
+  let startWarning = null;
+  let closeWarning = null;
+  const configFile = resolveJobConfigFile(workspaceRoot, job.jobId);
+  try {
+    writeConfigFile(workspaceRoot, job.jobId, config);
+    writeLogFile(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
+`, {
+      encoding: "utf8",
+      mode: 384
+    });
+    logFd = openLogFile(job.logFile, "a", 384);
+    child = spawnWorker(process4.execPath, [companionPath, "_job-worker", configFile], {
+      cwd: execution.cwd,
+      env: { ...env },
+      stdio: ["ignore", logFd, logFd],
+      detached: true
+    });
+    try {
+      child.once("error", (asyncError) => {
+        recordBackgroundStartFailure(
+          workspaceRoot,
+          job.jobId,
+          execution,
+          runContext,
+          asyncError,
+          failureFinalizationOptions
+        );
+      });
+      child.unref();
+    } catch (error) {
+      startWarning = error;
+    }
+  } catch (error) {
+    startFailure = error;
+  } finally {
+    if (logFd != null) {
+      try {
+        closeLogFile(logFd);
+      } catch (error) {
+        if (child) closeWarning = error;
+        else if (!startFailure) startFailure = error;
+      }
+    }
+  }
+  if (startFailure) {
+    recordBackgroundStartFailure(
+      workspaceRoot,
+      job.jobId,
+      execution,
+      runContext,
+      startFailure,
+      failureFinalizationOptions
+    );
+    throw startFailure;
+  }
+  return { child, startWarning, closeWarning };
+}
+
 // plugins/polycli/scripts/lib/sessions.mjs
-import fs5 from "node:fs";
+import fs6 from "node:fs";
 import os3 from "node:os";
 import path5 from "node:path";
 import { createHash } from "node:crypto";
@@ -8351,7 +9119,7 @@ function deriveSessionArtifactCandidate({ provider, sessionId, workspaceRoot, ho
     case "kimi": {
       let realCwd = workspaceRoot;
       try {
-        realCwd = fs5.realpathSync(workspaceRoot);
+        realCwd = fs6.realpathSync(workspaceRoot);
       } catch {
       }
       const slug = `wd_${path5.basename(realCwd)}_${createHash("sha256").update(realCwd).digest("hex").slice(0, 12)}`;
@@ -8376,7 +9144,7 @@ function deriveSessionArtifactCandidate({ provider, sessionId, workspaceRoot, ho
       return { path: null, reason: `no artifact derivation for provider ${provider ?? "?"}` };
   }
 }
-function recordArtifactPath(candidate, { homedir, lstatFn = fs5.lstatSync, realpathFn = fs5.realpathSync, existsFn = fs5.existsSync } = {}) {
+function recordArtifactPath(candidate, { homedir, lstatFn = fs6.lstatSync, realpathFn = fs6.realpathSync, existsFn = fs6.existsSync } = {}) {
   if (!candidate || typeof candidate.path !== "string") return null;
   const { path: candidatePath, provider } = candidate;
   if (!existsFn(candidatePath)) return null;
@@ -8453,7 +9221,7 @@ function collectNonPurgeableSessions(events = [], { homedir = os3.homedir() } = 
   }
   return out;
 }
-function planPurge({ recorded = [], homedir, lstatFn = fs5.lstatSync, realpathFn = fs5.realpathSync, existsFn = fs5.existsSync, sizeFn } = {}) {
+function planPurge({ recorded = [], homedir, lstatFn = fs6.lstatSync, realpathFn = fs6.realpathSync, existsFn = fs6.existsSync, sizeFn } = {}) {
   const deletable = [];
   const skipped = [];
   const defaultSizeFn = (p) => {
@@ -8520,7 +9288,7 @@ function planPurge({ recorded = [], homedir, lstatFn = fs5.lstatSync, realpathFn
   }
   return { deletable, skipped };
 }
-function executePurge(plan, { confirm = false, rmFn = (p) => fs5.rmSync(p, { recursive: true, force: true }) } = {}) {
+function executePurge(plan, { confirm = false, rmFn = (p) => fs6.rmSync(p, { recursive: true, force: true }) } = {}) {
   const deletable = plan?.deletable ?? [];
   const skipped = plan?.skipped ?? [];
   if (!confirm) {
@@ -8543,27 +9311,74 @@ var TERMINAL_STATUSES2 = /* @__PURE__ */ new Set(["completed", "failed", "cancel
 var WAIT_TARGETS = /* @__PURE__ */ new Set(["terminal", "completed", "failed", "cancelled"]);
 var DEFAULT_STATUS_LIMIT = 8;
 var MAX_SELECTOR_CANDIDATES = 8;
+function createDeadlineError() {
+  const error = new Error("cancellation deadline exceeded");
+  error.code = "EDEADLINE";
+  return error;
+}
+function remainingDeadlineMs(deadlineAt) {
+  return Number.isFinite(deadlineAt) ? deadlineAt - Date.now() : null;
+}
+function deadlineLockOptions(deadlineAt) {
+  const remainingMs = remainingDeadlineMs(deadlineAt);
+  if (remainingMs == null) return {};
+  if (remainingMs <= 0) throw createDeadlineError();
+  return {
+    timeoutMs: Math.max(1, Math.ceil(remainingMs)),
+    pollMs: Math.max(1, Math.min(25, Math.ceil(remainingMs)))
+  };
+}
+function isDeadlineFailure(error, deadlineAt) {
+  return Number.isFinite(deadlineAt) && ["EDEADLINE", "ELOCKTIMEOUT", "ETIMEDOUT"].includes(error?.code);
+}
+async function awaitWithinDeadline(promise, deadlineAt) {
+  const remainingMs = remainingDeadlineMs(deadlineAt);
+  if (remainingMs == null) {
+    await promise;
+    return true;
+  }
+  if (remainingMs <= 0) return false;
+  let timer = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).then(() => true),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), remainingMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 function isProcessAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
-    process4.kill(pid, 0);
+    process5.kill(pid, 0);
     return true;
   } catch {
     return false;
   }
 }
-function isExpectedWorkerProcess(pid, configFile) {
+function isExpectedWorkerProcess(pid, configFile, {
+  deadlineAt = null,
+  platform = process5.platform,
+  spawnProcess = spawnSync3
+} = {}) {
   if (!Number.isInteger(pid) || pid <= 0 || !configFile) return null;
+  const remainingMs = Number.isFinite(deadlineAt) ? Math.floor(deadlineAt - Date.now()) : null;
+  if (remainingMs != null && remainingMs <= 0) return null;
   try {
-    const result = process4.platform === "win32" ? spawnSync3("powershell.exe", [
+    const spawnOptions = {
+      encoding: "utf8",
+      stdio: "pipe",
+      ...remainingMs == null ? {} : { timeout: remainingMs }
+    };
+    const result = platform === "win32" ? spawnProcess("powershell.exe", [
       "-NoProfile",
       "-NonInteractive",
       "-Command",
       `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`
-    ], { encoding: "utf8", stdio: "pipe" }) : spawnSync3("ps", ["-ww", "-o", "command=", "-p", String(pid)], {
-      encoding: "utf8",
-      stdio: "pipe"
-    });
+    ], spawnOptions) : spawnProcess("ps", ["-ww", "-o", "command=", "-p", String(pid)], spawnOptions);
     if (result.error) return null;
     if (result.status !== 0) return false;
     return result.stdout.includes("_job-worker") && result.stdout.includes(configFile);
@@ -8577,7 +9392,7 @@ function sortJobsNewestFirst(jobs) {
 function readProgressPreview(logFile, maxLines = 4) {
   if (!logFile) return "";
   try {
-    const lines = fs6.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const lines = fs7.readFileSync(logFile, "utf8").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     return lines.slice(-maxLines).join("\n");
   } catch {
     return "";
@@ -8593,6 +9408,9 @@ function enrichJob(workspaceRoot, job) {
 }
 function isTerminalEnvelope(envelope) {
   return Boolean(envelope?.job && TERMINAL_STATUSES2.has(envelope.job.status));
+}
+function hasPendingCancellationIntent(envelope) {
+  return envelope?.cancellationIntent?.status === "requested";
 }
 function buildRecoveredTerminalEvents(workspaceRoot, job, config, runContext, { result = null, reason = "worker_exited", terminalDescriptor = null } = {}) {
   const command = runContext.command || config?.execution?.kind || job.kind || null;
@@ -8692,7 +9510,18 @@ function applyTerminalDescriptor(events, terminalDescriptor) {
   });
 }
 function prepareRecoveredTerminalEvents(workspaceRoot, job, config, { result = null, reason = "worker_exited", terminalDescriptor = null } = {}) {
-  const runContext = config?.runContext;
+  const descriptorEvent = terminalDescriptor?.events?.[0] ?? null;
+  const runContext = config?.runContext || (terminalDescriptor?.runId ? {
+    runId: terminalDescriptor.runId,
+    command: descriptorEvent?.command ?? job.kind ?? null,
+    kind: descriptorEvent?.kind ?? job.kind ?? null,
+    provider: descriptorEvent?.provider ?? job.provider ?? null,
+    hostSurface: descriptorEvent?.hostSurface || "unknown",
+    invocationId: terminalDescriptor.invocationId ?? job.invocationId ?? null,
+    attemptId: terminalDescriptor.attemptId ?? job.attemptId ?? null,
+    jobId: terminalDescriptor.jobId ?? job.jobId ?? null,
+    logFile: job.logFile ?? null
+  } : null);
   if (!runContext?.runId) return { events: [], terminalDescriptor };
   const events = buildRecoveredTerminalEvents(workspaceRoot, job, config, runContext, {
     result,
@@ -8705,9 +9534,9 @@ function prepareRecoveredTerminalEvents(workspaceRoot, job, config, { result = n
     terminalDescriptor: descriptor
   };
 }
-function ensureRecoveredTerminalEvents(workspaceRoot, prepared) {
+function ensureRecoveredTerminalEvents(workspaceRoot, prepared, { lockOptions = {} } = {}) {
   if (prepared.events.length > 0) {
-    ensureRunLedgerTerminalPair(workspaceRoot, prepared.events);
+    ensureRunLedgerTerminalPair(workspaceRoot, prepared.events, { lockOptions });
   }
 }
 function cleanupRuntimePaths(config) {
@@ -8716,16 +9545,26 @@ function cleanupRuntimePaths(config) {
   for (const cleanupPath of cleanupPaths) {
     if (typeof cleanupPath !== "string" || !cleanupPath) continue;
     try {
-      fs6.rmSync(cleanupPath, { recursive: true, force: true });
+      fs7.rmSync(cleanupPath, { recursive: true, force: true });
     } catch {
     }
   }
 }
 function refreshJob(workspaceRoot, job) {
   if (!job || !ACTIVE_STATUSES2.has(job.status)) {
+    if (job?.jobId && TERMINAL_STATUSES2.has(job.status)) {
+      removeJobStartFailureFile(workspaceRoot, job.jobId);
+    }
     return job ? enrichJob(workspaceRoot, job) : null;
   }
   const storedEnvelope = readJobFile(resolveJobFile(workspaceRoot, job.jobId));
+  if (hasPendingCancellationIntent(storedEnvelope)) {
+    return enrichJob(workspaceRoot, job);
+  }
+  const startFailureRecovery = recoverBackgroundStartFailure(workspaceRoot, job.jobId);
+  if (startFailureRecovery.written) {
+    return enrichJob(workspaceRoot, getJob(workspaceRoot, job.jobId) || job);
+  }
   if (!job.pid && !isTerminalEnvelope(storedEnvelope)) {
     return enrichJob(workspaceRoot, job);
   }
@@ -8799,8 +9638,12 @@ function refreshJob(workspaceRoot, job) {
       const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, job.jobId));
       cleanupRuntimePaths(config);
       removeJobConfigFile(workspaceRoot, job.jobId);
+      removeJobStartFailureFile(workspaceRoot, job.jobId);
     }
     const current = write.written ? write.job : getJob(workspaceRoot, job.jobId) || job;
+    if (TERMINAL_STATUSES2.has(current?.status)) {
+      removeJobStartFailureFile(workspaceRoot, job.jobId);
+    }
     return enrichJob(workspaceRoot, current);
   } catch {
     return enrichJob(workspaceRoot, getJob(workspaceRoot, job.jobId) || job);
@@ -8995,84 +9838,94 @@ async function waitForJob(workspaceRoot, jobId, options = {}) {
 async function cancelJob(workspaceRoot, jobId, {
   terminate = terminateProcessTree,
   isWorkerAlive = isProcessAlive,
-  isExpectedWorker = isExpectedWorkerProcess
+  isExpectedWorker = isExpectedWorkerProcess,
+  deadlineAt = null
 } = {}) {
   let pidToKill = null;
   let configForCleanup = null;
   let cancellationEnvelope = null;
   let reason = null;
   const requestedAt = (/* @__PURE__ */ new Date()).toISOString();
-  const intentWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
-    if (!current) {
-      reason = "not_found";
-      return null;
-    }
-    if (!ACTIVE_STATUSES2.has(current.status)) {
-      reason = "not_cancellable";
-      return null;
-    }
-    const resumingCancellation = storedEnvelope?.job?.status === "cancelled";
-    if (isTerminalEnvelope(storedEnvelope) && !resumingCancellation) {
-      reason = "not_cancellable";
-      return null;
-    }
-    pidToKill = current.pid ?? null;
-    configForCleanup = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
-    const intentJob = resumingCancellation ? {
-      ...current,
-      ...storedEnvelope.job,
-      status: "cancelled",
-      pid: null,
-      finishedAt: storedEnvelope.job.finishedAt || requestedAt,
-      updatedAt: requestedAt
-    } : {
-      ...current,
-      status: "cancelled",
-      pid: null,
-      finishedAt: requestedAt,
-      updatedAt: requestedAt
-    };
-    const cancellationResult = resumingCancellation ? storedEnvelope.result || { ok: false, error: "cancelled" } : { ok: false, error: "cancelled" };
-    const terminal = prepareRecoveredTerminalEvents(workspaceRoot, intentJob, configForCleanup, {
-      result: cancellationResult,
-      reason: "cancelled",
-      terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null
-    });
-    cancellationEnvelope = {
-      job: intentJob,
-      result: cancellationResult,
-      terminalReason: "cancelled",
-      terminalDescriptor: terminal.terminalDescriptor
-    };
-    return {
-      // Do not make the state terminal yet. It remains the recovery point if this process exits
-      // after persisting the intent but before the worker receives its signal.
-      job: current,
-      envelope: cancellationEnvelope,
-      beforeStateCommit() {
-        ensureRecoveredTerminalEvents(workspaceRoot, terminal);
+  let intentWrite;
+  try {
+    intentWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
+      if (!current) {
+        reason = "not_found";
+        return null;
       }
-    };
-  });
+      if (!ACTIVE_STATUSES2.has(current.status)) {
+        reason = "not_cancellable";
+        return null;
+      }
+      const resumingCancellation = hasPendingCancellationIntent(storedEnvelope);
+      if (isTerminalEnvelope(storedEnvelope) && !resumingCancellation) {
+        reason = "not_cancellable";
+        return null;
+      }
+      pidToKill = current.pid ?? null;
+      configForCleanup = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
+      cancellationEnvelope = resumingCancellation ? storedEnvelope : {
+        job: current,
+        cancellationIntent: {
+          status: "requested",
+          requestedAt
+        }
+      };
+      return {
+        // Do not make the state or envelope terminal yet. Both remain recovery points if this
+        // process exits after persisting the intent but before the worker receives its signal.
+        job: current,
+        envelope: cancellationEnvelope
+      };
+    }, { lockOptions: deadlineLockOptions(deadlineAt) });
+  } catch (error) {
+    if (isDeadlineFailure(error, deadlineAt)) {
+      return { cancelled: false, reason: "deadline_exceeded", jobId };
+    }
+    throw error;
+  }
   if (!intentWrite.written) {
     return { cancelled: false, reason: reason || "not_cancellable", jobId };
   }
   const configFile = resolveJobConfigFile(workspaceRoot, jobId);
-  if (pidToKill && isWorkerAlive(pidToKill)) {
-    if (!isExpectedWorker(pidToKill, configFile)) {
+  if (Number.isInteger(pidToKill) && pidToKill > 1 && isWorkerAlive(pidToKill)) {
+    if (remainingDeadlineMs(deadlineAt) != null && remainingDeadlineMs(deadlineAt) <= 0) {
+      return { cancelled: false, reason: "deadline_exceeded", jobId };
+    }
+    if (!configForCleanup || isExpectedWorker(pidToKill, configFile, { deadlineAt }) !== true) {
+      if (remainingDeadlineMs(deadlineAt) != null && remainingDeadlineMs(deadlineAt) <= 0) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
       return { cancelled: false, reason: "worker_identity_unverified", jobId };
     }
     try {
-      await terminate(pidToKill, {
+      const remainingMs = remainingDeadlineMs(deadlineAt);
+      if (remainingMs != null && remainingMs <= 0) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
+      const terminatedWithinDeadline = await awaitWithinDeadline(terminate(pidToKill, {
         signal: "SIGINT",
         forceSignal: "SIGKILL",
-        forceAfterMs: 2e3
-      });
+        forceAfterMs: remainingMs == null ? 2e3 : Math.max(1, Math.min(2e3, Math.floor(remainingMs))),
+        deadlineAt
+      }), deadlineAt);
+      if (!terminatedWithinDeadline) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
     } catch (error) {
+      if (isDeadlineFailure(error, deadlineAt)) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
       return { cancelled: false, reason: "kill_failed", jobId, killWarning: error.message };
     }
     if (isWorkerAlive(pidToKill)) {
-      const postSignalIdentity = isExpectedWorker(pidToKill, configFile);
+      if (remainingDeadlineMs(deadlineAt) != null && remainingDeadlineMs(deadlineAt) <= 0) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
+      const postSignalIdentity = isExpectedWorker(pidToKill, configFile, { deadlineAt });
+      if (remainingDeadlineMs(deadlineAt) != null && remainingDeadlineMs(deadlineAt) <= 0) {
+        return { cancelled: false, reason: "deadline_exceeded", jobId };
+      }
       if (postSignalIdentity === true) {
         return { cancelled: false, reason: "worker_still_running", jobId };
       }
@@ -9082,55 +9935,69 @@ async function cancelJob(workspaceRoot, jobId, {
     }
   }
   let finalConfig = configForCleanup;
-  const finalWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
-    if (!current) {
-      reason = "not_found";
-      return null;
-    }
-    if (current.status === "cancelled") return null;
-    if (!ACTIVE_STATUSES2.has(current.status) || storedEnvelope?.job?.status !== "cancelled") {
-      reason = "cancellation_finalization_pending";
-      return null;
-    }
-    finalConfig = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId)) || finalConfig;
-    const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-    const finalJob = {
-      ...current,
-      ...storedEnvelope.job,
-      status: "cancelled",
-      pid: null,
-      finishedAt: storedEnvelope.job.finishedAt || finishedAt,
-      updatedAt: finishedAt
-    };
-    const result = storedEnvelope.result || cancellationEnvelope?.result || { ok: false, error: "cancelled" };
-    const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalJob, finalConfig, {
-      result,
-      reason: "cancelled",
-      terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null
-    });
-    return {
-      job: finalJob,
-      envelope: {
-        ...storedEnvelope,
-        job: finalJob,
-        result,
-        terminalReason: "cancelled",
-        terminalDescriptor: terminal.terminalDescriptor
-      },
-      beforeStateCommit() {
-        ensureRecoveredTerminalEvents(workspaceRoot, terminal);
+  let finalWrite;
+  try {
+    finalWrite = updateJobAtomically(workspaceRoot, jobId, (current, storedEnvelope) => {
+      if (!current) {
+        reason = "not_found";
+        return null;
       }
-    };
-  });
+      if (current.status === "cancelled") return null;
+      if (!ACTIVE_STATUSES2.has(current.status) || !hasPendingCancellationIntent(storedEnvelope)) {
+        reason = "cancellation_finalization_pending";
+        return null;
+      }
+      finalConfig = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId)) || finalConfig;
+      const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+      const storedCancelledJob = storedEnvelope?.job?.status === "cancelled" ? storedEnvelope.job : null;
+      const finalJob = {
+        ...current,
+        ...storedCancelledJob || {},
+        status: "cancelled",
+        pid: null,
+        finishedAt: storedCancelledJob?.finishedAt || finishedAt,
+        updatedAt: finishedAt
+      };
+      const result = storedEnvelope.result || cancellationEnvelope?.result || { ok: false, error: "cancelled" };
+      const terminal = prepareRecoveredTerminalEvents(workspaceRoot, finalJob, finalConfig, {
+        result,
+        reason: "cancelled",
+        terminalDescriptor: storedEnvelope?.terminalDescriptor ?? null
+      });
+      return {
+        job: finalJob,
+        envelope: {
+          ...storedEnvelope,
+          job: finalJob,
+          result,
+          terminalReason: "cancelled",
+          terminalDescriptor: terminal.terminalDescriptor,
+          cancellationIntent: storedEnvelope.cancellationIntent
+        },
+        beforeStateCommit() {
+          ensureRecoveredTerminalEvents(workspaceRoot, terminal, {
+            lockOptions: deadlineLockOptions(deadlineAt)
+          });
+        }
+      };
+    }, { lockOptions: deadlineLockOptions(deadlineAt) });
+  } catch (error) {
+    if (isDeadlineFailure(error, deadlineAt)) {
+      return { cancelled: false, reason: "deadline_exceeded", jobId };
+    }
+    throw error;
+  }
   if (!finalWrite.written) {
     const current = getJob(workspaceRoot, jobId);
     if (current?.status === "cancelled") {
+      removeJobStartFailureFile(workspaceRoot, jobId);
       return { cancelled: true, jobId };
     }
     return { cancelled: false, reason: reason || "cancellation_finalization_pending", jobId };
   }
   cleanupRuntimePaths(finalConfig);
   removeJobConfigFile(workspaceRoot, jobId);
+  removeJobStartFailureFile(workspaceRoot, jobId);
   return { cancelled: true, jobId };
 }
 
@@ -9292,7 +10159,7 @@ function resolveProvider({ provider, positionals = [] } = {}) {
 }
 
 // plugins/polycli/scripts/lib/review.mjs
-import fs7 from "node:fs";
+import fs8 from "node:fs";
 import os5 from "node:os";
 import path6 from "node:path";
 var DEFAULT_MAX_DIFF_BYTES = null;
@@ -9352,7 +10219,7 @@ function git(cwd, args) {
   return runCommand("git", args, { cwd });
 }
 function makeReviewTempDir(prefix) {
-  return fs7.mkdtempSync(path6.join(os5.tmpdir(), `polycli-review-${prefix}-`));
+  return fs8.mkdtempSync(path6.join(os5.tmpdir(), `polycli-review-${prefix}-`));
 }
 function assertNoReviewConstraintOverride(provider, runtimeOptions = {}) {
   const extraArgs = Array.isArray(runtimeOptions.extraArgs) ? runtimeOptions.extraArgs : [];
@@ -9629,7 +10496,7 @@ function summarizeTimingRecords(records) {
 }
 
 // plugins/polycli/scripts/lib/preview.mjs
-import fs8 from "node:fs";
+import fs9 from "node:fs";
 var PREVIEW_MAX_LINES = 10;
 var PREVIEW_TAIL_CACHE = /* @__PURE__ */ new Map();
 var PRIVATE_FILE_MODE4 = 384;
@@ -9718,7 +10585,7 @@ function summarizeEventText(provider, event) {
   }
   return "";
 }
-function appendPreview(logFile, provider, event, { fsImpl = fs8, tailCache = PREVIEW_TAIL_CACHE } = {}) {
+function appendPreview(logFile, provider, event, { fsImpl = fs9, tailCache = PREVIEW_TAIL_CACHE } = {}) {
   const text = summarizeEventText(provider, event);
   if (!text) return;
   const lines = String(text).split(/\r?\n/).map((line) => collapseWhitespace(line)).filter(Boolean).slice(0, PREVIEW_MAX_LINES);
@@ -9729,9 +10596,9 @@ function appendPreview(logFile, provider, event, { fsImpl = fs8, tailCache = PRE
   }
   fsImpl.appendFileSync(logFile, `${lines.join("\n")}
 `, { encoding: "utf8", mode: PRIVATE_FILE_MODE4 });
-  if (fsImpl === fs8) {
+  if (fsImpl === fs9) {
     try {
-      fs8.chmodSync(logFile, PRIVATE_FILE_MODE4);
+      fs9.chmodSync(logFile, PRIVATE_FILE_MODE4);
     } catch {
     }
   }
@@ -9777,8 +10644,8 @@ function resolveTimeoutMs(provider, kind, { model = null, defaultModel = null } 
 }
 var HEALTH_SENTINEL = "POLYCLI_HEALTH_OK";
 var SESSION_ID_ENV = "POLYCLI_COMPANION_SESSION_ID";
-var TERMINAL_JOB_STATUSES2 = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
-var ACTIVE_JOB_STATUSES2 = /* @__PURE__ */ new Set(["queued", "running"]);
+var TERMINAL_JOB_STATUSES3 = /* @__PURE__ */ new Set(["completed", "failed", "cancelled"]);
+var ACTIVE_JOB_STATUSES3 = /* @__PURE__ */ new Set(["queued", "running"]);
 var RUN_CONTEXT = {
   invocationId: null,
   runId: null,
@@ -9842,21 +10709,24 @@ function ensureTerminalRunEventsForContext(workspaceRoot, prepared) {
   return prepared.events.length > 0 ? ensureRunLedgerTerminalPair(workspaceRoot, prepared.events) : [];
 }
 function hasTerminalJobEnvelope(envelope) {
-  return TERMINAL_JOB_STATUSES2.has(envelope?.job?.status);
+  return TERMINAL_JOB_STATUSES3.has(envelope?.job?.status);
+}
+function blocksBackgroundWorkerCommit(envelope) {
+  return hasTerminalJobEnvelope(envelope) || hasPendingCancellationIntent(envelope);
 }
 function claimBackgroundWorker(workspaceRoot, jobId) {
   const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
-    if (!latest || !ACTIVE_JOB_STATUSES2.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
+    if (!latest || !ACTIVE_JOB_STATUSES3.has(latest.status) || blocksBackgroundWorkerCommit(storedEnvelope)) {
       return null;
     }
-    if (latest.pid != null && latest.pid !== process5.pid) {
+    if (latest.pid != null && latest.pid !== process6.pid) {
       return null;
     }
     return {
       job: {
         ...latest,
         status: "running",
-        pid: process5.pid,
+        pid: process6.pid,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }
     };
@@ -9866,68 +10736,6 @@ function claimBackgroundWorker(workspaceRoot, jobId) {
 function shouldRetainJobConfig(workspaceRoot, jobId) {
   const current = getJob(workspaceRoot, jobId);
   return current?.status === "queued" || current?.status === "running";
-}
-function recordBackgroundSpawnFailure(workspaceRoot, jobId, execution, runContext, error) {
-  const config = readJobConfigFile(resolveJobConfigFile(workspaceRoot, jobId));
-  try {
-    const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
-      if (!latest || !ACTIVE_JOB_STATUSES2.has(latest.status) || hasTerminalJobEnvelope(storedEnvelope)) {
-        return null;
-      }
-      const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-      const failedJob = {
-        ...latest,
-        ...execution.jobMeta,
-        status: "failed",
-        pid: null,
-        finishedAt,
-        updatedAt: finishedAt,
-        error: error.message
-      };
-      const terminalReason = `${execution.kind}_failed`;
-      const terminalEvents = [
-        {
-          command: runContext?.command || execution.kind,
-          kind: execution.kind,
-          provider: execution.provider,
-          phase: "attempt_result",
-          status: "failed",
-          reason: terminalReason,
-          attempt: { ordinal: 1 },
-          jobId,
-          error: { message: String(error.message || error).slice(0, 300) },
-          logFile: failedJob.logFile || null
-        },
-        {
-          command: runContext?.command || execution.kind,
-          kind: execution.kind,
-          provider: execution.provider,
-          phase: "provider_decision",
-          status: "failed",
-          reason: terminalReason,
-          jobId
-        }
-      ];
-      const terminal = prepareTerminalRunEventsForContext(runContext, terminalEvents);
-      return {
-        job: failedJob,
-        envelope: {
-          job: failedJob,
-          result: { ok: false, error: error.message },
-          terminalReason,
-          terminalDescriptor: terminal.terminalDescriptor
-        },
-        beforeStateCommit() {
-          ensureTerminalRunEventsForContext(workspaceRoot, terminal);
-        }
-      };
-    });
-    if (write.written) {
-      cleanupRuntimeOptions(config?.execution?.runtimeOptions);
-      removeJobConfigFile(workspaceRoot, jobId);
-    }
-  } catch {
-  }
 }
 async function recordRunEvent(workspaceRoot, base = {}) {
   return recordRunEventForContext(workspaceRoot, buildCurrentRunContext(), base);
@@ -10050,9 +10858,9 @@ function assertPreDispatchReviewSafety(definition2, parsed) {
 function exitWithError(error) {
   const typed = toTypedCliError(error);
   if (RUN_CONTEXT.outputMode === "json-v2") {
-    process5.stdout.write(`${JSON.stringify(createV2ErrorEnvelope(typed, {
+    process6.stdout.write(`${JSON.stringify(createV2ErrorEnvelope(typed, {
       invocationId: RUN_CONTEXT.invocationId,
-      command: RUN_CONTEXT.command || process5.argv[2] || "",
+      command: RUN_CONTEXT.command || process6.argv[2] || "",
       hostSurface: RUN_CONTEXT.hostSurface,
       workspaceSlug: RUN_CONTEXT.workspaceSlug,
       runId: RUN_CONTEXT.runId,
@@ -10062,19 +10870,19 @@ function exitWithError(error) {
   } else if (RUN_CONTEXT.outputMode === "legacy-json") {
     const code = error?.legacyCode || error?.code || classifyErrorCode(error?.message || "");
     const legacyCode = code === "unknown_command" ? "unknown_subcommand" : code;
-    process5.stdout.write(`${JSON.stringify({ error: typed.message, code: legacyCode }, null, 2)}
+    process6.stdout.write(`${JSON.stringify({ error: typed.message, code: legacyCode }, null, 2)}
 `);
   } else {
-    process5.stderr.write(`Error: ${typed.message}
+    process6.stderr.write(`Error: ${typed.message}
 `);
     for (const suggestion of typed.data?.suggestions || []) {
-      process5.stderr.write(`Suggestion: ${suggestion}
+      process6.stderr.write(`Suggestion: ${suggestion}
 `);
     }
-    for (const step of typed.nextSteps) process5.stderr.write(`${step}
+    for (const step of typed.nextSteps) process6.stderr.write(`${step}
 `);
   }
-  process5.exitCode = typed.exitCode || error?.exitCode || 1;
+  process6.exitCode = typed.exitCode || error?.exitCode || 1;
 }
 function output(value, asJson) {
   if (RUN_CONTEXT.outputMode === "json-v2") {
@@ -10090,18 +10898,18 @@ function output(value, asJson) {
       runId: RUN_CONTEXT.runId,
       jobId: result.job?.jobId ?? result.jobId ?? null
     });
-    process5.stdout.write(`${JSON.stringify(envelope, null, 2)}
+    process6.stdout.write(`${JSON.stringify(envelope, null, 2)}
 `);
     RUN_CONTEXT.authoritativeJsonWritten = true;
     return;
   }
   if (asJson) {
-    process5.stdout.write(`${JSON.stringify(value, null, 2)}
+    process6.stdout.write(`${JSON.stringify(value, null, 2)}
 `);
     RUN_CONTEXT.authoritativeJsonWritten = true;
     return;
   }
-  process5.stdout.write(typeof value === "string" ? `${value}
+  process6.stdout.write(typeof value === "string" ? `${value}
 ` : `${JSON.stringify(value, null, 2)}
 `);
 }
@@ -10170,7 +10978,7 @@ function resolveProviderModelCacheFile(workspaceRoot) {
 }
 function readProviderModelCache(workspaceRoot) {
   try {
-    const parsed = JSON.parse(fs9.readFileSync(resolveProviderModelCacheFile(workspaceRoot), "utf8"));
+    const parsed = JSON.parse(fs10.readFileSync(resolveProviderModelCacheFile(workspaceRoot), "utf8"));
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
@@ -10183,7 +10991,7 @@ function readCachedProviderModel(workspaceRoot, provider) {
 function cacheProviderModel(workspaceRoot, provider, model) {
   if (typeof model !== "string" || !model.trim()) return;
   const cacheFile = resolveProviderModelCacheFile(workspaceRoot);
-  fs9.mkdirSync(path8.dirname(cacheFile), { recursive: true, mode: 448 });
+  fs10.mkdirSync(path8.dirname(cacheFile), { recursive: true, mode: 448 });
   withLockfile(`${cacheFile}.lock`, () => {
     writeJsonAtomic(cacheFile, { ...readProviderModelCache(workspaceRoot), [provider]: model }, { mode: 384 });
   });
@@ -10209,11 +11017,11 @@ function skippedAuthDetail({ available, authProbeCost }) {
 }
 async function inspectProvider(provider, { probeAuth = false } = {}) {
   const runtime = getProviderRuntime(provider);
-  const availability = await Promise.resolve(runtime.getAvailability(process5.cwd()));
+  const availability = await Promise.resolve(runtime.getAvailability(process6.cwd()));
   const available = availability.available === true;
   const authProbeCost = normalizeAuthProbeCost(runtime);
   const authChecked = available && (probeAuth || authProbeCost === "status");
-  const auth = authChecked ? await Promise.resolve(runtime.getAuthStatus(process5.cwd())) : null;
+  const auth = authChecked ? await Promise.resolve(runtime.getAuthStatus(process6.cwd())) : null;
   const row = {
     provider,
     available,
@@ -10226,7 +11034,7 @@ async function inspectProvider(provider, { probeAuth = false } = {}) {
     model: auth?.model ?? null,
     capabilities: runtime.capabilities
   };
-  cacheProviderModel(resolveWorkspaceRoot(process5.cwd()), provider, row.model);
+  cacheProviderModel(resolveWorkspaceRoot(process6.cwd()), provider, row.model);
   return row;
 }
 async function inspectSetupProvider(provider, { probeAuth, workspaceRoot }) {
@@ -10298,7 +11106,7 @@ async function inspectSetupProvider(provider, { probeAuth, workspaceRoot }) {
 }
 async function inspectProviderAvailability(provider) {
   const runtime = getProviderRuntime(provider);
-  const availability = await Promise.resolve(runtime.getAvailability(process5.cwd()));
+  const availability = await Promise.resolve(runtime.getAvailability(process6.cwd()));
   const authProbeCost = normalizeAuthProbeCost(runtime);
   return {
     provider,
@@ -10327,14 +11135,14 @@ function parseExecutionMode(options) {
 }
 function emitNote(line) {
   if (!line) return;
-  process5.stderr.write(`${line}
+  process6.stderr.write(`${line}
 `);
 }
 function emitRuntimeWarnings(result = {}) {
   if (!Array.isArray(result.warnings)) return;
   for (const warning of result.warnings) {
     if (typeof warning === "string" && warning.trim()) {
-      process5.stderr.write(`${warning.trim()}
+      process6.stderr.write(`${warning.trim()}
 `);
     }
   }
@@ -10445,12 +11253,12 @@ function compactProviderResult(result = {}) {
   }
   return compact;
 }
-function cleanupRuntimeOptions(runtimeOptions = {}) {
+function cleanupRuntimeOptions2(runtimeOptions = {}) {
   const cleanupPaths = Array.isArray(runtimeOptions.cleanupPaths) ? runtimeOptions.cleanupPaths : [];
   for (const cleanupPath of cleanupPaths) {
     if (typeof cleanupPath !== "string" || cleanupPath.trim() === "") continue;
     try {
-      fs9.rmSync(cleanupPath, { recursive: true, force: true });
+      fs10.rmSync(cleanupPath, { recursive: true, force: true });
     } catch {
     }
   }
@@ -10461,7 +11269,7 @@ function hydrateRuntimeOptions(runtimeOptions = {}) {
   }
   return {
     ...runtimeOptions,
-    env: { ...process5.env, ...runtimeOptions.env }
+    env: { ...process6.env, ...runtimeOptions.env }
   };
 }
 async function runForegroundExecution(execution, asJson) {
@@ -10515,7 +11323,7 @@ async function runForegroundExecution(execution, asJson) {
   } catch (error) {
     executionError = error;
   } finally {
-    cleanupRuntimeOptions(execution.runtimeOptions);
+    cleanupRuntimeOptions2(execution.runtimeOptions);
   }
   const resultOk = Boolean(result?.ok) && !executionError;
   const publicError = executionError?.message || result?.error || null;
@@ -10582,9 +11390,9 @@ async function runForegroundExecution(execution, asJson) {
     return;
   }
   if (!result.ok) {
-    process5.stderr.write(`Error: ${String(result.error || `${execution.provider} ${execution.kind} failed`).slice(0, 500)}
+    process6.stderr.write(`Error: ${String(result.error || `${execution.provider} ${execution.kind} failed`).slice(0, 500)}
 `);
-    process5.exitCode = 1;
+    process6.exitCode = 1;
     return;
   }
   const lines = [];
@@ -10611,7 +11419,7 @@ function buildQueuedJob(execution, workspaceRoot, attemptId) {
     updatedAt: now,
     invocationId: RUN_CONTEXT.invocationId,
     attemptId,
-    hostSessionId: process5.env[SESSION_ID_ENV] || null,
+    hostSessionId: process6.env[SESSION_ID_ENV] || null,
     providerSessionId: null,
     ...execution.jobMeta
   };
@@ -10757,7 +11565,7 @@ async function startBackgroundExecution(execution, asJson) {
     defaultModel: execution.defaultModel || null,
     logFile: job.logFile
   });
-  writeJobConfigFile(workspaceRoot, job.jobId, {
+  const config = {
     workspaceRoot,
     hostSessionId: job.hostSessionId,
     execution: {
@@ -10771,24 +11579,16 @@ async function startBackgroundExecution(execution, asJson) {
     },
     jobId: job.jobId,
     runContext
+  };
+  const { child } = await startBackgroundWorker({
+    workspaceRoot,
+    job,
+    execution,
+    runContext,
+    config,
+    companionPath: COMPANION_PATH,
+    env: process6.env
   });
-  fs9.writeFileSync(job.logFile, `[${(/* @__PURE__ */ new Date()).toISOString()}] started ${job.provider} ${job.kind}
-`, {
-    encoding: "utf8",
-    mode: 384
-  });
-  const logFd = fs9.openSync(job.logFile, "a", 384);
-  const child = spawn2(process5.execPath, [COMPANION_PATH, "_job-worker", resolveJobConfigFile(workspaceRoot, job.jobId)], {
-    cwd: execution.cwd,
-    env: { ...process5.env },
-    stdio: ["ignore", logFd, logFd],
-    detached: true
-  });
-  child.once("error", (error) => {
-    recordBackgroundSpawnFailure(workspaceRoot, job.jobId, execution, runContext, error);
-  });
-  child.unref();
-  fs9.closeSync(logFd);
   const runningWrite = updateJobAtomically(workspaceRoot, job.jobId, (latest) => {
     if (!latest || latest.status !== "queued") return null;
     return {
@@ -10801,10 +11601,10 @@ async function startBackgroundExecution(execution, asJson) {
     };
   });
   const runningJob = runningWrite.written ? runningWrite.job : getJob(workspaceRoot, job.jobId) || job;
-  if (!ACTIVE_JOB_STATUSES2.has(runningJob.status)) {
+  if (!ACTIVE_JOB_STATUSES3.has(runningJob.status)) {
     removeJobConfigFile(workspaceRoot, job.jobId);
   }
-  if (runContext && ACTIVE_JOB_STATUSES2.has(runningJob.status)) {
+  if (runContext && ACTIVE_JOB_STATUSES3.has(runningJob.status)) {
     await recordRunEventForContext(workspaceRoot, runContext, {
       command: execution.kind,
       kind: execution.kind,
@@ -10832,7 +11632,7 @@ async function runSetup(rawArgs) {
   if (options["enable-review-gate"] && options["disable-review-gate"]) {
     throw new Error("Choose either --enable-review-gate or --disable-review-gate, not both.");
   }
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   if (options["enable-review-gate"]) {
     setConfig(workspaceRoot, "stopReviewGate", true);
   } else if (options["disable-review-gate"]) {
@@ -10920,7 +11720,7 @@ async function probeProviderHealth({
     report.probe.error = inspection.availabilityDetail || "provider CLI is unavailable";
   } else if (provider === "claude") {
     try {
-      const auth = await Promise.resolve(getProviderRuntime(provider).getAuthStatus(process5.cwd()));
+      const auth = await Promise.resolve(getProviderRuntime(provider).getAuthStatus(process6.cwd()));
       report.loggedIn = auth.loggedIn ?? false;
       report.authDetail = auth.detail ?? auth.reason ?? null;
       report.model = auth.model ?? report.model;
@@ -10945,7 +11745,7 @@ async function probeProviderHealth({
         prompt: `Reply with ${HEALTH_SENTINEL} only.`,
         model,
         defaultModel: model ? null : readCachedProviderModel(workspaceRoot, provider),
-        cwd: process5.cwd(),
+        cwd: process6.cwd(),
         timeout,
         kind: "health",
         measurementScope: "request",
@@ -11017,7 +11817,7 @@ async function runHealth(rawArgs) {
     valueOptions: ["provider", "model", "timeout-ms"],
     aliasMap: { m: "model" }
   });
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   const timeoutMs = options["timeout-ms"] ? Number.parseInt(options["timeout-ms"], 10) : TIMEOUTS_MS.health;
   const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : TIMEOUTS_MS.health;
   const hasSingleProvider = Boolean(options.provider || positionals[0]);
@@ -11105,7 +11905,7 @@ async function runHealth(rawArgs) {
   }));
   const payload = buildHealthPayload(results);
   if (!payload.anyHealthy) {
-    process5.exitCode = 2;
+    process6.exitCode = 2;
   }
   output(
     options.json ? payload : [
@@ -11127,7 +11927,7 @@ function parsePromptExecution(rawArgs, kind) {
     positionals
   });
   validateEffort(options.effort);
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   const userPrompt = remainingPositionals.join(" ").trim();
   if (!userPrompt) {
     throw new Error(`Missing prompt text for ${kind}.`);
@@ -11144,7 +11944,7 @@ function parsePromptExecution(rawArgs, kind) {
       userPrompt,
       model: options.model || null,
       defaultModel: cachedDefaultModel,
-      cwd: process5.cwd(),
+      cwd: process6.cwd(),
       timeout: resolveTimeoutMs(provider, kind, {
         model: options.model || null,
         defaultModel: cachedDefaultModel
@@ -11194,7 +11994,7 @@ function buildStopReviewGateExecution(rawArgs) {
   if (!prompt) {
     throw new Error("Missing prompt text for stop-review-gate.");
   }
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   const defaultModel = readCachedProviderModel(workspaceRoot, provider);
   return {
     options,
@@ -11209,14 +12009,14 @@ function buildStopReviewGateExecution(rawArgs) {
       userPrompt: "stop-time review gate",
       model: null,
       defaultModel,
-      cwd: process5.cwd(),
+      cwd: process6.cwd(),
       timeout: resolveTimeoutMs(provider, "review", { defaultModel }),
       meta: { stopReviewGate: true },
       jobMeta: {},
       measurementScope: "request",
       runtimeOptions: buildReviewRuntimeOptions({
         provider,
-        cwd: process5.cwd()
+        cwd: process6.cwd()
       })
     }
   };
@@ -11236,11 +12036,11 @@ function buildReviewExecution(rawArgs, { adversarial }) {
     positionals
   });
   assertReviewProviderSupported(provider);
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   const focus = remainingPositionals.join(" ").trim();
   const maxDiffBytes = parseMaxDiffBytes(options["max-diff-bytes"]);
   const reviewContext = collectReviewContext({
-    cwd: process5.cwd(),
+    cwd: process6.cwd(),
     scope: options.scope,
     baseRef: options.base || null,
     maxDiffBytes
@@ -11277,7 +12077,7 @@ function buildReviewExecution(rawArgs, { adversarial }) {
       userPrompt: focus || `${adversarial ? "adversarial " : ""}review ${reviewContext.scope}`,
       model: options.model || null,
       defaultModel: readCachedProviderModel(workspaceRoot, provider),
-      cwd: process5.cwd(),
+      cwd: process6.cwd(),
       timeout: resolveTimeoutMs(provider, adversarial ? "adversarial-review" : "review", {
         model: options.model || null,
         defaultModel: readCachedProviderModel(workspaceRoot, provider)
@@ -11298,7 +12098,7 @@ function buildReviewExecution(rawArgs, { adversarial }) {
       measurementScope: "request",
       runtimeOptions: buildReviewRuntimeOptions({
         provider,
-        cwd: process5.cwd()
+        cwd: process6.cwd()
       })
     }
   };
@@ -11326,7 +12126,7 @@ async function runReviewCommand(rawArgs, { adversarial }) {
       );
       return;
     } finally {
-      cleanupRuntimeOptions(execution.runtimeOptions);
+      cleanupRuntimeOptions2(execution.runtimeOptions);
     }
   }
   const { background } = parseExecutionMode(options);
@@ -11341,7 +12141,7 @@ async function runStatus(rawArgs) {
     booleanOptions: ["json", "all", "wait"],
     valueOptions: ["job", "for", "timeout-ms"]
   });
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   const reference = options.job || positionals[0] || null;
   const selectorOptions = options.job ? { grammar: "explicit" } : void 0;
   const timeoutMs = options.wait ? parseStatusTimeoutMs(options["timeout-ms"]) : void 0;
@@ -11350,7 +12150,7 @@ async function runStatus(rawArgs) {
       timeoutMs
     });
     if (waited.waitTimedOut) {
-      process5.exitCode = 2;
+      process6.exitCode = 2;
     }
     if (options.json) {
       output(waited, true);
@@ -11366,7 +12166,7 @@ async function runStatus(rawArgs) {
       for: options.for || "terminal"
     });
     if (waited.waitTimedOut) {
-      process5.exitCode = 2;
+      process6.exitCode = 2;
     }
     if (waited.error && RUN_CONTEXT.outputMode === "json-v2") {
       throw cliError("job_not_found", `Job '${target.jobId}' was not found while waiting.`, {
@@ -11407,7 +12207,7 @@ async function runResult(rawArgs) {
     booleanOptions: ["json"],
     valueOptions: ["job"]
   });
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   const job = resolveJobSelector(
     workspaceRoot,
     options.job || positionals[0] || "latest-terminal",
@@ -11435,7 +12235,7 @@ async function runCancel(rawArgs) {
     booleanOptions: ["json"],
     valueOptions: ["job"]
   });
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   const selector = options.job || positionals[0] || "latest-active";
   let job;
   try {
@@ -11444,11 +12244,11 @@ async function runCancel(rawArgs) {
     if (RUN_CONTEXT.outputMode === "json-v2" || error.code === "ambiguous_selector") throw error;
     if (options.json) {
       output({ cancelled: false, reason: "not_found", jobId: positionals[0] || null }, true);
-      process5.exitCode = 1;
+      process6.exitCode = 1;
       return;
     }
     output(positionals[0] ? `Job ${positionals[0]} not found.` : "No active job found to cancel.", false);
-    process5.exitCode = 1;
+    process6.exitCode = 1;
     return;
   }
   const report = await cancelJob(workspaceRoot, job.jobId);
@@ -11459,7 +12259,7 @@ async function runCancel(rawArgs) {
     }
     if (report.reason === "not_cancellable") {
       output(report, true);
-      process5.exitCode = 4;
+      process6.exitCode = 4;
       return;
     }
     throw new PolycliCliError({
@@ -11475,10 +12275,10 @@ async function runCancel(rawArgs) {
     output(`Cancelled job ${report.jobId}.`, false);
   } else if (report.reason === "not_cancellable") {
     output(`Job ${report.jobId} is already ${job.status}.`, false);
-    process5.exitCode = 4;
+    process6.exitCode = 4;
   } else {
     output(`Failed to cancel ${report.jobId}: ${report.error || report.reason}`, false);
-    process5.exitCode = 5;
+    process6.exitCode = 5;
   }
 }
 function formatMetric(metric) {
@@ -11544,7 +12344,7 @@ async function runTiming(rawArgs) {
     booleanOptions: ["all", "json"],
     valueOptions: ["provider", "history"]
   });
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   const provider = options.provider ? resolveProvider({ provider: options.provider }).provider : null;
   const limit = parseHistoryLimit(options.history, { all: options.all });
   const records = listTimingRecords(workspaceRoot, {
@@ -11578,6 +12378,10 @@ async function runJobWorker(rawArgs) {
   const { workspaceRoot, execution, jobId, runContext } = payload;
   const current = claimBackgroundWorker(workspaceRoot, jobId);
   if (!current) {
+    if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
+      removeJobConfigFile(workspaceRoot, jobId);
+      removeJobStartFailureFile(workspaceRoot, jobId);
+    }
     return;
   }
   if (runContext?.runId) {
@@ -11611,10 +12415,6 @@ async function runJobWorker(rawArgs) {
         appendPreview(current.logFile, execution.provider, event);
       }
     });
-    if (result.timing) {
-      appendTimingRecord(workspaceRoot, result.timing);
-    }
-    cacheProviderModel(workspaceRoot, execution.provider, result.model);
     const compactResult = compactProviderResult(result);
     const sessionArtifactPath = resolveSessionArtifactPath(
       execution.provider,
@@ -11622,9 +12422,13 @@ async function runJobWorker(rawArgs) {
       execution.cwd
     );
     const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
-      if (!latest || latest.status === "cancelled" || hasTerminalJobEnvelope(storedEnvelope)) {
+      if (!latest || latest.status === "cancelled" || blocksBackgroundWorkerCommit(storedEnvelope)) {
         return null;
       }
+      if (result.timing) {
+        appendTimingRecord(workspaceRoot, result.timing);
+      }
+      cacheProviderModel(workspaceRoot, execution.provider, result.model);
       const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
       const finishedJob = {
         ...latest,
@@ -11690,19 +12494,22 @@ async function runJobWorker(rawArgs) {
         // intent instead of exposing a terminal state with only half of its ledger pair.
         beforeStateCommit() {
           ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+          removeJobStartFailureFile(workspaceRoot, jobId);
         }
       };
     });
     if (!write.written) {
       if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
         removeJobConfigFile(workspaceRoot, jobId);
+        removeJobStartFailureFile(workspaceRoot, jobId);
       }
       return;
     }
     removeJobConfigFile(workspaceRoot, jobId);
+    removeJobStartFailureFile(workspaceRoot, jobId);
   } catch (error) {
     const write = updateJobAtomically(workspaceRoot, jobId, (latest, storedEnvelope) => {
-      if (!latest || latest.status === "cancelled" || hasTerminalJobEnvelope(storedEnvelope)) {
+      if (!latest || latest.status === "cancelled" || blocksBackgroundWorkerCommit(storedEnvelope)) {
         return null;
       }
       const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -11751,20 +12558,23 @@ async function runJobWorker(rawArgs) {
         },
         beforeStateCommit() {
           ensureTerminalRunEventsForContext(workspaceRoot, terminal);
+          removeJobStartFailureFile(workspaceRoot, jobId);
         }
       };
     });
     if (!write.written) {
       if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
         removeJobConfigFile(workspaceRoot, jobId);
+        removeJobStartFailureFile(workspaceRoot, jobId);
       }
       return;
     }
     removeJobConfigFile(workspaceRoot, jobId);
+    removeJobStartFailureFile(workspaceRoot, jobId);
     throw error;
   } finally {
     if (!shouldRetainJobConfig(workspaceRoot, jobId)) {
-      cleanupRuntimeOptions(execution.runtimeOptions);
+      cleanupRuntimeOptions2(execution.runtimeOptions);
     }
   }
 }
@@ -11782,7 +12592,7 @@ function formatDebugRunsTable(runs) {
   return lines.join("\n");
 }
 async function readDebugLedger({ raw = false } = {}) {
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   refreshJobsForLedgerRecovery(workspaceRoot);
   const events = await readRunLedgerEvents(workspaceRoot, { raw });
   return { workspaceRoot, events };
@@ -11792,7 +12602,7 @@ async function runDebugTail(rawArgs) {
     booleanOptions: ["json", "wait"],
     valueOptions: ["after", "limit", "timeout-ms"]
   });
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   const result = await tailRunLedgerEvents(workspaceRoot, {
     runId: positionals[0] || null,
     after: options.after || null,
@@ -11800,7 +12610,7 @@ async function runDebugTail(rawArgs) {
     wait: Boolean(options.wait),
     timeoutMs: options["timeout-ms"] == null ? void 0 : Number(options["timeout-ms"])
   });
-  if (result.waitTimedOut) process5.exitCode = 2;
+  if (result.waitTimedOut) process6.exitCode = 2;
   if (options.json) {
     output(result, true);
     return;
@@ -11854,11 +12664,11 @@ function renderSessionsList(recorded, nonPurgeable = []) {
   } else {
     lines.push("Recorded upstream sessions (this workspace):");
     for (const rec of recorded) {
-      const exists = fs9.existsSync(rec.sessionArtifactPath);
+      const exists = fs10.existsSync(rec.sessionArtifactPath);
       let size = "";
       if (exists) {
         try {
-          size = ` ${formatBytes(fs9.lstatSync(rec.sessionArtifactPath).size)}`;
+          size = ` ${formatBytes(fs10.lstatSync(rec.sessionArtifactPath).size)}`;
         } catch {
           size = "";
         }
@@ -11896,7 +12706,7 @@ function renderPurgePlan(plan, summary, nonPurgeable = []) {
   return lines.join("\n");
 }
 async function readSessionLedger() {
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   const events = await readRunLedgerEvents(workspaceRoot);
   const recorded = collectRecordedArtifacts(events);
   const nonPurgeable = collectNonPurgeableSessions(events);
@@ -11975,10 +12785,10 @@ function commandResolutionError(fullArgs, resolution, hostSurface) {
   );
 }
 async function main() {
-  const fullArgs = process5.argv.slice(2);
+  const fullArgs = process6.argv.slice(2);
   RUN_CONTEXT.invocationId = `inv_${randomUUID3().replaceAll("-", "").slice(0, 20)}`;
   RUN_CONTEXT.authoritativeJsonWritten = false;
-  RUN_CONTEXT.hostSurface = resolveHostSurface(process5.env, import.meta.url);
+  RUN_CONTEXT.hostSurface = resolveHostSurface(process6.env, import.meta.url);
   RUN_CONTEXT.rawArgs = fullArgs;
   const outputModes = scanOutputModes(fullArgs);
   const command = fullArgs[0];
@@ -12023,12 +12833,12 @@ async function main() {
   }
   if (definition2.runTracked) {
     try {
-      RUN_CONTEXT.runId = resolveRunId({ runId: explicitRunId }, process5.env);
+      RUN_CONTEXT.runId = resolveRunId({ runId: explicitRunId }, process6.env);
     } catch (error) {
       if (!/^Invalid run id:/.test(error?.message || "")) throw error;
       const typed = cliError("invalid_argument", error.message, {
         argument: "--run-id",
-        value: explicitRunId || process5.env.POLYCLI_RUN_ID || null
+        value: explicitRunId || process6.env.POLYCLI_RUN_ID || null
       });
       typed.legacyCode = "error";
       throw typed;
@@ -12036,15 +12846,15 @@ async function main() {
   } else {
     RUN_CONTEXT.runId = null;
   }
-  RUN_CONTEXT.workspaceSlug = computeWorkspaceSlug(resolveWorkspaceRoot(process5.cwd()));
+  RUN_CONTEXT.workspaceSlug = computeWorkspaceSlug(resolveWorkspaceRoot(process6.cwd()));
   if (!RUN_CONTEXT.runId) {
     return dispatchCommand(definition2.id, rawArgs);
   }
-  const workspaceRoot = resolveWorkspaceRoot(process5.cwd());
+  const workspaceRoot = resolveWorkspaceRoot(process6.cwd());
   await recordRunEvent(workspaceRoot, { phase: "run_started", status: "started" });
   try {
     const result = await dispatchCommand(definition2.id, rawArgs);
-    const failed = process5.exitCode != null && process5.exitCode !== 0;
+    const failed = process6.exitCode != null && process6.exitCode !== 0;
     try {
       await recordRunEvent(workspaceRoot, {
         phase: "run_summary",

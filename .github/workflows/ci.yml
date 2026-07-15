@@ -32,11 +32,11 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=moderate
 
-      - name: Run tests
-        run: npm test
-
       - name: Validate generated bundles
         run: npm run validate:bundles
+
+      - name: Run tests
+        run: npm test
 
       - name: Validate fixture metadata
         run: npm run validate:fixtures

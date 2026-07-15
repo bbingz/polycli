@@ -16,17 +16,15 @@ const ENTRY = path.join(REPO_ROOT, "plugins/polycli/scripts/polycli-companion.mj
 const TERMINAL_PACKAGE = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, "packages/polycli-terminal/package.json"), "utf8"),
 );
-const TERMINAL_SURFACE_TARGET = path.join(
-  REPO_ROOT,
-  "packages/polycli-terminal/lib/command-surface.generated.mjs",
-);
-const TARGETS = [
+export const TERMINAL_COMMAND_SURFACE_TARGET =
+  "packages/polycli-terminal/lib/command-surface.generated.mjs";
+export const PLUGIN_BUNDLE_TARGETS = Object.freeze([
   "plugins/polycli/scripts/polycli-companion.bundle.mjs",
   "plugins/polycli-codex/scripts/polycli-companion.bundle.mjs",
   "plugins/polycli-copilot/scripts/polycli-companion.bundle.mjs",
   "plugins/polycli-opencode/scripts/polycli-companion.bundle.mjs",
   "packages/polycli-terminal/bin/polycli-companion.bundle.mjs",
-];
+]);
 
 export function renderTerminalCommandSurface() {
   const definitions = listCommandDefinitions({ hostSurface: "terminal" });
@@ -44,25 +42,55 @@ export function renderTerminalCommandSurface() {
     + `}\n`;
 }
 
-function generateTerminalCommandSurface() {
-  fs.writeFileSync(TERMINAL_SURFACE_TARGET, renderTerminalCommandSurface(), "utf8");
-}
-
-async function main() {
-  generateTerminalCommandSurface();
-  for (const relativeTarget of TARGETS) {
-    await build({
-      entryPoints: [ENTRY],
-      outfile: path.join(REPO_ROOT, relativeTarget),
+export async function renderExpectedPluginArtifacts({
+  root = REPO_ROOT,
+  entry = root === REPO_ROOT ? ENTRY : path.join(root, "plugins/polycli/scripts/polycli-companion.mjs"),
+  targets = PLUGIN_BUNDLE_TARGETS,
+  generatedSurface = {
+    relativePath: TERMINAL_COMMAND_SURFACE_TARGET,
+    contents: Buffer.from(renderTerminalCommandSurface()),
+  },
+  version = TERMINAL_PACKAGE.version,
+} = {}) {
+  const artifacts = new Map();
+  for (const relativeTarget of targets) {
+    const outfile = path.join(root, relativeTarget);
+    const result = await build({
+      entryPoints: [entry],
+      outfile,
       bundle: true,
       format: "esm",
       platform: "node",
       target: "node20",
       legalComments: "none",
       define: {
-        __POLYCLI_VERSION__: JSON.stringify(TERMINAL_PACKAGE.version),
+        __POLYCLI_VERSION__: JSON.stringify(version),
       },
+      write: false,
     });
+    if (result.outputFiles.length !== 1) {
+      throw new Error(`expected one rendered output for ${relativeTarget}, got ${result.outputFiles.length}`);
+    }
+    artifacts.set(relativeTarget, Buffer.from(result.outputFiles[0].contents));
+  }
+
+  if (generatedSurface) {
+    artifacts.set(
+      generatedSurface.relativePath,
+      Buffer.isBuffer(generatedSurface.contents)
+        ? Buffer.from(generatedSurface.contents)
+        : Buffer.from(generatedSurface.contents, "utf8"),
+    );
+  }
+
+  return artifacts;
+}
+
+async function main() {
+  const artifacts = await renderExpectedPluginArtifacts();
+  for (const [relativeTarget, bytes] of artifacts) {
+    fs.mkdirSync(path.dirname(path.join(REPO_ROOT, relativeTarget)), { recursive: true });
+    fs.writeFileSync(path.join(REPO_ROOT, relativeTarget), bytes);
   }
 }
 
