@@ -82,8 +82,8 @@ npm run release:check
 
 `release:check` includes:
 
-- `npm test`, which rebuilds plugin bundles before running package, runtime, plugin, and release-script tests
-- `npm run validate:bundles`
+- `npm run validate:bundles`, a read-only source-derived freshness gate that runs before any in-place build
+- `npm test`, which then rebuilds plugin bundles before running package, runtime, plugin, and release-script tests
 - `npm run validate:fixtures`
 - `npm run check:fixture-freshness -- --strict`
 - `npm run validate:manifests`
@@ -175,4 +175,4 @@ npm install -g @bbingz/polycli
 polycli health --json
 ```
 
-The terminal package re-uses the same `polycli-companion.bundle.mjs` that every host adapter ships, so `npm run build:plugins` must succeed before publishing — `validate:bundles` confirms the five companion bundle copies are byte-identical.
+The terminal package re-uses the same `polycli-companion.bundle.mjs` that every host adapter ships. Before publishing, `validate:bundles` independently renders the expected outputs from source without writing them and compares all five bundle copies plus generated terminal metadata byte-for-byte; `npm run build:plugins` is the only in-place writer.

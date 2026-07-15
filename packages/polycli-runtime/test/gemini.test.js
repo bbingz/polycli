@@ -94,7 +94,7 @@ test("buildGeminiInvocation switches to stdin by UTF-8 byte length", () => {
 
 test("buildGeminiInvocation keeps byte-small CJK prompts inline", () => {
   const prompt = "你".repeat(30_000);
-  const invocation = buildGeminiInvocation({ prompt });
+  const invocation = buildGeminiInvocation({ prompt, env: {} });
 
   assert.equal(Buffer.byteLength(prompt, "utf8") <= 100_000, true);
   assert.equal(invocation.useStdin, false);
