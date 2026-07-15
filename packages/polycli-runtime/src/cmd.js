@@ -189,7 +189,7 @@ export function runCmdPromptStreaming({
       model: model ?? defaultModel ?? DEFAULT_CMD_MODEL,
       ok: result.ok && hasVisibleText,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "cmd" }),
+      errorCode: result.errorCode ?? classifyProviderFailure(error, { provider: "cmd" }),
     };
   });
 }

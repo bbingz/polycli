@@ -367,7 +367,7 @@ export function runQwenPromptStreaming({
     cwd,
     env,
     timeout,
-    detached: background,
+    detached: background ? true : undefined,
     unref: background,
     stdio: ["ignore", "pipe", "pipe"],
     spawnImpl,
@@ -386,12 +386,13 @@ export function runQwenPromptStreaming({
     });
     const hasVisibleText = Boolean(parsed.response.trim());
     const resultEventError = extractQwenResultError(parsed.resultEvent);
-    const error = result.ok && !resultEventError
+    const commonFailure = !result.ok && result.errorCode ? result.error : null;
+    const error = commonFailure || (result.ok && !resultEventError
       ? (hasVisibleText ? null : (resultEventError || "qwen produced no visible text"))
-      : (resultEventError || result.error);
-    const errorCode = resultEventError
+      : (resultEventError || result.error));
+    const errorCode = result.errorCode ?? (resultEventError
       ? (classifyProviderFailure(resultEventError, { provider: "qwen" }) || "provider_error")
-      : classifyProviderFailure(error, { provider: "qwen" });
+      : classifyProviderFailure(error, { provider: "qwen" }));
     return {
       ...result,
       ...parsed,

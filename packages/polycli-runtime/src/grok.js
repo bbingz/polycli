@@ -288,14 +288,17 @@ export function runGrokPromptStreaming({
     const ok = result.ok && hasVisibleText && !parsed.providerError && !stopReasonError;
     const error = ok
       ? null
-      : (parsed.providerError || stopReasonError || (result.ok ? "grok produced no visible text" : result.error));
+      : ((!result.ok && result.errorCode ? result.error : null)
+        || parsed.providerError
+        || stopReasonError
+        || (result.ok ? "grok produced no visible text" : result.error));
     return {
       ...result,
       ...parsed,
       model: model ?? defaultModel ?? DEFAULT_GROK_MODEL,
       ok,
       error,
-      errorCode: classifyProviderFailure(error, { provider: "grok" }),
+      errorCode: result.errorCode ?? classifyProviderFailure(error, { provider: "grok" }),
     };
   });
 }

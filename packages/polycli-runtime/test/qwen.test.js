@@ -505,6 +505,40 @@ test("runQwenPromptStreaming returns a structured failure on spawn error", async
   assert.match(result.error, /ENOENT/);
 });
 
+test("runQwenPromptStreaming preserves lifecycle failure facts and the default POSIX process group", {
+  skip: process.platform === "win32",
+}, async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { write() {}, end() {}, on() {} };
+  child.unref = () => {};
+  child.kill = (signal) => {
+    queueMicrotask(() => child.emit("close", null, signal));
+  };
+  let spawnOptions;
+
+  const result = await runQwenPromptStreaming({
+    prompt: "ping",
+    timeout: 5,
+    spawnImpl(_bin, _args, options) {
+      spawnOptions = options;
+      queueMicrotask(() => {
+        child.stdout.emit("data", '{"type":"result","subtype":"error","is_error":true,"result":"provider warning"}\n');
+        child.stderr.emit("data", "ordinary stderr\n");
+      });
+      return child;
+    },
+  });
+
+  assert.equal(spawnOptions.detached, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "process timed out");
+  assert.equal(result.errorCode, "timeout");
+  assert.equal(result.timedOut, true);
+  assert.equal(result.stderr, "ordinary stderr\n");
+});
+
 test("runQwenPromptStreaming passes explicit model to the qwen invocation", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();

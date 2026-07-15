@@ -143,6 +143,26 @@ test("runProviderPrompt attaches failure diagnostics to timing", async () => {
   assert.equal(result.timing.terminationReason, "timeout");
 });
 
+test("runProviderPrompt retains a canonical runtime errorCode in timing diagnostics", async () => {
+  const result = await runProviderPrompt({
+    provider: "qwen",
+    prompt: "ping",
+    cwd: process.cwd(),
+    runtime: {
+      runPrompt: async () => ({
+        ok: false,
+        error: "ordinary provider stderr",
+        timedOut: true,
+        errorCode: "timeout",
+      }),
+    },
+  });
+
+  assert.equal(result.errorCode, "timeout");
+  assert.equal(result.timing.outcome, "timeout");
+  assert.equal(result.timing.errorCode, "timeout");
+});
+
 test("runProviderPrompt preserves session persistence capability when a run omits sessionId", async () => {
   const result = await runProviderPrompt({
     provider: "gemini",

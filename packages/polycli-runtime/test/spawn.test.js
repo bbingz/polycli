@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawn as nodeSpawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import process from "node:process";
 
@@ -16,6 +17,26 @@ function createFakeChild() {
   };
   child.kill = () => {};
   return child;
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function waitForProcessExit(pid, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return !isProcessAlive(pid);
 }
 
 test("spawnStreamingCommand resolves a structured failure when spawn emits error", async () => {
@@ -36,6 +57,116 @@ test("spawnStreamingCommand resolves a structured failure when spawn emits error
   const result = await resultPromise;
   assert.equal(result.ok, false);
   assert.match(result.error, /ENOENT/);
+});
+
+test("spawnStreamingCommand preserves E2BIG as a canonical structured failure", async () => {
+  const child = createFakeChild();
+  const resultPromise = spawnStreamingCommand({
+    bin: "oversized-argv-bin",
+    args: [],
+    spawnImpl() {
+      queueMicrotask(() => {
+        const error = new Error("spawn oversized-argv-bin E2BIG");
+        error.code = "E2BIG";
+        child.emit("error", error);
+      });
+      return child;
+    },
+  });
+
+  const result = await resultPromise;
+  assert.equal(result.ok, false);
+  assert.equal(result.spawnErrorCode, "E2BIG");
+  assert.equal(result.errorCode, "argument_list_too_long");
+});
+
+test("spawnStreamingCommand defaults provider children to their own POSIX process group", {
+  skip: process.platform === "win32",
+}, async () => {
+  const child = createFakeChild();
+  let spawnOptions;
+
+  const result = await spawnStreamingCommand({
+    bin: "provider-bin",
+    args: [],
+    spawnImpl(_bin, _args, options) {
+      spawnOptions = options;
+      queueMicrotask(() => child.emit("close", 0, null));
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(spawnOptions.detached, true);
+});
+
+test("spawnStreamingCommand timeout removes a real local descendant process tree", {
+  skip: process.platform === "win32",
+}, async () => {
+  const descendantScript = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);";
+  const providerScript = `
+    const { spawn } = require("node:child_process");
+    const descendant = spawn(process.execPath, ["-e", ${JSON.stringify(descendantScript)}], {
+      stdio: "ignore",
+    });
+    process.stdout.write(String(descendant.pid) + "\\n");
+    process.on("SIGTERM", () => {});
+    setInterval(() => {}, 1000);
+  `;
+  let rootPid = null;
+  let descendantPid = null;
+
+  try {
+    const result = await spawnStreamingCommand({
+      bin: process.execPath,
+      args: ["-e", providerScript],
+      timeout: 150,
+      killGraceMs: 30,
+      spawnImpl(bin, args, options) {
+        const child = nodeSpawn(bin, args, options);
+        rootPid = child.pid;
+        return child;
+      },
+      onStdoutLine(line) {
+        if (/^\d+$/.test(line)) {
+          descendantPid = Number(line);
+        }
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, "timeout");
+    assert.equal(Number.isInteger(descendantPid), true);
+    assert.equal(await waitForProcessExit(descendantPid), true, `descendant ${descendantPid} survived`);
+  } finally {
+    if (Number.isInteger(rootPid) && rootPid > 0) {
+      try { process.kill(-rootPid, "SIGKILL"); } catch (error) {
+        if (error?.code !== "ESRCH") throw error;
+      }
+    }
+    if (Number.isInteger(descendantPid) && descendantPid > 0 && isProcessAlive(descendantPid)) {
+      try { process.kill(descendantPid, "SIGKILL"); } catch (error) {
+        if (error?.code !== "ESRCH") throw error;
+      }
+      await waitForProcessExit(descendantPid);
+    }
+  }
+});
+
+test("spawnStreamingCommand formats a nonzero exit when stderr is empty", async () => {
+  const child = createFakeChild();
+
+  const result = await spawnStreamingCommand({
+    bin: "failing-bin",
+    args: [],
+    spawnImpl() {
+      queueMicrotask(() => child.emit("close", 2, null));
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "process exited with code 2");
 });
 
 test("spawnStreamingCommand escalates timed out detached children to SIGKILL via process group", async () => {
@@ -130,6 +261,123 @@ test("spawnStreamingCommand supports AbortSignal-driven termination", async () =
   assert.equal(result.ok, false);
   assert.equal(result.error, "process aborted");
   assert.deepEqual(calls, ["SIGTERM"]);
+});
+
+test("spawnStreamingCommand settles after kill errors even when close never arrives", async () => {
+  const child = createFakeChild();
+  const calls = [];
+  child.kill = (signal) => {
+    calls.push(signal);
+    const error = new Error(`kill ${signal} EPERM`);
+    error.code = "EPERM";
+    throw error;
+  };
+
+  const pending = Symbol("pending");
+  const result = await Promise.race([
+    spawnStreamingCommand({
+      bin: "unkillable-bin",
+      args: [],
+      timeout: 5,
+      killGraceMs: 5,
+      spawnImpl() {
+        return child;
+      },
+    }),
+    new Promise((resolve) => setTimeout(() => resolve(pending), 100)),
+  ]);
+
+  assert.notEqual(result, pending, "spawn result must not depend on close after termination");
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, "timeout");
+  assert.equal(result.closeTimedOut, true);
+  assert.deepEqual(calls, ["SIGTERM", "SIGKILL"]);
+  assert.deepEqual(
+    result.terminationErrors.map(({ signal, code }) => ({ signal, code })),
+    [
+      { signal: "SIGTERM", code: "EPERM" },
+      { signal: "SIGKILL", code: "EPERM" },
+    ]
+  );
+});
+
+test("spawnStreamingCommand keeps timeout classification ahead of stderr diagnostics", async () => {
+  const child = createFakeChild();
+  child.kill = (signal) => {
+    queueMicrotask(() => child.emit("close", null, signal));
+  };
+
+  const result = await spawnStreamingCommand({
+    bin: "warning-before-timeout-bin",
+    args: [],
+    timeout: 5,
+    spawnImpl() {
+      queueMicrotask(() => child.stderr.emit("data", Buffer.from("ordinary warning\n")));
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.timedOut, true);
+  assert.equal(result.error, "process timed out");
+  assert.equal(result.errorCode, "timeout");
+  assert.equal(result.stderr, "ordinary warning\n");
+});
+
+test("spawnStreamingCommand bounds aggregate stdout capture across complete lines", async () => {
+  const child = createFakeChild();
+  child.kill = (signal) => {
+    queueMicrotask(() => child.emit("close", null, signal));
+  };
+
+  const result = await spawnStreamingCommand({
+    bin: "chatty-stdout-bin",
+    args: [],
+    maxCaptureBytes: 16,
+    spawnImpl() {
+      queueMicrotask(() => {
+        for (let index = 0; index < 10_000; index += 1) {
+          child.stdout.emit("data", Buffer.from("x\n"));
+        }
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, "output_overflow");
+  assert.equal(result.stdoutTruncated, true);
+  assert.equal(result.stdoutBytes > 16, true);
+  assert.equal(Buffer.byteLength(result.stdout), 16);
+});
+
+test("spawnStreamingCommand bounds aggregate stderr capture independently", async () => {
+  const child = createFakeChild();
+  child.kill = (signal) => {
+    queueMicrotask(() => child.emit("close", null, signal));
+  };
+
+  const result = await spawnStreamingCommand({
+    bin: "chatty-stderr-bin",
+    args: [],
+    maxCaptureBytes: 16,
+    spawnImpl() {
+      queueMicrotask(() => {
+        for (let index = 0; index < 10_000; index += 1) {
+          child.stderr.emit("data", Buffer.from("e\n"));
+        }
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, "output_overflow");
+  assert.equal(result.stderrTruncated, true);
+  assert.equal(result.stderrBytes > 16, true);
+  assert.equal(Buffer.byteLength(result.stderr), 16);
 });
 
 test("spawnStreamingCommand ignores stdout emitted after settle", async () => {
