@@ -4,7 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { startBackgroundWorker } from "../lib/background-start.mjs";
+import {
+  recordBackgroundStartFailure,
+  startBackgroundWorker,
+} from "../lib/background-start.mjs";
 import { refreshJob } from "../lib/job-control.mjs";
 import { readRunLedgerEvents } from "../lib/run-ledger.mjs";
 import {
@@ -18,6 +21,8 @@ import {
   resolveStateDir,
   resolveStateFile,
   upsertJob,
+  writeJobFile,
+  writeJobStartFailureFile,
 } from "../lib/state.mjs";
 
 async function withBackgroundJob(name, callback) {
@@ -290,5 +295,40 @@ test("pre-envelope state-lock failure leaves a private safe sidecar that refresh
       ["attempt_result", "provider_decision"].includes(event.phase)
     );
     assert.deepEqual(terminal.map((event) => event.phase), ["attempt_result", "provider_decision"]);
+  });
+});
+
+test("a late start-failure finalizer removes its sidecar without overwriting a terminal winner", async () => {
+  await withBackgroundJob("terminal-winner", async (fixture) => {
+    const finishedJob = {
+      ...getJob(fixture.workspaceRoot, fixture.jobId),
+      status: "completed",
+      pid: null,
+      finishedAt: new Date().toISOString(),
+    };
+    upsertJob(fixture.workspaceRoot, finishedJob);
+    writeJobFile(fixture.workspaceRoot, fixture.jobId, {
+      job: finishedJob,
+      result: { ok: true, response: "winner" },
+    });
+    writeJobStartFailureFile(fixture.workspaceRoot, fixture.jobId, {
+      version: 1,
+      jobId: fixture.jobId,
+      error: "stale failure",
+    });
+
+    const report = recordBackgroundStartFailure(
+      fixture.workspaceRoot,
+      fixture.jobId,
+      fixture.execution,
+      fixture.runContext,
+      new Error("late async child error"),
+    );
+
+    assert.equal(report.written, false);
+    assert.equal(fs.existsSync(resolveJobStartFailureFile(fixture.workspaceRoot, fixture.jobId)), false);
+    const winner = readJobFile(resolveJobFile(fixture.workspaceRoot, fixture.jobId));
+    assert.equal(winner.job.status, "completed");
+    assert.equal(winner.result.response, "winner");
   });
 });

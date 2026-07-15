@@ -238,6 +238,7 @@ test("SessionEnd signals only a worker whose command line matches its retained c
   await withPluginData(async () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "polycli-workspace-"));
     const terminated = [];
+    const observedDeadlines = [];
     try {
       writeWorkspaceState(workspaceRoot, {
         version: 2,
@@ -252,19 +253,24 @@ test("SessionEnd signals only a worker whose command line matches its retained c
 
       const alive = new Map([[4242, true], [4343, true]]);
       await cleanupSessionJobs(workspaceRoot, "ended", {
-        isExpectedWorkerProcess(pid) {
+        isExpectedWorkerProcess(pid, _configFile, options) {
+          observedDeadlines.push(options?.deadlineAt);
           return pid === 4343;
         },
         isWorkerAlive(pid) {
           return alive.get(pid) === true;
         },
-        async terminateProcess(pid) {
+        async terminateProcess(pid, options) {
           terminated.push(pid);
+          observedDeadlines.push(options?.deadlineAt);
           alive.set(pid, false);
         },
       });
 
       assert.deepEqual(terminated, [4343]);
+      assert.equal(observedDeadlines.length, 2);
+      assert.ok(observedDeadlines.every((deadline) => Number.isFinite(deadline)));
+      assert.equal(new Set(observedDeadlines).size, 1, "identity and termination must share one hook deadline");
       const state = JSON.parse(fs.readFileSync(resolveStateFile(workspaceRoot), "utf8"));
       assert.deepEqual(
         state.jobs.map((job) => [job.jobId, job.status]).sort(),

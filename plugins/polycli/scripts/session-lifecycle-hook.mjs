@@ -56,12 +56,14 @@ export async function cleanupSessionJobs(cwd, sessionId, {
   isWorkerAlive,
   budgetMs = SESSION_END_BUDGET_MS,
 } = {}) {
+  const cleanupStartedAt = Date.now();
   if (!cwd || !sessionId) return [];
   if (!Number.isFinite(budgetMs) || budgetMs <= 0) {
     throw new TypeError("budgetMs must be a positive number");
   }
 
-  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const deadlineAt = cleanupStartedAt + budgetMs;
+  const workspaceRoot = resolveWorkspaceRoot(cwd, { deadlineAt });
   const stateFile = resolveStateFile(workspaceRoot);
   if (!fs.existsSync(stateFile)) return [];
 
@@ -73,7 +75,7 @@ export async function cleanupSessionJobs(cwd, sessionId, {
       && jobHostSessionId(job) === sessionId
   );
   const cancelOptions = {
-    deadlineAt: Date.now() + budgetMs,
+    deadlineAt,
     ...(verifyWorker ? { isExpectedWorker: verifyWorker } : {}),
     ...(terminateWorker ? { terminate: terminateWorker } : {}),
     ...(isWorkerAlive ? { isWorkerAlive } : {}),
