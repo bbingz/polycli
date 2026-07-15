@@ -6,6 +6,12 @@ Separate from `docs/release.md` (release-focused) and `docs/archive/session-memo
 
 ---
 
+## 2026-07-15 — Codex — release: v0.6.31 published
+
+- Published and registry-verified `@bbingz/polycli@0.6.31` (`latest`, registry time `2026-07-15T14:37:53.706Z`, shasum `57d0f77811767c4310623af03f27af82375abae8`), `@bbingz/polycli-utils@1.0.5` (`2026-07-15T14:37:22.557Z`, `99df508a6bffe601e79569927bedf4016d3d471f`), and `@bbingz/polycli-opencode@0.6.31` (`2026-07-15T14:38:07.324Z`, `65c990f89df099bb0a1a95104a0a8400abb0f6ca`). `@bbingz/polycli-timing@1.0.2` was unchanged and not republished.
+- Created lightweight tag `v0.6.31` at `a70eb093bc7892e2f6b653ed29ca8bba5d66489b` and published https://github.com/bbingz/polycli/releases/tag/v0.6.31 (`publishedAt` `2026-07-15T14:39:17Z`; non-draft, non-prerelease).
+- Pre-publication `npm run release:check` passed (906/906 tests plus strict fixture freshness, source-derived bundle/manifest/host/Codex/review-drift/Claude-plugin checks and npm dry-runs); PR CI run `29421881033` and main CI run `29422037687` passed. Clean registry installation exercised terminal offline `agent-context --json` (schema 1, build `0.6.31`, 20 commands, utils `1.0.5`) and imported the OpenCode `PolycliPlugin` package. Native Windows execution remains unverified and is disclosed in the release notes.
+
 ## 2026-07-15 — Codex — release: v0.6.31 candidate (review remediation)
 
 - Closed all 14 confirmed findings from the v0.6.30 comprehensive review: truthful no-diff/background JSON v2 results, strict provider target disambiguation, accurate TUI effects, active-job visibility, ledger preview redaction, safe prompt transport, structured session identity, and canonical typed failures.

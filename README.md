@@ -29,16 +29,16 @@
 
 It is a **utility-only Path B monorepo**: it does not unify provider differences behind fake abstractions, and it does not invent a runtime base class. It composes the official upstream CLIs as subprocesses, exposes one command surface, and surfaces honest capability differences in a four-state timing schema.
 
-## Latest release: v0.6.30
+## Latest release: v0.6.31
 
-The latest release makes Polycli an agent-native control plane without changing the Path B boundary:
+This review-remediation release preserves the agent-native control plane and the Path B boundary while closing all 14 confirmed post-v0.6.30 findings:
 
-- One declarative registry now drives strict parsing, generated help, host validation, terminal metadata, typed schemas/errors, and deterministic offline `agent-context --json` discovery.
-- Host, provider, invocation, and attempt identities are explicit; foreground/background terminal ledger pairs remain recoverable and projections are attempt-correct.
-- Every operational command has opt-in `--json-v2`; explicit job selectors and typed waits distinguish missing, ambiguous, timed-out, and terminal-mismatch outcomes.
-- Redacted `debug tail --after --limit --wait` provides bounded cursor observation while raw logs remain pointers only.
+- Provider execution now has bounded capture, typed failures, safe stdin/argv transport, POSIX process-group escalation, and non-fabricated provider session identity.
+- Background start, cancellation, SessionEnd, recovery sidecars, and terminal-ledger publication remain recoverable under failure and races.
+- No-change JSON v2 results, provider target parsing, TUI effects, active-job status, and persisted ledger previews now report the authoritative state.
+- Source-derived validation checks all five companion bundles plus terminal metadata before any in-place rebuild can hide drift.
 
-See [`docs/release-notes-v0.6.30.md`](./docs/release-notes-v0.6.30.md).
+See [`docs/release-notes-v0.6.31.md`](./docs/release-notes-v0.6.31.md).
 
 ## Why polycli?
 

@@ -41,15 +41,16 @@ Review-remediation patch on top of `v0.6.30`. This release closes every confirme
 ## Verification
 
 - Five scoped implementation groups each passed independent spec-compliance and code-quality review.
+- The final whole-branch review returned `Spec Compliance: PASS`, `Code Quality: APPROVED`, and `Release Readiness: READY` after all 14 findings were adjudicated.
 - The local full suite passed: 906 tests, 906 passed, 0 failed.
 - `npm run release:check` passed source-derived bundle freshness, strict fixture freshness, manifests, host maps, Codex guidance, installed-CLI review flag drift, both Claude plugin validations, and all npm package dry-runs.
 - Native Windows execution was not available. Windows argv budgeting and `taskkill`/deadline branches were covered by deterministic simulation; only POSIX process-group and live process-tree behavior received native execution coverage.
-- PR CI and publication evidence are recorded before the GitHub release is created.
+- PR #16 CI and the post-merge main CI both passed. A clean registry install exercised offline terminal `agent-context --json` (schema 1, build `0.6.31`, 20 commands, resolved utils `1.0.5`) and imported the OpenCode package without invoking a provider.
 
 ## Release artifacts
 
-- GitHub release: `v0.6.31`
-- npm: `@bbingz/polycli@0.6.31`
-- npm: `@bbingz/polycli-opencode@0.6.31`
-- npm: `@bbingz/polycli-utils@1.0.5`
+- GitHub release: `v0.6.31` — tag commit `a70eb093bc7892e2f6b653ed29ca8bba5d66489b`, published `2026-07-15T14:39:17Z`
+- npm: `@bbingz/polycli@0.6.31` — `57d0f77811767c4310623af03f27af82375abae8`
+- npm: `@bbingz/polycli-opencode@0.6.31` — `65c990f89df099bb0a1a95104a0a8400abb0f6ca`
+- npm: `@bbingz/polycli-utils@1.0.5` — `99df508a6bffe601e79569927bedf4016d3d471f`
 - unchanged npm package: `@bbingz/polycli-timing@1.0.2`

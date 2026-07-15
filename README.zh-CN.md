@@ -27,9 +27,9 @@
 
 这是一个 **utility-only 的 Path B monorepo**：不假装能抹平 provider 之间的差异，也不引入 runtime 基类。它把官方上游 CLI 作为子进程组合起来，统一命令面，并通过四态 timing schema 如实暴露能力差异。
 
-## 最新版本：v0.6.30
+## 最新版本：v0.6.31
 
-本次发布把 PolyCLI 完善为 agent-native control plane，同时保持 Path B 边界：单一声明式注册表统一严格解析、help、host 校验、typed schema/error 与离线 `agent-context --json`；host/provider/invocation/attempt 身份显式拆分，前台和后台 terminal ledger 按 attempt 完整恢复；全部 operational command 支持 opt-in `--json-v2`、显式 job selector 与类型化等待；脱敏的 `debug tail --after --limit --wait` 提供有界游标观测，原始日志仍只保留指针。详情见英文 release notes：[`docs/release-notes-v0.6.30.md`](./docs/release-notes-v0.6.30.md)。
+本次 review-remediation 发布保持 agent-native control plane 和 Path B 边界，同时关闭 v0.6.30 后全面 review 确认的 14 个问题：provider 执行新增有界输出、类型化失败、安全 stdin/argv 传输、POSIX 进程组升级终止与可信 session identity；后台启动、取消、SessionEnd、恢复 sidecar 和 terminal ledger 发布在失败及竞态下保持可恢复；no-change JSON v2、provider 目标解析、TUI effects、active-job 状态和 ledger preview 均返回权威且脱敏的事实；source-derived validator 会在任何原地构建前校验五份 companion bundle 和 terminal metadata。详情见英文 release notes：[`docs/release-notes-v0.6.31.md`](./docs/release-notes-v0.6.31.md)。
 
 ## 为什么要用 polycli？
 

@@ -27,9 +27,9 @@
 
 これは **ユーティリティ専用の Path B モノレポ** です。プロバイダ間の差異を偽の抽象化で覆い隠したり、ランタイム基底クラスを発明したりはしません。公式の上流 CLI をサブプロセスとして組み合わせ、単一のコマンド面を公開し、4 状態の timing スキーマで能力の違いを正直に表現します。
 
-## 最新リリース: v0.6.30
+## 最新リリース: v0.6.31
 
-このリリースは Path B の境界を維持したまま、PolyCLI を agent-native control plane として完成させます。単一の宣言的 registry が strict parsing・help・host validation・typed schema/error・オフライン `agent-context --json` を駆動し、host/provider/invocation/attempt identity を明示的に分離します。全 operational command は opt-in `--json-v2`、明示的な job selector、typed wait を備え、redacted `debug tail --after --limit --wait` は raw log をポインタのまま保持して bounded cursor observation を提供します。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.30.md`](./docs/release-notes-v0.6.30.md)。
+この review-remediation リリースは agent-native control plane と Path B の境界を維持しつつ、v0.6.30 後の全面 review で確認された 14 件をすべて解消します。provider 実行には bounded capture・typed failure・安全な stdin/argv transport・POSIX process-group escalation・信頼できる session identity を追加し、background start・cancel・SessionEnd・recovery sidecar・terminal ledger publication は障害や race の下でも回復可能です。no-change JSON v2・provider target parsing・TUI effects・active-job status・ledger preview は authoritative かつ redacted な状態を返し、source-derived validator は in-place build より前に 5 個の companion bundle と terminal metadata を検証します。詳細は英語の release notes を参照してください: [`docs/release-notes-v0.6.31.md`](./docs/release-notes-v0.6.31.md)。
 
 ## なぜ polycli を使うのか？
 
