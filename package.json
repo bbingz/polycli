@@ -28,7 +28,7 @@
     "release:check": "node scripts/check-release.mjs"
   },
   "devDependencies": {
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "zod": "^4.4.3"
   }
 }
